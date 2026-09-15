@@ -15,6 +15,13 @@ modeInput = input.string("AUTO", "Strategy mode", options=["AUTO", "INTRADAY", "
 showDashboard = input.bool(true, "Show CASIO dashboard", group=groupMode)
 showLevels = input.bool(true, "Show setup levels", group=groupMode)
 
+// Historical setup outcomes. This is a lightweight chart-side evaluator, not the
+// deep Python research engine. Every emitted setup is tracked independently.
+groupOutcomes = "Historical Setup Outcomes"
+trackHistoricalOutcomes = input.bool(true, "Track historical WIN / LOSS", group=groupOutcomes)
+outcomeMaxBars = input.int(48, "Maximum M15 bars before timeout", minval=4, maxval=192, group=groupOutcomes)
+showOutcomeTimeouts = input.bool(false, "Show timeout markers", group=groupOutcomes)
+
 // Intraday
 groupIntraday = "Intraday MTF"
 intradayMinScore = input.int(80, "Primary-session minimum score", minval=50, maxval=100, group=groupIntraday)
@@ -251,10 +258,81 @@ f_num(v) => na(v) ? "—" : str.tostring(v, format.mintick)
 f_rr(v) => na(v) ? "—" : "1:" + str.tostring(v, "#.##")
 f_mode(m) => m == "INTRADAY" ? "intraday" : "scalping"
 f_dir(d) => d == 1 ? "long" : "short"
+f_pct(v) => na(v) ? "—" : str.tostring(v, "#.0") + "%"
+f_net_r(v) => (v >= 0 ? "+" : "") + str.tostring(v, "#.##") + "R"
 
 var int lastSignalBar = na
 cooldownReady = na(lastSignalBar) or bar_index - lastSignalBar >= signalCooldownBars
 canAlert = chartIsM15 and barstate.isconfirmed and signalValid and cooldownReady
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Historical setup outcome tracker
+// Each emitted setup is evaluated from the NEXT bar onward because entry is at
+// the signal bar close. If both stop and target are touched inside one M15 bar,
+// stop wins the tie (conservative, because intrabar path is unknown).
+// ─────────────────────────────────────────────────────────────────────────────
+var outcomeDirections = array.new_int()
+var outcomeStops = array.new_float()
+var outcomeTargets = array.new_float()
+var outcomeRRs = array.new_float()
+var outcomeEntryBars = array.new_int()
+var int outcomeWins = 0
+var int outcomeLosses = 0
+var int outcomeTimeouts = 0
+var float outcomeNetR = 0.0
+
+bool outcomeWinThisBar = false
+bool outcomeLossThisBar = false
+bool outcomeTimeoutThisBar = false
+
+if trackHistoricalOutcomes and array.size(outcomeDirections) > 0
+    int i = 0
+    while i < array.size(outcomeDirections)
+        int trackedDirection = array.get(outcomeDirections, i)
+        float trackedStop = array.get(outcomeStops, i)
+        float trackedTarget = array.get(outcomeTargets, i)
+        float trackedRR = array.get(outcomeRRs, i)
+        int trackedEntryBar = array.get(outcomeEntryBars, i)
+        bool canResolve = barstate.isconfirmed and bar_index > trackedEntryBar
+        bool stopHit = canResolve and (trackedDirection == 1 ? low <= trackedStop : high >= trackedStop)
+        bool targetHit = canResolve and (trackedDirection == 1 ? high >= trackedTarget : low <= trackedTarget)
+        bool timedOut = canResolve and bar_index - trackedEntryBar >= outcomeMaxBars
+        bool resolved = false
+
+        if stopHit
+            outcomeLosses += 1
+            outcomeNetR -= 1.0
+            outcomeLossThisBar := true
+            resolved := true
+        else if targetHit
+            outcomeWins += 1
+            outcomeNetR += trackedRR
+            outcomeWinThisBar := true
+            resolved := true
+        else if timedOut
+            outcomeTimeouts += 1
+            outcomeTimeoutThisBar := true
+            resolved := true
+
+        if resolved
+            array.remove(outcomeDirections, i)
+            array.remove(outcomeStops, i)
+            array.remove(outcomeTargets, i)
+            array.remove(outcomeRRs, i)
+            array.remove(outcomeEntryBars, i)
+        else
+            i += 1
+
+if trackHistoricalOutcomes and canAlert and not na(signalStop) and not na(signalTarget) and not na(signalRR)
+    array.push(outcomeDirections, signalDirection)
+    array.push(outcomeStops, signalStop)
+    array.push(outcomeTargets, signalTarget)
+    array.push(outcomeRRs, signalRR)
+    array.push(outcomeEntryBars, bar_index)
+
+outcomeResolved = outcomeWins + outcomeLosses
+outcomeWinRate = outcomeResolved > 0 ? outcomeWins * 100.0 / outcomeResolved : na
+outcomeOpen = array.size(outcomeDirections)
 
 if canAlert
     lastSignalBar := bar_index
@@ -298,6 +376,9 @@ plot(showLevels and signalValid ? signalTarget : na, "Setup target", style=plot.
 
 plotshape(canAlert and signalDirection == 1, title="CASIO FAST Long", text="CASIO\nLONG", style=shape.labelup, location=location.belowbar, size=size.tiny)
 plotshape(canAlert and signalDirection == -1, title="CASIO FAST Short", text="CASIO\nSHORT", style=shape.labeldown, location=location.abovebar, size=size.tiny)
+plotshape(trackHistoricalOutcomes and outcomeWinThisBar, title="CASIO historical WIN", text="WIN", style=shape.labelup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 0), textcolor=color.white)
+plotshape(trackHistoricalOutcomes and outcomeLossThisBar, title="CASIO historical LOSS", text="LOSS", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.new(color.red, 0), textcolor=color.white)
+plotshape(trackHistoricalOutcomes and showOutcomeTimeouts and outcomeTimeoutThisBar, title="CASIO historical TIMEOUT", text="TIME", style=shape.square, location=location.abovebar, size=size.tiny, color=color.new(color.gray, 20), textcolor=color.white)
 
 panelBg = color.new(color.rgb(15, 18, 25), 5)
 labelBg = color.new(color.rgb(29, 34, 45), 2)
@@ -309,7 +390,7 @@ statusBg = chartIsM15 ? color.new(color.green, 78) : color.new(color.red, 68)
 f_cell(tbl, col, row, txt, bg) =>
     table.cell(tbl, col, row, txt, text_color=color.white, bgcolor=bg, text_size=size.small)
 
-var table dash = table.new(position.top_right, 2, 15, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
+var table dash = table.new(position.top_right, 2, 19, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
 if barstate.islast
     if showDashboard
         f_cell(dash, 0, 0, "CASIO v3 FAST", headerBg)
@@ -340,7 +421,15 @@ if barstate.islast
         f_cell(dash, 1, 12, f_rr(signalRR), panelBg)
         f_cell(dash, 0, 13, "H1 RANGE", labelBg)
         f_cell(dash, 1, 13, f_num(h1Low20) + " — " + f_num(h1High20), panelBg)
-        f_cell(dash, 0, 14, "ENGINE", labelBg)
-        f_cell(dash, 1, 14, "TV VIEW • PY AUTO", panelBg)
+        f_cell(dash, 0, 14, "HIST W / L", labelBg)
+        f_cell(dash, 1, 14, trackHistoricalOutcomes ? str.tostring(outcomeWins) + " / " + str.tostring(outcomeLosses) : "OFF", panelBg)
+        f_cell(dash, 0, 15, "HIST WIN RATE", labelBg)
+        f_cell(dash, 1, 15, trackHistoricalOutcomes ? f_pct(outcomeWinRate) : "OFF", panelBg)
+        f_cell(dash, 0, 16, "HIST NET R", labelBg)
+        f_cell(dash, 1, 16, trackHistoricalOutcomes ? f_net_r(outcomeNetR) : "OFF", panelBg)
+        f_cell(dash, 0, 17, "OPEN / TIMEOUT", labelBg)
+        f_cell(dash, 1, 17, trackHistoricalOutcomes ? str.tostring(outcomeOpen) + " / " + str.tostring(outcomeTimeouts) : "OFF", panelBg)
+        f_cell(dash, 0, 18, "ENGINE", labelBg)
+        f_cell(dash, 1, 18, "TV VIEW • PY AUTO", panelBg)
     else
-        table.clear(dash, 0, 0, 1, 14)
+        table.clear(dash, 0, 0, 1, 18)
