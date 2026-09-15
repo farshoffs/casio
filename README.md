@@ -1,6 +1,6 @@
 # CASIO
 
-CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView, a Python robustness engine, a Vercel webhook backend, and Google Apps Script email alerts.
+CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView, a Python robustness engine, a Vercel webhook backend, Google Apps Script email alerts, and an automatic TradingView-to-CSV market-data pipeline.
 
 > Current product version: **CASIO v3**. The live v3 strategy still uses the **v2 regime-first MTF rule set** as its baseline trading logic. Research software only; historical or simulated performance does not guarantee future results.
 
@@ -21,6 +21,29 @@ Mode: AUTO
 ```
 
 v3 FAST is the primary day-to-day `indicator()`. It keeps the same H4/H1/M15/M5 regime-first rules while reducing TradingView load by bundling MTF requests and limiting requested history.
+
+### Automatic M5 collector
+
+```text
+pine/CASIO_XAUUSD_M5_FEED.pine
+```
+
+Run this once on the **same XAUUSD feed, 5-minute chart**, create an alert using **Any alert() function call**, and point it to the existing CASIO Vercel webhook. TradingView then sends every newly closed M5 bar automatically.
+
+```text
+TradingView M5 alert
+    -> Vercel
+    -> Google Apps Script
+    -> CASIO XAUUSD M5 Google Sheet
+    -> Vercel CSV export
+    -> GitHub scheduled sync
+    -> data/xauusd_m5.csv
+    -> CASIO v3 research
+```
+
+The browser does not need to stay open after the TradingView alert is created.
+
+**Historical caveat:** TradingView script alerts fire on realtime bars only. This collector automatically maintains data from activation forward; it cannot backfill years of past bars. A one-time historical M5 export can still be merged later, and the automatic sync will preserve/deduplicate it.
 
 ### Automated research — CASIO v3 Python engine
 
@@ -170,23 +193,29 @@ reports/v3-research/best_candidate_oos_trades.csv
 
 Monte Carlo is a bootstrap diagnostic based on historical net-R trades. It is not a calibrated forecast of future returns.
 
-## Automatic GitHub research
+## Automatic GitHub data + research
 
-`.github/workflows/v3-research.yml` runs:
-
-```text
-on relevant v3 code/data pushes
-daily at 21:43 UTC
-manually with workflow_dispatch
-```
-
-It runs only when this file exists:
+`.github/workflows/market-data-sync.yml` runs daily at **21:20 UTC** and merges the realtime TradingView M5 store into:
 
 ```text
 data/xauusd_m5.csv
 ```
 
-Without M5 history, the workflow deliberately reports **skipped** rather than inventing performance.
+If new bars are committed, the push automatically triggers `.github/workflows/v3-research.yml`. The research workflow also has a weekly scheduled safety run and can be launched manually.
+
+The market sync client is:
+
+```text
+casio/sync_market_data.py
+```
+
+The public market-only CSV proxy is:
+
+```text
+https://casio-farhan-shoffis-projects.vercel.app/api/tradingview?export=m5
+```
+
+The private Apps Script token stays inside Vercel environment variables and is not exposed through this CSV endpoint.
 
 ## Data contract for v3 research
 
@@ -211,8 +240,6 @@ The engine resamples M5 into M15, H1 and H4 with no intentional future-data acce
 
 The Python v3 engine is designed to mirror the live v3/v2-rule logic, but exact tick-for-tick parity with TradingView is **not yet claimed** until it is validated against exported TradingView signals/trades. Feed differences, Pine `request.security()` mapping details and broker execution can still create differences.
 
-That is materially different from the old state: we now have a v3 MTF Python implementation, but it still needs parity verification before being called exact.
-
 ## Live alerts
 
 ```text
@@ -229,11 +256,7 @@ Vercel /api/tradingview
        farhanshoffi@moe.gov.my
 ```
 
-v3 emits schema:
-
-```text
-casio.tv.v3
-```
+v3 emits `casio.tv.v3`; the M5 collector emits `casio.market.v1`.
 
 Whenever Pine alert logic changes, recreate the TradingView alert because TradingView stores a snapshot of the script when the alert is created.
 
@@ -241,20 +264,23 @@ Whenever Pine alert logic changes, recreate the TradingView alert because Tradin
 
 ```text
 pine/
-  CASIO_XAUUSD_v3_FAST.pine  primary live dashboard
-  CASIO_XAUUSD_v2_MTF.pine   v2-rule TradingView research reference
-  CASIO_XAUUSD_v1.pine       legacy baseline
+  CASIO_XAUUSD_v3_FAST.pine     primary live dashboard
+  CASIO_XAUUSD_M5_FEED.pine     automatic realtime M5 collector
+  CASIO_XAUUSD_v2_MTF.pine      v2-rule TradingView research reference
+  CASIO_XAUUSD_v1.pine          legacy baseline
 
 casio/
-  v3_core.py                  causal MTF feature preparation
-  v3_strategy.py              v3 / v2-rule signal logic
-  v3_backtest.py              M5 execution + R metrics
-  v3_research.py              ablations, candidate search, OOS + Monte Carlo
-  research_cli.py             v3 research command line
-  strategy.py/backtest.py/... legacy Python v1 research engine
+  v3_core.py                     causal MTF feature preparation
+  v3_strategy.py                 v3 / v2-rule signal logic
+  v3_backtest.py                 M5 execution + R metrics
+  v3_research.py                 ablations, candidate search, OOS + Monte Carlo
+  research_cli.py                v3 research command line
+  sync_market_data.py            Vercel CSV -> GitHub dataset merger
+  strategy.py/backtest.py/...    legacy Python v1 research engine
 
-api/tradingview.py            Vercel signal receiver + email relay
-apps-script/Code.gs           queued MailApp delivery
+api/tradingview.py               Vercel signals + M5 bar receiver + CSV proxy
+apps-script/Code.gs              email delivery + M5 Google Sheet store
+.github/workflows/market-data-sync.yml
 .github/workflows/v3-research.yml
 ```
 
@@ -264,4 +290,4 @@ apps-script/Code.gs           queued MailApp delivery
 - [`docs/RESEARCH_V3.md`](docs/RESEARCH_V3.md) — research methodology, outputs and guardrails.
 - [`docs/TRADINGVIEW.md`](docs/TRADINGVIEW.md) — live TradingView operation.
 - [`docs/CASIO_V3_EMAIL.md`](docs/CASIO_V3_EMAIL.md) — Vercel + Apps Script email setup.
-- [`data/README.md`](data/README.md) — historical data formats.
+- [`data/README.md`](data/README.md) — automatic M5 collection and historical data format.
