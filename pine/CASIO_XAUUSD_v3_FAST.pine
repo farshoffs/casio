@@ -1,0 +1,321 @@
+//@version=6
+indicator("CASIO XAUUSD v3 FAST — Live MTF", overlay=true, max_labels_count=200, max_bars_back=120)
+
+// CASIO v3 FAST
+// Purpose: fast day-to-day TradingView dashboard.
+// Heavy rolling audit / Strategy Tester work stays in v2; external relay/email stays on Vercel.
+// Recommended chart: XAUUSD M15, Strategy mode AUTO.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+groupMode = "Mode"
+modeInput = input.string("AUTO", "Strategy mode", options=["AUTO", "INTRADAY", "SCALPING"], group=groupMode)
+showDashboard = input.bool(true, "Show CASIO dashboard", group=groupMode)
+showLevels = input.bool(true, "Show setup levels", group=groupMode)
+
+// Intraday
+groupIntraday = "Intraday MTF"
+intradayMinScore = input.int(80, "Minimum setup score", minval=50, maxval=100, group=groupIntraday)
+intradayTargetRR = input.float(3.0, "Preferred target R:R", minval=2.5, step=0.1, group=groupIntraday)
+intradayMinRR = input.float(2.5, "Minimum usable R:R", minval=1.5, step=0.1, group=groupIntraday)
+h1ValueAtr = input.float(0.65, "H1 value-zone distance (ATR)", minval=0.1, step=0.05, group=groupIntraday)
+sweepFreshBars = input.int(3, "M15 sweep remains valid (bars)", minval=0, maxval=6, group=groupIntraday)
+
+// Session filter
+groupSession = "Intraday Sessions (UTC)"
+londonSession = input.session("0700-1100", "London window", group=groupSession)
+newYorkSession = input.session("1230-1630", "New York window", group=groupSession)
+
+// Scalping
+groupScalp = "Scalping / Range"
+scalpMinScore = input.int(85, "Minimum setup score", minval=50, maxval=100, group=groupScalp)
+scalpMinRR = input.float(1.3, "Minimum R:R to range mean", minval=0.8, step=0.1, group=groupScalp)
+h1CompressionAtr = input.float(0.40, "H1 EMA compression / ATR", minval=0.1, step=0.05, group=groupScalp)
+h1MaxRangeAtr = input.float(8.0, "Maximum H1 20-bar range / ATR", minval=2.0, step=0.5, group=groupScalp)
+m15MaxAdx = input.float(22.0, "Maximum M15 ADX", minval=5, step=0.5, group=groupScalp)
+m15MaxRangeAtr = input.float(5.5, "Maximum M15 30-bar range / ATR", minval=2.0, step=0.1, group=groupScalp)
+
+// Fast mode request budgets. These deliberately cap external timeframe history because v3 is a live dashboard, not the deep backtester.
+groupPerf = "FAST Performance"
+h4CalcBars = input.int(300, "H4 bars requested", minval=100, maxval=2000, group=groupPerf)
+h1CalcBars = input.int(500, "H1 bars requested", minval=100, maxval=5000, group=groupPerf)
+m5CalcBars = input.int(1500, "M5 bars requested", minval=300, maxval=10000, group=groupPerf)
+signalCooldownBars = input.int(4, "Alert cooldown (M15 bars)", minval=1, maxval=24, group=groupPerf)
+
+// Alerts
+groupAlert = "Webhook / Email"
+sendWebhookAlerts = input.bool(true, "Emit CASIO signal JSON", group=groupAlert)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chart guard + native M15 features
+// ─────────────────────────────────────────────────────────────────────────────
+chartIsM15 = timeframe.isminutes and timeframe.multiplier == 15
+
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+atr14 = ta.atr(14)
+[plusDI, minusDI, adx14] = ta.dmi(14, 14)
+
+hh20 = ta.highest(high[1], 20)
+ll20 = ta.lowest(low[1], 20)
+priorHigh5 = ta.highest(high[1], 5)
+priorLow5 = ta.lowest(low[1], 5)
+rangeHigh30 = ta.highest(high[1], 30)
+rangeLow30 = ta.lowest(low[1], 30)
+rangeSize30 = rangeHigh30 - rangeLow30
+rangeAtr30 = atr14 > 0 ? rangeSize30 / atr14 : na
+rangeMean30 = (rangeHigh30 + rangeLow30) / 2.0
+
+m15SellSweepRaw = low < ll20 and close > ll20
+m15BuySweepRaw = high > hh20 and close < hh20
+sellSweepAgo = ta.barssince(m15SellSweepRaw)
+buySweepAgo = ta.barssince(m15BuySweepRaw)
+recentSellSweep = not na(sellSweepAgo) and sellSweepAgo <= sweepFreshBars
+recentBuySweep = not na(buySweepAgo) and buySweepAgo <= sweepFreshBars
+m15BosLong = close > priorHigh5 and close > open
+m15BosShort = close < priorLow5 and close < open
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bundled MTF requests — fewer datasets than v2.
+// ─────────────────────────────────────────────────────────────────────────────
+[h4Close, h4Ema20, h4Ema50] = request.security(
+    syminfo.tickerid,
+    "240",
+    [close, ta.ema(close, 20), ta.ema(close, 50)],
+    lookahead=barmerge.lookahead_off,
+    calc_bars_count=h4CalcBars)
+
+[h1Close, h1Ema20, h1Ema50, h1Atr, h1High20, h1Low20] = request.security(
+    syminfo.tickerid,
+    "60",
+    [close, ta.ema(close, 20), ta.ema(close, 50), ta.atr(14), ta.highest(high[1], 20), ta.lowest(low[1], 20)],
+    lookahead=barmerge.lookahead_off,
+    calc_bars_count=h1CalcBars)
+
+[m5Open, m5Close, m5Ema20] = request.security(
+    syminfo.tickerid,
+    "5",
+    [open, close, ta.ema(close, 20)],
+    lookahead=barmerge.lookahead_off,
+    calc_bars_count=m5CalcBars)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Higher/lower timeframe state
+// ─────────────────────────────────────────────────────────────────────────────
+h4Bull = h4Ema20 > h4Ema50 and h4Close > h4Ema20
+h4Bear = h4Ema20 < h4Ema50 and h4Close < h4Ema20
+h4Bias = h4Bull ? 1 : h4Bear ? -1 : 0
+
+h1Bull = h1Ema20 > h1Ema50 and h1Close > h1Ema20
+h1Bear = h1Ema20 < h1Ema50 and h1Close < h1Ema20
+h1Bias = h1Bull ? 1 : h1Bear ? -1 : 0
+h1LongVeto = h1Bias == -1
+h1ShortVeto = h1Bias == 1
+
+h1LongValue = close <= h1Ema20 + h1Atr * h1ValueAtr and close > h1Low20 - h1Atr * 0.20
+h1ShortValue = close >= h1Ema20 - h1Atr * h1ValueAtr and close < h1High20 + h1Atr * 0.20
+
+h1RangeSize = h1High20 - h1Low20
+h1RangeAtr = h1Atr > 0 ? h1RangeSize / h1Atr : na
+h1Compression = h1Atr > 0 ? math.abs(h1Ema20 - h1Ema50) / h1Atr : na
+h1RangeRegime = not na(h1Compression) and not na(h1RangeAtr) and h1Compression <= h1CompressionAtr and h1RangeAtr <= h1MaxRangeAtr
+
+m5BullConfirm = m5Close > m5Open and m5Close > m5Ema20
+m5BearConfirm = m5Close < m5Open and m5Close < m5Ema20
+
+m15RangeRegime = adx14 <= m15MaxAdx and rangeAtr30 <= m15MaxRangeAtr
+scalpRegime = h1RangeRegime and m15RangeRegime
+autoMode = scalpRegime ? "SCALPING" : "INTRADAY"
+activeMode = modeInput == "AUTO" ? autoMode : modeInput
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session context
+// ─────────────────────────────────────────────────────────────────────────────
+inLondon = not na(time(timeframe.period, londonSession, "UTC"))
+inNewYork = not na(time(timeframe.period, newYorkSession, "UTC"))
+inPrimarySession = inLondon or inNewYork
+sessionName = inLondon ? "LONDON" : inNewYork ? "NEW YORK" : "OFF-SESSION"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Intraday engine — vetoes first, score second
+// ─────────────────────────────────────────────────────────────────────────────
+intradayLongStopDistance = math.max(close - (ll20 - atr14 * 0.20), atr14 * 1.00)
+intradayShortStopDistance = math.max((hh20 + atr14 * 0.20) - close, atr14 * 1.00)
+
+longLiquidityRR = intradayLongStopDistance > 0 ? (h1High20 - close) / intradayLongStopDistance : na
+shortLiquidityRR = intradayShortStopDistance > 0 ? (close - h1Low20) / intradayShortStopDistance : na
+longRRPass = not na(longLiquidityRR) and longLiquidityRR >= intradayMinRR
+shortRRPass = not na(shortLiquidityRR) and shortLiquidityRR >= intradayMinRR
+
+intradayLongScore = 0
+intradayLongScore += h4Bias == 1 ? 20 : 0
+intradayLongScore += h1Bias == 1 ? 15 : h1Bias == 0 ? 8 : 0
+intradayLongScore += h1LongValue ? 15 : 0
+intradayLongScore += recentSellSweep ? 20 : 0
+intradayLongScore += m15BosLong ? 15 : 0
+intradayLongScore += inPrimarySession ? 10 : 0
+intradayLongScore += longRRPass ? 5 : 0
+
+intradayShortScore = 0
+intradayShortScore += h4Bias == -1 ? 20 : 0
+intradayShortScore += h1Bias == -1 ? 15 : h1Bias == 0 ? 8 : 0
+intradayShortScore += h1ShortValue ? 15 : 0
+intradayShortScore += recentBuySweep ? 20 : 0
+intradayShortScore += m15BosShort ? 15 : 0
+intradayShortScore += inPrimarySession ? 10 : 0
+intradayShortScore += shortRRPass ? 5 : 0
+
+intradayLongMandatory = chartIsM15 and activeMode == "INTRADAY" and h4Bias == 1 and not h1LongVeto and h1LongValue and recentSellSweep and m15BosLong and inPrimarySession and longRRPass
+intradayShortMandatory = chartIsM15 and activeMode == "INTRADAY" and h4Bias == -1 and not h1ShortVeto and h1ShortValue and recentBuySweep and m15BosShort and inPrimarySession and shortRRPass
+intradayLongValid = intradayLongMandatory and intradayLongScore >= intradayMinScore
+intradayShortValid = intradayShortMandatory and intradayShortScore >= intradayMinScore
+
+intradayDirection = intradayLongValid ? 1 : intradayShortValid ? -1 : 0
+intradayScore = intradayDirection == 1 ? intradayLongScore : intradayDirection == -1 ? intradayShortScore : math.max(intradayLongScore, intradayShortScore)
+intradayStopDistance = intradayDirection == 1 ? intradayLongStopDistance : intradayDirection == -1 ? intradayShortStopDistance : na
+intradayLiquidityTarget = intradayDirection == 1 ? h1High20 : intradayDirection == -1 ? h1Low20 : na
+intradayPreferredTarget = intradayDirection == 1 ? close + intradayStopDistance * intradayTargetRR : intradayDirection == -1 ? close - intradayStopDistance * intradayTargetRR : na
+intradayTarget = intradayDirection == 1 ? math.min(intradayPreferredTarget, intradayLiquidityTarget) : intradayDirection == -1 ? math.max(intradayPreferredTarget, intradayLiquidityTarget) : na
+intradayActualRR = intradayDirection == 1 ? (intradayTarget - close) / intradayStopDistance : intradayDirection == -1 ? (close - intradayTarget) / intradayStopDistance : na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scalping engine — H1+M15 range, M15 edge sweep, M5 confirmation
+// ─────────────────────────────────────────────────────────────────────────────
+scalpLongSweep = low < rangeLow30 and close > rangeLow30
+scalpShortSweep = high > rangeHigh30 and close < rangeHigh30
+
+scalpLongStopDistance = math.max(close - (low - atr14 * 0.10), atr14 * 0.65)
+scalpShortStopDistance = math.max((high + atr14 * 0.10) - close, atr14 * 0.65)
+scalpLongRR = scalpLongStopDistance > 0 ? (rangeMean30 - close) / scalpLongStopDistance : na
+scalpShortRR = scalpShortStopDistance > 0 ? (close - rangeMean30) / scalpShortStopDistance : na
+scalpLongRRPass = not na(scalpLongRR) and scalpLongRR >= scalpMinRR
+scalpShortRRPass = not na(scalpShortRR) and scalpShortRR >= scalpMinRR
+
+scalpLongScore = 0
+scalpLongScore += h1RangeRegime ? 25 : 0
+scalpLongScore += m15RangeRegime ? 20 : 0
+scalpLongScore += scalpLongSweep ? 25 : 0
+scalpLongScore += m5BullConfirm ? 15 : 0
+scalpLongScore += scalpLongRRPass ? 15 : 0
+
+scalpShortScore = 0
+scalpShortScore += h1RangeRegime ? 25 : 0
+scalpShortScore += m15RangeRegime ? 20 : 0
+scalpShortScore += scalpShortSweep ? 25 : 0
+scalpShortScore += m5BearConfirm ? 15 : 0
+scalpShortScore += scalpShortRRPass ? 15 : 0
+
+scalpLongValid = chartIsM15 and activeMode == "SCALPING" and scalpRegime and scalpLongSweep and m5BullConfirm and scalpLongRRPass and scalpLongScore >= scalpMinScore
+scalpShortValid = chartIsM15 and activeMode == "SCALPING" and scalpRegime and scalpShortSweep and m5BearConfirm and scalpShortRRPass and scalpShortScore >= scalpMinScore
+
+scalpDirection = scalpLongValid ? 1 : scalpShortValid ? -1 : 0
+scalpScore = scalpDirection == 1 ? scalpLongScore : scalpDirection == -1 ? scalpShortScore : math.max(scalpLongScore, scalpShortScore)
+scalpStopDistance = scalpDirection == 1 ? scalpLongStopDistance : scalpDirection == -1 ? scalpShortStopDistance : na
+scalpActualRR = scalpDirection == 1 ? scalpLongRR : scalpDirection == -1 ? scalpShortRR : na
+scalpTarget = scalpDirection != 0 ? rangeMean30 : na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified live signal
+// ─────────────────────────────────────────────────────────────────────────────
+signalValid = intradayDirection != 0 or scalpDirection != 0
+signalDirection = intradayDirection != 0 ? intradayDirection : scalpDirection
+signalScore = intradayDirection != 0 ? intradayScore : scalpDirection != 0 ? scalpScore : activeMode == "INTRADAY" ? intradayScore : scalpScore
+signalRR = intradayDirection != 0 ? intradayActualRR : scalpDirection != 0 ? scalpActualRR : na
+signalEntry = signalValid ? close : na
+signalStopDistance = intradayDirection != 0 ? intradayStopDistance : scalpDirection != 0 ? scalpStopDistance : na
+signalStop = signalDirection == 1 ? signalEntry - signalStopDistance : signalDirection == -1 ? signalEntry + signalStopDistance : na
+signalTarget = intradayDirection != 0 ? intradayTarget : scalpDirection != 0 ? scalpTarget : na
+
+f_bias(v) => v == 1 ? "BULLISH" : v == -1 ? "BEARISH" : "NEUTRAL"
+f_num(v) => na(v) ? "—" : str.tostring(v, format.mintick)
+f_rr(v) => na(v) ? "—" : "1:" + str.tostring(v, "#.##")
+f_mode(m) => m == "INTRADAY" ? "intraday" : "scalping"
+f_dir(d) => d == 1 ? "long" : "short"
+
+var int lastSignalBar = na
+cooldownReady = na(lastSignalBar) or bar_index - lastSignalBar >= signalCooldownBars
+canAlert = chartIsM15 and barstate.isconfirmed and signalValid and cooldownReady
+
+if canAlert
+    lastSignalBar := bar_index
+
+if canAlert and sendWebhookAlerts
+    payload = "{" +
+      "\"schema\":\"casio.tv.v3\"," +
+      "\"event\":\"signal\"," +
+      "\"symbol\":\"" + syminfo.tickerid + "\"," +
+      "\"ticker\":\"" + syminfo.ticker + "\"," +
+      "\"timeframe\":\"" + timeframe.period + "\"," +
+      "\"bar_time\":" + str.tostring(time) + "," +
+      "\"mode\":\"" + f_mode(activeMode) + "\"," +
+      "\"direction\":\"" + f_dir(signalDirection) + "\"," +
+      "\"score\":" + str.tostring(signalScore) + "," +
+      "\"entry\":" + str.tostring(signalEntry, format.mintick) + "," +
+      "\"stop\":" + str.tostring(signalStop, format.mintick) + "," +
+      "\"target\":" + str.tostring(signalTarget, format.mintick) + "," +
+      "\"rr\":" + str.tostring(signalRR, "#.##") + "," +
+      "\"regime\":\"" + (scalpRegime ? "range" : "directional") + "\"," +
+      "\"session\":\"" + sessionName + "\"," +
+      "\"h4_bias\":\"" + str.lower(f_bias(h4Bias)) + "\"," +
+      "\"h1_bias\":\"" + str.lower(f_bias(h1Bias)) + "\"," +
+      "\"m15_adx\":" + str.tostring(adx14, "#.##") +
+      "}"
+    alert(payload, alert.freq_once_per_bar_close)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visuals — intentionally lightweight
+// ─────────────────────────────────────────────────────────────────────────────
+plot(ema20, "EMA 20", linewidth=1)
+plot(ema50, "EMA 50", linewidth=1)
+plot(activeMode == "SCALPING" ? rangeHigh30 : na, "Range high", style=plot.style_linebr)
+plot(activeMode == "SCALPING" ? rangeLow30 : na, "Range low", style=plot.style_linebr)
+plot(showLevels and signalValid ? signalStop : na, "Setup stop", style=plot.style_linebr, linewidth=2)
+plot(showLevels and signalValid ? signalTarget : na, "Setup target", style=plot.style_linebr, linewidth=2)
+
+plotshape(canAlert and signalDirection == 1, title="CASIO FAST Long", text="CASIO\nLONG", style=shape.labelup, location=location.belowbar, size=size.tiny)
+plotshape(canAlert and signalDirection == -1, title="CASIO FAST Short", text="CASIO\nSHORT", style=shape.labeldown, location=location.abovebar, size=size.tiny)
+
+panelBg = color.new(color.rgb(15, 18, 25), 5)
+labelBg = color.new(color.rgb(29, 34, 45), 2)
+headerBg = color.new(color.rgb(8, 10, 14), 0)
+modeBg = activeMode == "SCALPING" ? color.new(color.orange, 72) : color.new(color.blue, 75)
+signalBg = signalValid ? (signalDirection == 1 ? color.new(color.green, 68) : color.new(color.red, 68)) : color.new(color.gray, 82)
+statusBg = chartIsM15 ? color.new(color.green, 78) : color.new(color.red, 68)
+
+f_cell(tbl, col, row, txt, bg) =>
+    table.cell(tbl, col, row, txt, text_color=color.white, bgcolor=bg, text_size=size.small)
+
+var table dash = table.new(position.top_right, 2, 14, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
+if barstate.islast
+    if showDashboard
+        f_cell(dash, 0, 0, "CASIO v3 FAST", headerBg)
+        f_cell(dash, 1, 0, syminfo.ticker + " • " + timeframe.period, headerBg)
+        f_cell(dash, 0, 1, "STATUS", labelBg)
+        f_cell(dash, 1, 1, chartIsM15 ? "LIVE READY" : "USE M15", statusBg)
+        f_cell(dash, 0, 2, "MODE", labelBg)
+        f_cell(dash, 1, 2, activeMode, modeBg)
+        f_cell(dash, 0, 3, "REGIME", labelBg)
+        f_cell(dash, 1, 3, scalpRegime ? "RANGE" : "DIRECTIONAL", panelBg)
+        f_cell(dash, 0, 4, "H4 / H1", labelBg)
+        f_cell(dash, 1, 4, f_bias(h4Bias) + " / " + f_bias(h1Bias), panelBg)
+        f_cell(dash, 0, 5, "SESSION", labelBg)
+        f_cell(dash, 1, 5, sessionName, panelBg)
+        f_cell(dash, 0, 6, "ADX / SCORE", labelBg)
+        f_cell(dash, 1, 6, str.tostring(adx14, "#.##") + " / " + str.tostring(signalScore), panelBg)
+        f_cell(dash, 0, 7, "SIGNAL", labelBg)
+        f_cell(dash, 1, 7, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT", signalBg)
+        f_cell(dash, 0, 8, "ENTRY", labelBg)
+        f_cell(dash, 1, 8, f_num(signalEntry), panelBg)
+        f_cell(dash, 0, 9, "STOP", labelBg)
+        f_cell(dash, 1, 9, f_num(signalStop), panelBg)
+        f_cell(dash, 0, 10, "TARGET", labelBg)
+        f_cell(dash, 1, 10, f_num(signalTarget), panelBg)
+        f_cell(dash, 0, 11, "R:R", labelBg)
+        f_cell(dash, 1, 11, f_rr(signalRR), panelBg)
+        f_cell(dash, 0, 12, "H1 RANGE", labelBg)
+        f_cell(dash, 1, 12, f_num(h1Low20) + " — " + f_num(h1High20), panelBg)
+        f_cell(dash, 0, 13, "ENGINE", labelBg)
+        f_cell(dash, 1, 13, "LIVE • VERCEL BG", panelBg)
+    else
+        table.clear(dash, 0, 0, 1, 13)
