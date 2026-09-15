@@ -45,6 +45,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate v3 research modules
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.v3_core import V3Config, prepare_features
+          from casio.v3_strategy import signals_for_config
+          from casio.v3_backtest import backtest_signals, metrics
+          from casio.v3_research import monte_carlo_bootstrap, run_research
+          print('CASIO v3 research modules import successfully')
+          PY
+
       - name: Check v3 research data
         id: data
         shell: bash
@@ -54,7 +65,8 @@ jobs:
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "## CASIO v3 research skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "Add/update data/xauusd_m5.csv (UTC M5 OHLC) to activate automatic MTF research." >> "$GITHUB_STEP_SUMMARY"
+            echo "Research code validation passed, but data/xauusd_m5.csv is not present." >> "$GITHUB_STEP_SUMMARY"
+            echo "Add/update UTC M5 XAUUSD OHLC data to activate the full robustness run." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Run v3 research
