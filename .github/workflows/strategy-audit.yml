@@ -4,7 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'casio/**'
+      - 'casio/config.py'
+      - 'casio/strategy.py'
+      - 'casio/backtest.py'
+      - 'casio/audit.py'
+      - 'casio/cli.py'
       - 'data/xauusd.csv'
       - 'requirements.txt'
       - '.github/workflows/strategy-audit.yml'
