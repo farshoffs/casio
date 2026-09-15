@@ -1,7 +1,7 @@
 //@version=6
 strategy("CASIO XAUUSD v1 — Intraday + Scalping", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, max_labels_count=500)
 
-// CASIO TradingView adapter.
+// CASIO TradingView-first interface.
 // Mirrors the deterministic rules in casio/config.py + casio/strategy.py.
 // Recommended chart: XAUUSD, 15 minute.
 
@@ -10,7 +10,7 @@ strategy("CASIO XAUUSD v1 — Intraday + Scalping", overlay=true, pyramiding=0, 
 // ─────────────────────────────────────────────────────────────────────────────
 groupMode = "Mode"
 modeInput = input.string("AUTO", "Strategy mode", options=["AUTO", "INTRADAY", "SCALPING"], group=groupMode)
-showDashboard = input.bool(true, "Show dashboard", group=groupMode)
+showDashboard = input.bool(true, "Show CASIO dashboard", group=groupMode)
 showLevels = input.bool(true, "Show stop/target", group=groupMode)
 
 // Keep defaults in sync with casio/config.py.
@@ -25,6 +25,13 @@ scalpRR = input.float(1.5, "Target R:R", minval=0.5, step=0.1, group=groupScalp)
 maxAdx = input.float(22.0, "Maximum ADX", minval=1, step=0.5, group=groupScalp)
 maxRangeAtr = input.float(5.5, "Maximum 30-bar range / ATR", minval=1, step=0.1, group=groupScalp)
 edgeFraction = input.float(0.22, "Range-edge fraction", minval=0.05, maxval=0.45, step=0.01, group=groupScalp)
+
+groupAudit = "Rolling Audit"
+auditWindow = input.int(100, "Trades in rolling audit", minval=30, maxval=100, group=groupAudit)
+minAuditTrades = input.int(30, "Minimum trades before audit", minval=10, maxval=100, group=groupAudit)
+warnWinRateDrop = input.float(8.0, "Warning: win-rate drop (pp)", minval=1, step=0.5, group=groupAudit)
+warnExpectancyDrop = input.float(0.20, "Warning: expectancy drop (R)", minval=0.05, step=0.05, group=groupAudit)
+criticalPF = input.float(1.0, "Critical: profit factor below", minval=0.1, step=0.1, group=groupAudit)
 
 groupAlert = "Webhook"
 sendWebhookAlerts = input.bool(true, "Emit alert() JSON", group=groupAlert)
@@ -52,7 +59,6 @@ activeMode = modeInput == "AUTO" ? autoMode : modeInput
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Intraday score
-// Python parity:
 // trend 25 + sweep 25 + candle 15 + volatility 10 + alignment 10
 // ─────────────────────────────────────────────────────────────────────────────
 intradayScore = 0
@@ -89,7 +95,6 @@ intradayValid = hasHistory and activeMode == "INTRADAY" and intradayDirection !=
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scalping score
-// Python parity:
 // range edge 30 + edge sweep 25 + low ADX 20 + compression 10 + candle 10
 // ─────────────────────────────────────────────────────────────────────────────
 scalpScore = 0
@@ -132,13 +137,19 @@ signalTarget = signalDirection == 1 ? signalEntry + stopDistance * signalRR : si
 
 canEnter = barstate.isconfirmed and signalValid and strategy.position_size == 0
 
+var float liveEntry = na
 var float liveStop = na
 var float liveTarget = na
+var float liveRiskDistance = na
+var int liveDirection = 0
 var string liveMode = "NONE"
 
 if canEnter
+    liveEntry := signalEntry
     liveStop := signalStop
     liveTarget := signalTarget
+    liveRiskDistance := stopDistance
+    liveDirection := signalDirection
     liveMode := activeMode
     if signalDirection == 1
         strategy.entry("CASIO-L", strategy.long)
@@ -147,20 +158,104 @@ if canEnter
         strategy.entry("CASIO-S", strategy.short)
         strategy.exit("CASIO-S-X", "CASIO-S", stop=liveStop, limit=liveTarget)
 
-// Keep attached exits active while the trade remains open.
 if strategy.position_size > 0 and not na(liveStop) and not na(liveTarget)
     strategy.exit("CASIO-L-X", "CASIO-L", stop=liveStop, limit=liveTarget)
 if strategy.position_size < 0 and not na(liveStop) and not na(liveTarget)
     strategy.exit("CASIO-S-X", "CASIO-S", stop=liveStop, limit=liveTarget)
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Rolling closed-trade history in R
+// Keeps the latest 200 so the current 100 can be compared with the previous 100.
+// ─────────────────────────────────────────────────────────────────────────────
+var float[] rHistory = array.new_float()
+var string[] modeHistory = array.new_string()
+
+newClosedTrade = strategy.closedtrades > nz(strategy.closedtrades[1])
+if newClosedTrade and not na(liveEntry) and not na(liveRiskDistance) and liveRiskDistance > 0 and liveDirection != 0
+    lastTradeIndex = strategy.closedtrades - 1
+    closedExit = strategy.closedtrades.exit_price(lastTradeIndex)
+    tradeR = liveDirection == 1 ? (closedExit - liveEntry) / liveRiskDistance : (liveEntry - closedExit) / liveRiskDistance
+    array.push(rHistory, tradeR)
+    array.push(modeHistory, liveMode)
+    if array.size(rHistory) > 200
+        array.shift(rHistory)
+        array.shift(modeHistory)
+
 if strategy.position_size == 0 and strategy.position_size[1] != 0
+    liveEntry := na
     liveStop := na
     liveTarget := na
+    liveRiskDistance := na
+    liveDirection := 0
     liveMode := "NONE"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Rolling audit helpers
+// ─────────────────────────────────────────────────────────────────────────────
+f_window_metrics(float[] values, int fromIndex, int toIndex) =>
+    int count = 0
+    int wins = 0
+    float sumR = 0.0
+    float grossWin = 0.0
+    float grossLoss = 0.0
+    float equityR = 0.0
+    float peakR = 0.0
+    float maxDrawdownR = 0.0
+    if fromIndex >= 0 and toIndex >= fromIndex
+        for i = fromIndex to toIndex
+            r = array.get(values, i)
+            count += 1
+            sumR += r
+            if r > 0
+                wins += 1
+                grossWin += r
+            else if r < 0
+                grossLoss += math.abs(r)
+            equityR += r
+            peakR := math.max(peakR, equityR)
+            maxDrawdownR := math.max(maxDrawdownR, peakR - equityR)
+    winRate = count > 0 ? wins * 100.0 / count : na
+    expectancy = count > 0 ? sumR / count : na
+    profitFactor = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? 999.0 : na
+    [count, wins, winRate, expectancy, profitFactor, maxDrawdownR]
+
+f_mode_winrate(float[] values, string[] modes, string wantedMode, int fromIndex, int toIndex) =>
+    int count = 0
+    int wins = 0
+    if fromIndex >= 0 and toIndex >= fromIndex
+        for i = fromIndex to toIndex
+            if array.get(modes, i) == wantedMode
+                count += 1
+                if array.get(values, i) > 0
+                    wins += 1
+    count > 0 ? wins * 100.0 / count : na
+
+historyCount = array.size(rHistory)
+currentCountRequested = math.min(auditWindow, historyCount)
+currentStart = historyCount - currentCountRequested
+currentEnd = historyCount - 1
+previousAvailable = math.max(0, historyCount - currentCountRequested)
+previousCountRequested = math.min(auditWindow, previousAvailable)
+previousStart = currentStart - previousCountRequested
+previousEnd = currentStart - 1
+
+[currTrades, currWins, currWinRate, currExpectancy, currPF, currMaxDD] = f_window_metrics(rHistory, currentStart, currentEnd)
+[prevTrades, prevWins, prevWinRate, prevExpectancy, prevPF, prevMaxDD] = f_window_metrics(rHistory, previousStart, previousEnd)
+
+intradayWinRate = f_mode_winrate(rHistory, modeHistory, "INTRADAY", currentStart, currentEnd)
+scalpingWinRate = f_mode_winrate(rHistory, modeHistory, "SCALPING", currentStart, currentEnd)
+
+winRateDelta = prevTrades >= minAuditTrades and not na(prevWinRate) and not na(currWinRate) ? currWinRate - prevWinRate : na
+expectancyDelta = prevTrades >= minAuditTrades and not na(prevExpectancy) and not na(currExpectancy) ? currExpectancy - prevExpectancy : na
+
+string auditStatus = "INSUFFICIENT"
+if currTrades >= minAuditTrades
+    critical = (not na(currPF) and currPF < criticalPF) or (not na(currExpectancy) and currExpectancy <= 0)
+    warning = prevTrades >= minAuditTrades and ((not na(winRateDelta) and winRateDelta <= -warnWinRateDrop) or (not na(expectancyDelta) and expectancyDelta <= -warnExpectancyDrop))
+    auditStatus := critical ? "CRITICAL" : warning ? "WARNING" : "HEALTHY"
+
+// ─────────────────────────────────────────────────────────────────────────────
 // JSON webhook payload
-// TradingView sends valid JSON as application/json.
 // ─────────────────────────────────────────────────────────────────────────────
 f_num(v) => str.tostring(v, format.mintick)
 f_dir(d) => d == 1 ? "long" : "short"
@@ -201,17 +296,51 @@ plotshape(canEnter and signalDirection == -1, title="CASIO Short", text="CASIO\n
 
 bgcolor(activeMode == "SCALPING" ? color.new(color.orange, 92) : color.new(color.blue, 95), title="CASIO regime")
 
-var table dash = table.new(position.top_right, 2, 6, border_width=1)
+f_pct(v) => na(v) ? "—" : str.tostring(v, "#.0") + "%"
+f_r(v) => na(v) ? "—" : str.tostring(v, "#.##") + "R"
+f_pf(v) => na(v) ? "—" : v >= 999 ? "∞" : str.tostring(v, "#.##")
+f_price(v) => na(v) ? "—" : str.tostring(v, format.mintick)
+
+positionSignal = strategy.position_size > 0 ? "LONG • LIVE" : strategy.position_size < 0 ? "SHORT • LIVE" : signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT"
+displayEntry = strategy.position_size != 0 ? liveEntry : signalValid ? signalEntry : na
+displayStop = strategy.position_size != 0 ? liveStop : signalValid ? signalStop : na
+displayTarget = strategy.position_size != 0 ? liveTarget : signalValid ? signalTarget : na
+
+signalBg = strategy.position_size > 0 or (signalValid and signalDirection == 1) ? color.new(color.green, 72) : strategy.position_size < 0 or (signalValid and signalDirection == -1) ? color.new(color.red, 72) : color.new(color.gray, 82)
+auditBg = auditStatus == "HEALTHY" ? color.new(color.green, 72) : auditStatus == "WARNING" ? color.new(color.orange, 65) : auditStatus == "CRITICAL" ? color.new(color.red, 65) : color.new(color.gray, 82)
+modeBg = activeMode == "SCALPING" ? color.new(color.orange, 75) : color.new(color.blue, 78)
+
+var table dash = table.new(position.top_right, 2, 16, border_width=1)
 if barstate.islast and showDashboard
     table.cell(dash, 0, 0, "CASIO")
-    table.cell(dash, 1, 0, "XAUUSD")
+    table.cell(dash, 1, 0, syminfo.ticker + " • " + timeframe.period)
     table.cell(dash, 0, 1, "MODE")
-    table.cell(dash, 1, 1, activeMode)
-    table.cell(dash, 0, 2, "ADX")
-    table.cell(dash, 1, 2, str.tostring(adx14, "#.##"))
-    table.cell(dash, 0, 3, "SCORE")
-    table.cell(dash, 1, 3, str.tostring(signalScore))
+    table.cell(dash, 1, 1, activeMode, bgcolor=modeBg)
+    table.cell(dash, 0, 2, "REGIME")
+    table.cell(dash, 1, 2, sideways ? "SIDEWAYS" : "DIRECTIONAL")
+    table.cell(dash, 0, 3, "ADX / SCORE")
+    table.cell(dash, 1, 3, str.tostring(adx14, "#.##") + " / " + str.tostring(signalScore))
     table.cell(dash, 0, 4, "SIGNAL")
-    table.cell(dash, 1, 4, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT")
-    table.cell(dash, 0, 5, "REGIME")
-    table.cell(dash, 1, 5, sideways ? "SIDEWAYS" : "DIRECTIONAL")
+    table.cell(dash, 1, 4, positionSignal, bgcolor=signalBg)
+    table.cell(dash, 0, 5, "ENTRY")
+    table.cell(dash, 1, 5, f_price(displayEntry))
+    table.cell(dash, 0, 6, "STOP")
+    table.cell(dash, 1, 6, f_price(displayStop))
+    table.cell(dash, 0, 7, "TARGET")
+    table.cell(dash, 1, 7, f_price(displayTarget))
+    table.cell(dash, 0, 8, "LAST " + str.tostring(auditWindow))
+    table.cell(dash, 1, 8, str.tostring(currTrades) + " CLOSED")
+    table.cell(dash, 0, 9, "WIN RATE")
+    table.cell(dash, 1, 9, f_pct(currWinRate))
+    table.cell(dash, 0, 10, "EXPECTANCY")
+    table.cell(dash, 1, 10, f_r(currExpectancy))
+    table.cell(dash, 0, 11, "PROFIT FACTOR")
+    table.cell(dash, 1, 11, f_pf(currPF))
+    table.cell(dash, 0, 12, "MAX DD")
+    table.cell(dash, 1, 12, f_r(currMaxDD))
+    table.cell(dash, 0, 13, "INTRADAY WR")
+    table.cell(dash, 1, 13, f_pct(intradayWinRate))
+    table.cell(dash, 0, 14, "SCALPING WR")
+    table.cell(dash, 1, 14, f_pct(scalpingWinRate))
+    table.cell(dash, 0, 15, "AUDIT")
+    table.cell(dash, 1, 15, auditStatus, bgcolor=auditBg)
