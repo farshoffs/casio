@@ -1,66 +1,93 @@
-# CASIO v3 Strategy — v2 Rule Baseline
+# CASIO v3 Strategy — Regime-First + Adaptive 24H Sessions
 
 CASIO is currently **version 3**.
 
-The current live v3 engine deliberately keeps the **v2 regime-first multi-timeframe rule set** as its trading baseline. Version 3 changes the product architecture, live Pine performance and research tooling; it does not pretend that every strategy rule was reinvented.
+The current strategy keeps the **v2 regime-first multi-timeframe core** and adds a **v3 adaptive 24h session overlay**. That distinction matters: the H4/H1/M15/M5 logic is still the baseline, but v3 no longer treats London/New York as the only possible Intraday hours.
 
-Primary live implementation:
+Primary TradingView implementation:
 
 ```text
 pine/CASIO_XAUUSD_v3_FAST.pine
 ```
 
-TradingView historical reference for the same baseline rules:
+Primary automated implementation:
 
 ```text
-pine/CASIO_XAUUSD_v2_MTF.pine
+casio/v3_core.py
+casio/v3_strategy.py
+casio/live_signal.py
 ```
 
-Recommended live chart:
+Recommended visual setup:
 
 ```text
 XAUUSD
 M15
 AUTO
+Session policy: ADAPTIVE_24H
 ```
 
 > CASIO is research software. A backtest, score or research ranking is not a guarantee of future profitability.
 
-## 1. Strategy philosophy
+## 1. Decision order
 
-CASIO is built around this order of decisions:
+CASIO follows this hierarchy:
 
 ```text
 1. Determine market regime
-2. Select the allowed playbook
-3. Apply mandatory vetoes
-4. Evaluate setup quality
-5. Check usable R:R
-6. LONG / SHORT / WAIT
+2. Select SCALPING or INTRADAY
+3. Classify current session
+4. Apply mandatory vetoes
+5. Apply the session-specific threshold
+6. Check usable R:R
+7. LONG / SHORT / WAIT
 ```
 
-It is **not** an equal-vote system where H4, H1, M15 and M5 each add a few points until a trade appears.
+It is not an equal-vote MTF model. A mandatory veto cannot be overcome by a high score.
 
-A mandatory veto cannot be overridden by a high score.
-
-## 2. Why M15 is the operating chart
-
-M15 is the main execution timeframe because it offers a practical compromise between structure, noise and trade frequency for XAUUSD.
-
-CASIO reads the other timeframes internally:
+## 2. Timeframe roles
 
 ```text
 H4  -> macro directional context
-H1  -> structure, value proxy, opposing liquidity, range state
+H1  -> bias, value proxy, opposing liquidity, range state
 M15 -> main trigger, sweep, BOS, session, SL/TP
-M5  -> confirmation for Scalping only
+M5  -> confirmation for Scalping and finer Python execution replay
 ```
 
-For normal live use, stay on M15. Manually changing TradingView timeframe is not necessary for the MTF analysis.
+M15 remains the normal chart timeframe. CASIO reads the other timeframes internally.
 
-## 3. H4 directional context
+## 3. Regime routing
 
-The baseline H4 bias is deterministic:
+AUTO mode first decides whether the market is a range.
+
+H1 range checks:
+
+```text
+abs(EMA20 - EMA50) / ATR <= 0.40
+20-bar H1 range / ATR <= 8.0
+```
+
+M15 range checks:
+
+```text
+ADX <= 22
+30-bar M15 range / ATR <= 5.5
+```
+
+Routing:
+
+```text
+H1 range AND M15 range
+    -> SCALPING
+otherwise
+    -> INTRADAY
+```
+
+This happens before the session overlay. A quiet Asian range therefore naturally routes toward the Scalping engine rather than forcing a trend trade.
+
+## 4. H4 directional context
+
+H4 bias is deterministic:
 
 ```text
 Bullish:
@@ -75,17 +102,11 @@ Otherwise:
 Neutral
 ```
 
-H4 does not directly create an entry. In the baseline Intraday engine it acts as a directional gate.
+Baseline Intraday requires H4 bullish for longs and H4 bearish for shorts. The research engine can test the H4 veto ON vs OFF.
 
-For a long, baseline v2 rules require H4 bullish. For a short, H4 bearish.
+## 5. H1 directional context and value
 
-The v3 Python research engine can explicitly test `h4_veto = ON` versus `OFF` to answer whether this reduction in trade count materially improves expectancy and drawdown.
-
-## 4. H1 structure and value
-
-### Directional veto
-
-H1 uses the same broad EMA logic:
+H1 bias uses the same broad EMA relationship:
 
 ```text
 Bullish: EMA20 > EMA50 and close > EMA20
@@ -93,32 +114,28 @@ Bearish: EMA20 < EMA50 and close < EMA20
 Neutral: otherwise
 ```
 
-For an Intraday long:
+Primary-session Intraday rules allow H1 to be aligned or neutral but veto the strongly opposite direction.
+
+Outside the primary sessions, v3 is stricter:
 
 ```text
-H1 bearish -> veto
-H1 bullish or neutral -> may continue
+Asia long exception       -> H1 must be bullish
+Asia short exception      -> H1 must be bearish
+Transition long exception -> H1 must be bullish
+Transition short exception-> H1 must be bearish
 ```
 
-For a short, the inverse applies.
+The current H1 value model is still an EMA/ATR proxy, not a discretionary institutional supply/demand detector.
 
-### H1 value proxy
-
-The current live rule set does **not** claim to detect discretionary institutional supply/demand zones.
-
-Its baseline value model is a practical EMA/ATR proxy. A long wants price close enough to H1 EMA20 relative to H1 ATR rather than buying after price has already extended too far.
-
-Default distance:
+Default value distance:
 
 ```text
 0.65 H1 ATR
 ```
 
-The v3 Python research engine also implements a **causal pivot-zone proxy** so the baseline EMA/ATR model can be compared against an alternative without future-data leakage.
+Python research also supports a causal pivot-zone proxy for comparison.
 
-That pivot experiment is still a rule-based proxy; it is not DOM/order-flow or institutional positioning data.
-
-### H1 opposing liquidity
+## 6. H1 opposing liquidity
 
 Prior H1 20-bar high/low levels are used as simple opposing-liquidity references:
 
@@ -127,13 +144,11 @@ LONG  -> prior H1 high
 SHORT -> prior H1 low
 ```
 
-This matters because CASIO does not blindly demand a fixed 3R target through a nearer obstacle.
+These levels cap the preferred target and determine whether there is enough room to justify the trade.
 
-## 5. M15 liquidity sweep
+## 7. M15 liquidity sweep
 
-M15 tracks the previous 20-bar high and low.
-
-A sell-side sweep for a potential long means:
+Potential long sweep:
 
 ```text
 current low < previous 20-bar low
@@ -141,9 +156,9 @@ AND
 current close > previous 20-bar low
 ```
 
-A buy-side sweep for a short is the inverse.
+Potential short sweep is the inverse.
 
-The sweep does not need to occur on the exact BOS candle. `sweepFreshBars` controls how long the event remains usable.
+The sweep remains valid for a configurable number of M15 bars.
 
 Baseline:
 
@@ -151,151 +166,106 @@ Baseline:
 sweepFreshBars = 3
 ```
 
-The v3 research engine tests 1, 2, 3, 4 and 5 bars.
+Research tests 1, 2, 3, 4 and 5.
 
-## 6. M15 structure confirmation
+## 8. M15 BOS proxy
 
-The current BOS proxy compares the current M15 close with the previous five-bar structure:
+Bullish:
 
 ```text
-Bullish BOS proxy:
 close > previous 5-bar high
 AND close > open
+```
 
-Bearish BOS proxy:
+Bearish:
+
+```text
 close < previous 5-bar low
 AND close < open
 ```
 
-This is intentionally deterministic. It is not a fully discretionary market-structure parser.
+This is a deterministic proxy, not a discretionary market-structure parser.
 
-## 7. Session filter
+## 9. Session classification
 
-Baseline Intraday trading windows are fixed in UTC so chart timezone changes do not alter the rules:
+Every M15 bar belongs to one of four UTC buckets:
 
 ```text
-London:   07:00-11:00 UTC
-New York: 12:30-16:30 UTC
+ASIA        00:00-06:00
+LONDON      07:00-11:00
+NEW YORK    12:30-16:30
+TRANSITION  all remaining times
 ```
 
-The v3 research engine tests several bounded session profiles rather than assuming these windows are optimal forever.
+The default policy is:
 
-## 8. Intraday engine
+```text
+ADAPTIVE_24H
+```
 
-A baseline long requires all of the following:
+A research-only compatibility comparison also exists:
+
+```text
+PRIMARY_ONLY
+```
+
+`PRIMARY_ONLY` reproduces the earlier Intraday restriction to London/New York. Scalping remains range-regime driven across sessions in both policies.
+
+## 10. Primary Intraday playbook — London / New York
+
+A long requires:
 
 ```text
 H4 bullish
-H1 is not bearish
-H1 value condition passes
+H1 not bearish
+H1 value condition
 recent M15 sell-side sweep
-M15 bullish BOS proxy
+bullish M15 BOS proxy
 inside London or New York primary window
->= minimum usable R:R to H1 opposing liquidity
-score >= minimum score
+usable R:R >= 2.5
+score >= 80
 ```
 
 Short is the inverse.
 
-Defaults:
+This remains the normal directional playbook.
+
+## 11. Asia directional exception
+
+Asia is not simply treated like London.
+
+In AUTO mode, if H1+M15 qualify as a range, CASIO uses Scalping. If the market is directional, an Intraday trade can still qualify, but the default Asia exception requires:
 
 ```text
-minimum score = 80
-preferred target R:R = 3.0
-minimum usable R:R = 2.5
+normal H4 directional gate
+H1 aligned in the trade direction
+H1 value condition
+recent M15 sweep
+M15 BOS
+usable R:R >= 3.0
+score >= 90
 ```
 
-### Intraday stop
+Asia gets only a 5-point session contribution versus 10 points in London/New York. The stricter threshold prevents the system from manufacturing low-quality overnight trend trades simply because 24h trading is technically possible.
 
-For a long, the stop distance is the larger of:
+## 12. Transition directional exception
+
+Hours outside Asia, London and New York are classified as `TRANSITION`.
+
+A Transition Intraday setup must pass everything in the directional core plus:
 
 ```text
-distance below recent M15 liquidity low with a 0.20 ATR buffer
-or
-1.00 M15 ATR
+H1 aligned in the trade direction
+M15 ADX >= 25
+usable R:R >= 3.0
+score >= 90
 ```
 
-Short is mirrored above recent liquidity.
+Transition receives no session bonus. In practice this means only unusually clean directional setups can pass.
 
-### Intraday target
+## 13. Intraday score
 
-CASIO calculates two targets:
-
-```text
-preferred target = entry +/- stop distance * preferred R:R
-liquidity target = opposing H1 20-bar liquidity
-```
-
-It chooses the nearer target in the trade direction.
-
-Therefore a setup can be rejected even if direction looks attractive when the available room before H1 opposing liquidity is too small.
-
-## 9. Scalping engine
-
-Scalping is a separate mean-reversion strategy.
-
-### Range regime
-
-H1 baseline range checks:
-
-```text
-abs(EMA20 - EMA50) / ATR <= 0.40
-20-bar H1 range / ATR <= 8.0
-```
-
-M15 baseline range checks:
-
-```text
-ADX <= 22
-30-bar M15 range / ATR <= 5.5
-```
-
-Both must pass for AUTO mode to select `SCALPING`.
-
-Otherwise AUTO selects `INTRADAY`.
-
-### Range-edge trigger
-
-Long scalp:
-
-```text
-M15 trades below the prior 30-bar range low
-AND closes back above that range low
-```
-
-Short is the inverse at the upper edge.
-
-### M5 confirmation
-
-Baseline bullish confirmation:
-
-```text
-M5 close > M5 open
-AND
-M5 close > M5 EMA20
-```
-
-Bearish is the inverse.
-
-M5 is not required for baseline Intraday trades.
-
-The v3 Python engine tests Scalping with this confirmation ON and OFF so its higher win rate, if any, is evaluated against the worse/later entry opportunity and actual expectancy.
-
-### Scalping target
-
-Target is the M15 30-bar range mean.
-
-Default minimum usable R:R:
-
-```text
-1.3
-```
-
-## 10. Scoring vs mandatory conditions
-
-The score is a **setup-quality checklist**, not a calibrated probability.
-
-An Intraday long can receive points for:
+The directional score is still a checklist, not a probability.
 
 ```text
 H4 directional alignment       20
@@ -303,78 +273,137 @@ H1 alignment / neutrality      15 or 8
 H1 value condition             15
 recent M15 liquidity sweep     20
 M15 BOS                        15
-primary session                10
+session contribution           10 London/NY, 5 Asia, 0 Transition
 usable R:R                      5
 ```
 
-A score of `90` does **not** mean a 90% win probability.
+Maximum scores therefore differ by session unless all directional conditions align.
 
-More importantly, a setup cannot use score to bypass a mandatory veto.
+A score of 90 does **not** mean a 90% probability of winning.
 
-## 11. AUTO mode
+## 14. Intraday stop and target
 
-The current routing logic is:
+Long stop distance is the larger of:
 
 ```text
-H1 range regime AND M15 range regime
-    -> SCALPING
-otherwise
-    -> INTRADAY
+distance below M15 liquidity low with a 0.20 ATR buffer
+or
+1.00 M15 ATR
 ```
 
-This is why CASIO can legitimately show `WAIT` even when one timeframe looks bullish or bearish. The whole active playbook still has to qualify.
+Short is mirrored above liquidity.
 
-## 12. v3 FAST vs v2 Pine
-
-### v3 FAST
+Preferred target:
 
 ```text
-indicator()
-fast live dashboard
+entry +/- stop distance * 3.0R
+```
+
+Liquidity target:
+
+```text
+opposing H1 20-bar liquidity
+```
+
+CASIO chooses the nearer target in the trade direction. If the available room is below the current session's required R:R, the setup is rejected.
+
+## 15. Scalping engine
+
+Scalping is a separate mean-reversion playbook.
+
+Long trigger:
+
+```text
+H1 range regime
+M15 range regime
+M15 trades below prior 30-bar range low
+M15 closes back above range low
+M5 bullish confirmation
+>= 1:1.3 to range mean
+score >= 85
+```
+
+Short is the inverse at the upper edge.
+
+M5 bullish confirmation:
+
+```text
+M5 close > M5 open
+AND
+M5 close > M5 EMA20
+```
+
+Target is the M15 30-bar range mean.
+
+Scalping is intentionally not blocked by the Intraday session gate. That is how CASIO can participate in quieter sessions without forcing directional logic.
+
+## 16. What AUTO now means
+
+```text
+Range regime?
+    YES -> SCALPING, regardless of session
+    NO  -> INTRADAY
+             |
+             +-- London/NY -> normal threshold
+             +-- Asia      -> stricter aligned exception
+             +-- Transition-> stricter aligned + ADX exception
+```
+
+`WAIT` remains a normal and desirable output.
+
+## 17. TradingView vs automated Python
+
+### v3 FAST Pine
+
+```text
+visual chart/dashboard
 bundled H4/H1/M5 requests
-limited requested MTF history
-live signal alerts
-no heavy historical rolling audit
+session-aware rules
+optional Pine alerts for accounts that support them
 ```
 
-### v2 MTF reference
+### Python live engine
 
 ```text
-strategy()
-TradingView Strategy Tester
-historical trade replay
-rolling closed-trade audit
-heavier chart recalculation
+Dukascopy M5
+causal H1/H4 reconstruction
+session-aware v3 rules
+runs every M15 close via GitHub Actions
+sends valid fresh signals through Apps Script
 ```
 
-They use the same intended baseline strategy logic, but exact signal parity should still be checked whenever Pine implementation details change.
+TradingView Free is not required to generate the automated email signal.
 
-## 13. Current limitations
+## 18. v2 reference limitation
 
-CASIO v3 currently does not claim to have:
+`pine/CASIO_XAUUSD_v2_MTF.pine` remains useful as a reference for the original v2 MTF core, but it does **not** contain the new v3 adaptive 24h session overlay. It is therefore no longer a complete 1:1 historical reference for current v3 entry gating.
+
+## 19. Current limitations
+
+CASIO v3 does not claim to have:
 
 - a true discretionary supply/demand-zone detector,
 - institutional order-flow data,
 - DOM/order-book analysis,
-- news sentiment built into the Pine signal,
-- spread/slippage modelling identical to a live broker,
+- news sentiment inside the signal,
+- broker-identical spread/slippage modelling,
 - a statistically calibrated probability score,
 - automatic profitable self-optimization,
-- proven tick-for-tick parity between Pine and the Python research engine.
+- proven tick-for-tick parity between TradingView and Python.
 
-The Python v3 engine now reproduces the rule family independently, but parity remains something to **verify**, not assume.
+The session rules are hypotheses to validate, not assumptions that Asia/Transition must be profitable.
 
-## 14. What the research engine is trying to learn
+## 20. Research questions
 
-The current priority questions are:
+The research engine now asks:
 
 1. Does the H4 veto improve expectancy enough to justify fewer trades?
-2. Does the EMA/ATR H1 value proxy outperform a causal pivot-zone proxy?
-3. Which tested London/New York window is most robust?
+2. Does EMA/ATR H1 value outperform the causal pivot proxy?
+3. Does `ADAPTIVE_24H` outperform the older `PRIMARY_ONLY` policy after costs and drawdown, and which sessions actually contribute positive expectancy?
 4. Which sweep freshness remains stable out-of-sample?
 5. Does M5 Scalping confirmation improve net expectancy?
-6. What minimum Intraday usable R:R is robust?
+6. What primary-session minimum usable R:R is robust?
 7. Does Scalping remain positive after friction?
-8. Which choices remain stable across years and walk-forward segments?
+8. Which choices remain stable across years, modes, sessions and walk-forward segments?
 
-See `docs/RESEARCH_V3.md` for how CASIO tests those questions without automatically promoting the prettiest backtest.
+See `docs/RESEARCH_V3.md` for the validation process.
