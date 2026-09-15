@@ -34,7 +34,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -45,7 +45,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          npm install --no-save dukascopy-node@1.39.3
+          npm install --no-save dukascopy-node@1.50.0
 
       - name: Determine fetch window
         id: window
