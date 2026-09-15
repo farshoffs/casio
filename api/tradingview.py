@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -7,6 +8,9 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 SCHEMA = "casio.tv.v1"
+# Safe to keep in source: this is only a one-way hash of the deployment token.
+DEFAULT_TOKEN_SHA256 = "59de3b12b3bf168eba0a5a4b10f84b9fc79165bcf218949fc134aaa458f563f9"
+
 REQUIRED_FIELDS = {
     "schema",
     "event",
@@ -60,6 +64,18 @@ def _normalize(payload: dict) -> dict:
     }
 
 
+def _authorized(supplied_token: str) -> bool:
+    expected_token = os.environ.get("CASIO_WEBHOOK_TOKEN", "")
+    if expected_token:
+        return bool(supplied_token) and hmac.compare_digest(supplied_token, expected_token)
+
+    expected_hash = os.environ.get("CASIO_WEBHOOK_TOKEN_SHA256", DEFAULT_TOKEN_SHA256)
+    if not expected_hash or not supplied_token:
+        return False
+    supplied_hash = hashlib.sha256(supplied_token.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(supplied_hash, expected_hash)
+
+
 class handler(BaseHTTPRequestHandler):
     def _json(self, status: int, body: dict) -> None:
         raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -74,16 +90,10 @@ class handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "service": "casio-tradingview", "schema": SCHEMA})
 
     def do_POST(self) -> None:
-        expected_token = os.environ.get("CASIO_WEBHOOK_TOKEN", "")
-        if not expected_token:
-            self._json(503, {"ok": False, "error": "CASIO_WEBHOOK_TOKEN is not configured"})
-            return
-
         parsed = urlparse(self.path)
         supplied_token = parse_qs(parsed.query).get("token", [""])[0]
-        # x-casio-token is supported for manual tests; TradingView should use ?token= in the URL.
         supplied_token = supplied_token or self.headers.get("x-casio-token", "")
-        if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
+        if not _authorized(supplied_token):
             self._json(401, {"ok": False, "error": "unauthorized"})
             return
 
@@ -107,9 +117,6 @@ class handler(BaseHTTPRequestHandler):
             self._json(400, {"ok": False, "error": str(exc)})
             return
 
-        # Fast acknowledgement is intentional: TradingView cancels slow webhook requests.
-        # Vercel runtime logs provide the first live signal sink. Persistent storage/dashboard
-        # can subscribe to this normalized event in the next CASIO layer.
         print("CASIO_SIGNAL " + json.dumps(signal, separators=(",", ":"), sort_keys=True))
         self._json(
             202,
