@@ -1,0 +1,217 @@
+//@version=6
+strategy("CASIO XAUUSD v1 — Intraday + Scalping", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_every_tick=false, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, max_labels_count=500)
+
+// CASIO TradingView adapter.
+// Mirrors the deterministic rules in casio/config.py + casio/strategy.py.
+// Recommended chart: XAUUSD, 15 minute.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+groupMode = "Mode"
+modeInput = input.string("AUTO", "Strategy mode", options=["AUTO", "INTRADAY", "SCALPING"], group=groupMode)
+showDashboard = input.bool(true, "Show dashboard", group=groupMode)
+showLevels = input.bool(true, "Show stop/target", group=groupMode)
+
+// Keep defaults in sync with casio/config.py.
+groupIntraday = "Intraday"
+intradayMinScore = input.int(70, "Minimum score", minval=0, maxval=100, group=groupIntraday)
+intradayRR = input.float(3.0, "Target R:R", minval=0.5, step=0.1, group=groupIntraday)
+maxAtrPct = input.float(0.012, "Maximum ATR / price", minval=0.001, step=0.001, group=groupIntraday)
+
+groupScalp = "Scalping / Sideways"
+scalpMinScore = input.int(68, "Minimum score", minval=0, maxval=100, group=groupScalp)
+scalpRR = input.float(1.5, "Target R:R", minval=0.5, step=0.1, group=groupScalp)
+maxAdx = input.float(22.0, "Maximum ADX", minval=1, step=0.5, group=groupScalp)
+maxRangeAtr = input.float(5.5, "Maximum 30-bar range / ATR", minval=1, step=0.1, group=groupScalp)
+edgeFraction = input.float(0.22, "Range-edge fraction", minval=0.05, maxval=0.45, step=0.01, group=groupScalp)
+
+groupAlert = "Webhook"
+sendWebhookAlerts = input.bool(true, "Emit alert() JSON", group=groupAlert)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Features — mirrors casio/strategy.py
+// ─────────────────────────────────────────────────────────────────────────────
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+atr14 = ta.atr(14)
+[plusDI, minusDI, adx14] = ta.dmi(14, 14)
+
+hh20 = ta.highest(high[1], 20)
+ll20 = ta.lowest(low[1], 20)
+rangeHigh30 = ta.highest(high[1], 30)
+rangeLow30 = ta.lowest(low[1], 30)
+rangeSize30 = rangeHigh30 - rangeLow30
+rangeAtr = atr14 > 0 ? rangeSize30 / atr14 : na
+
+hasHistory = not na(ema50) and not na(atr14) and not na(adx14) and not na(rangeHigh30) and not na(rangeLow30)
+sideways = hasHistory and adx14 <= maxAdx and rangeAtr <= maxRangeAtr
+
+autoMode = sideways ? "SCALPING" : "INTRADAY"
+activeMode = modeInput == "AUTO" ? autoMode : modeInput
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Intraday score
+// Python parity:
+// trend 25 + sweep 25 + candle 15 + volatility 10 + alignment 10
+// ─────────────────────────────────────────────────────────────────────────────
+intradayScore = 0
+intradayDirection = 0
+
+bullishTrend = ema20 > ema50 and close > ema20
+bearishTrend = ema20 < ema50 and close < ema20
+
+if bullishTrend
+    intradayDirection := 1
+    intradayScore += 25
+else if bearishTrend
+    intradayDirection := -1
+    intradayScore += 25
+
+sellSideSweep = intradayDirection == 1 and low < ll20 and close > ll20
+buySideSweep = intradayDirection == -1 and high > hh20 and close < hh20
+
+if sellSideSweep or buySideSweep
+    intradayScore += 25
+
+intradayConfirm = (intradayDirection == 1 and close > open) or (intradayDirection == -1 and close < open)
+if intradayConfirm
+    intradayScore += 15
+
+atrPct = close != 0 ? atr14 / close : na
+if not na(atrPct) and atrPct <= maxAtrPct
+    intradayScore += 10
+
+if intradayDirection != 0
+    intradayScore += 10
+
+intradayValid = hasHistory and activeMode == "INTRADAY" and intradayDirection != 0 and intradayScore >= intradayMinScore
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scalping score
+// Python parity:
+// range edge 30 + edge sweep 25 + low ADX 20 + compression 10 + candle 10
+// ─────────────────────────────────────────────────────────────────────────────
+scalpScore = 0
+scalpDirection = 0
+rangePos = rangeSize30 > 0 ? (close - rangeLow30) / rangeSize30 : na
+
+if not na(rangePos) and rangePos <= edgeFraction
+    scalpDirection := 1
+    scalpScore += 30
+    if low < rangeLow30 and close > rangeLow30
+        scalpScore += 25
+else if not na(rangePos) and rangePos >= 1.0 - edgeFraction
+    scalpDirection := -1
+    scalpScore += 30
+    if high > rangeHigh30 and close < rangeHigh30
+        scalpScore += 25
+
+if adx14 <= maxAdx
+    scalpScore += 20
+if rangeAtr <= maxRangeAtr
+    scalpScore += 10
+
+scalpConfirm = (scalpDirection == 1 and close > open) or (scalpDirection == -1 and close < open)
+if scalpConfirm
+    scalpScore += 10
+
+scalpValid = hasHistory and activeMode == "SCALPING" and sideways and scalpDirection != 0 and scalpScore >= scalpMinScore
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signal + risk levels
+// ─────────────────────────────────────────────────────────────────────────────
+signalValid = intradayValid or scalpValid
+signalDirection = intradayValid ? intradayDirection : scalpValid ? scalpDirection : 0
+signalScore = intradayValid ? intradayScore : scalpValid ? scalpScore : activeMode == "INTRADAY" ? intradayScore : scalpScore
+signalRR = intradayValid ? intradayRR : scalpValid ? scalpRR : na
+stopDistance = intradayValid ? math.max(atr14 * 1.1, syminfo.mintick) : scalpValid ? math.max(atr14 * 0.8, syminfo.mintick) : na
+signalEntry = signalValid ? close : na
+signalStop = signalDirection == 1 ? signalEntry - stopDistance : signalDirection == -1 ? signalEntry + stopDistance : na
+signalTarget = signalDirection == 1 ? signalEntry + stopDistance * signalRR : signalDirection == -1 ? signalEntry - stopDistance * signalRR : na
+
+canEnter = barstate.isconfirmed and signalValid and strategy.position_size == 0
+
+var float liveStop = na
+var float liveTarget = na
+var string liveMode = "NONE"
+
+if canEnter
+    liveStop := signalStop
+    liveTarget := signalTarget
+    liveMode := activeMode
+    if signalDirection == 1
+        strategy.entry("CASIO-L", strategy.long)
+        strategy.exit("CASIO-L-X", "CASIO-L", stop=liveStop, limit=liveTarget)
+    else
+        strategy.entry("CASIO-S", strategy.short)
+        strategy.exit("CASIO-S-X", "CASIO-S", stop=liveStop, limit=liveTarget)
+
+// Keep attached exits active while the trade remains open.
+if strategy.position_size > 0 and not na(liveStop) and not na(liveTarget)
+    strategy.exit("CASIO-L-X", "CASIO-L", stop=liveStop, limit=liveTarget)
+if strategy.position_size < 0 and not na(liveStop) and not na(liveTarget)
+    strategy.exit("CASIO-S-X", "CASIO-S", stop=liveStop, limit=liveTarget)
+
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    liveStop := na
+    liveTarget := na
+    liveMode := "NONE"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JSON webhook payload
+// TradingView sends valid JSON as application/json.
+// ─────────────────────────────────────────────────────────────────────────────
+f_num(v) => str.tostring(v, format.mintick)
+f_dir(d) => d == 1 ? "long" : "short"
+f_mode(m) => m == "INTRADAY" ? "intraday" : "scalping"
+
+if canEnter and sendWebhookAlerts
+    payload = "{" +
+      "\"schema\":\"casio.tv.v1\"," +
+      "\"event\":\"signal\"," +
+      "\"symbol\":\"" + syminfo.tickerid + "\"," +
+      "\"ticker\":\"" + syminfo.ticker + "\"," +
+      "\"timeframe\":\"" + timeframe.period + "\"," +
+      "\"bar_time\":" + str.tostring(time) + "," +
+      "\"mode\":\"" + f_mode(activeMode) + "\"," +
+      "\"direction\":\"" + f_dir(signalDirection) + "\"," +
+      "\"score\":" + str.tostring(signalScore) + "," +
+      "\"entry\":" + f_num(signalEntry) + "," +
+      "\"stop\":" + f_num(signalStop) + "," +
+      "\"target\":" + f_num(signalTarget) + "," +
+      "\"rr\":" + str.tostring(signalRR) + "," +
+      "\"adx\":" + str.tostring(adx14, "#.##") + "," +
+      "\"atr\":" + f_num(atr14) +
+      "}"
+    alert(payload, alert.freq_once_per_bar_close)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visuals
+// ─────────────────────────────────────────────────────────────────────────────
+plot(ema20, "EMA 20", linewidth=1)
+plot(ema50, "EMA 50", linewidth=1)
+plot(activeMode == "SCALPING" ? rangeHigh30 : na, "Range high", style=plot.style_linebr)
+plot(activeMode == "SCALPING" ? rangeLow30 : na, "Range low", style=plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? liveStop : na, "Live stop", style=plot.style_linebr, linewidth=2)
+plot(showLevels and strategy.position_size != 0 ? liveTarget : na, "Live target", style=plot.style_linebr, linewidth=2)
+
+plotshape(canEnter and signalDirection == 1, title="CASIO Long", text="CASIO\nLONG", style=shape.labelup, location=location.belowbar, size=size.tiny)
+plotshape(canEnter and signalDirection == -1, title="CASIO Short", text="CASIO\nSHORT", style=shape.labeldown, location=location.abovebar, size=size.tiny)
+
+bgcolor(activeMode == "SCALPING" ? color.new(color.orange, 92) : color.new(color.blue, 95), title="CASIO regime")
+
+var table dash = table.new(position.top_right, 2, 6, border_width=1)
+if barstate.islast and showDashboard
+    table.cell(dash, 0, 0, "CASIO")
+    table.cell(dash, 1, 0, "XAUUSD")
+    table.cell(dash, 0, 1, "MODE")
+    table.cell(dash, 1, 1, activeMode)
+    table.cell(dash, 0, 2, "ADX")
+    table.cell(dash, 1, 2, str.tostring(adx14, "#.##"))
+    table.cell(dash, 0, 3, "SCORE")
+    table.cell(dash, 1, 3, str.tostring(signalScore))
+    table.cell(dash, 0, 4, "SIGNAL")
+    table.cell(dash, 1, 4, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT")
+    table.cell(dash, 0, 5, "REGIME")
+    table.cell(dash, 1, 5, sideways ? "SIDEWAYS" : "DIRECTIONAL")
