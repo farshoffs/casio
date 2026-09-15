@@ -45,6 +45,14 @@ def latest_signal(
         return None
 
     direction = int(row["direction"])
+    mode = str(row["mode"])
+    if mode == "SCALPING":
+        required_score = cfg.scalp_min_score
+        required_rr = cfg.scalp_min_rr
+    else:
+        required_score = int(round(float(row["required_score"])))
+        required_rr = round(float(row["required_rr"]), 2)
+
     payload = {
         "schema": "casio.tv.v3",
         "event": "signal",
@@ -52,13 +60,13 @@ def latest_signal(
         "ticker": "XAUUSD",
         "timeframe": "15",
         "bar_time": int(pd.Timestamp(bar_open).timestamp() * 1000),
-        "mode": str(row["mode"]).lower(),
+        "mode": mode.lower(),
         "regime": str(row["regime"]),
         "session": str(row["session"]),
         "playbook": str(row["playbook"]),
         "session_policy": cfg.session_policy,
-        "required_score": int(round(float(row["required_score"]))),
-        "required_rr": round(float(row["required_rr"]), 2),
+        "required_score": required_score,
+        "required_rr": required_rr,
         "direction": "long" if direction == 1 else "short",
         "score": int(round(float(row["score"]))),
         "entry": round(float(row["entry"]), 4),
