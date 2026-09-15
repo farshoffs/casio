@@ -1,6 +1,6 @@
 # CASIO v3 Email Alerts — TradingView Free setup
 
-The current user has a TradingView Free account without alert/webhook automation. Therefore CASIO email alerts do **not** depend on TradingView.
+The current setup uses TradingView Free without alert/webhook automation, so CASIO email alerts do **not** depend on TradingView.
 
 Current path:
 
@@ -15,7 +15,8 @@ GitHub Actions
 casio/live_signal.py
         |
         v
-CASIO v3 / v2-rule baseline
+CASIO v3
+v2 MTF core + adaptive 24h session overlay
         |
         +-- WAIT -> no email
         |
@@ -32,69 +33,41 @@ TradingView remains the visual chart/dashboard only.
 
 ## 1. Google Apps Script
 
-Create or update a standalone Apps Script project with:
+The existing standalone Apps Script project uses:
 
 ```text
 apps-script/Code.gs
 ```
 
-Run:
+Initial setup:
 
 ```text
 setupCasio()
-```
-
-Approve permissions, then run:
-
-```text
 sendTestEmail()
 ```
 
-The default recipient is:
+Default recipient:
 
 ```text
 farhanshoffi@moe.gov.my
 ```
 
-## 2. Deploy Apps Script as a Web App
+## 2. Web App deployment
 
 ```text
 Deploy
--> New deployment
 -> Web app
 -> Execute as: Me
 -> Who has access: Anyone
--> Deploy
 ```
 
-If your Google Workspace policy blocks public Web Apps, the GitHub runner cannot call it until that policy restriction is resolved or the script is deployed from a suitable account.
+`printWebhookUrl()` returns the private URL containing the CASIO token.
 
-After deployment run:
+Do not commit that URL into source control.
 
-```text
-printWebhookUrl()
-```
+## 3. GitHub Actions secret
 
-It returns a private URL containing the CASIO token, conceptually:
-
-```text
-https://script.google.com/macros/s/DEPLOYMENT_ID/exec?token=PRIVATE_TOKEN
-```
-
-Do not commit this URL into GitHub source code.
-
-## 3. Add the one GitHub Actions secret
-
-Open the `farshoffs/casio` repository:
-
-```text
-Settings
--> Secrets and variables
--> Actions
--> New repository secret
-```
-
-Name:
+Repository secret:
 
 ```text
 CASIO_GAS_WEBHOOK_URL
@@ -106,7 +79,7 @@ Value:
 the complete private URL returned by printWebhookUrl()
 ```
 
-This is the only secret required by the current free live-email workflow.
+The current workflow has already been designed to read only this secret for email delivery.
 
 ## 4. Live signal schedule
 
@@ -122,79 +95,115 @@ Scheduled minutes:
 02, 17, 32, 47 each hour
 ```
 
-The small offset gives the latest M15 candle time to close and the data source time to publish the bar.
-
-Each run fetches recent XAUUSD M5 data, rebuilds the H4/H1/M15/M5 context, evaluates the same CASIO v3/v2-rule baseline and creates a `casio.tv.v3` payload only for a fresh valid setup.
-
-If there is no setup, nothing is emailed.
-
-If GitHub starts the scheduled job too late, `casio/live_signal.py` rejects a setup older than its configured freshness limit instead of sending an obsolete entry.
-
-## 5. Email contents
-
-The Apps Script formatter includes fields such as:
+Each run:
 
 ```text
-LONG / SHORT
-INTRADAY / SCALPING
-regime
-session
-score
-entry
-stop
-target
-R:R
-H4 bias
-H1 bias
-M15 ADX
-bar time
+fetch recent Dukascopy M5
+-> rebuild H4/H1/M15/M5 context
+-> classify ASIA / LONDON / NEW YORK / TRANSITION
+-> route SCALPING or INTRADAY
+-> apply session-specific gates
+-> reject stale/invalid setup
+-> create casio.tv.v3 only for fresh valid LONG/SHORT
 ```
 
-The v3 score is setup confluence, not a statistically calibrated probability of winning.
+No valid setup means no email.
 
-## 6. Deduplication
+## 5. Session-aware signal fields
 
-Apps Script deduplicates repeated trade events using signal details including bar time, mode, direction and entry. Therefore reruns of the same M15 setup should not create repeated emails during the cache window.
+The v3 live payload now includes:
 
-## 7. TradingView does not need an alert
+```text
+session
+playbook
+session_policy
+required_score
+required_rr
+```
 
-Your normal TradingView setup remains:
+Typical `playbook` values:
+
+```text
+RANGE_MEAN_REVERSION
+PRIMARY_INTRADAY
+ASIA_TREND_EXCEPTION
+TRANSITION_TREND_EXCEPTION
+```
+
+The current Apps Script email already displays the session, mode, score, entry, stop, target, R:R, H4/H1 bias and M15 ADX. Extra session-aware fields are retained in the payload for logging/auditing even if the current email template does not render every field.
+
+## 6. Session rules used by the live email engine
+
+```text
+London / New York Intraday
+score >= 80
+usable R:R >= 2.5
+
+Asia directional exception
+H1 aligned
+score >= 90
+usable R:R >= 3.0
+
+Transition directional exception
+H1 aligned
+M15 ADX >= 25
+score >= 90
+usable R:R >= 3.0
+
+Scalping
+range-regime driven across sessions
+```
+
+These are current live rules, not claims that every session is profitable. The research engine compares them against the older `primary_only` policy.
+
+## 7. Freshness and deduplication
+
+GitHub scheduled jobs can start late. `casio/live_signal.py` rejects a setup older than the configured freshness limit rather than sending an obsolete entry.
+
+Apps Script deduplicates repeated trade events using bar time, mode, direction and entry, so reruns of the same setup should not create repeated emails during the cache window.
+
+## 8. TradingView setup
+
+Normal visual setup:
 
 ```text
 XAUUSD
 M15
 pine/CASIO_XAUUSD_v3_FAST.pine
 AUTO
+ADAPTIVE_24H
 ```
 
-No TradingView Create Alert step is required for this architecture.
+No TradingView `Create Alert` step is required.
 
-The optional files/API routes that support TradingView webhooks are retained for compatibility with accounts that have alert features, but they are not required for the current setup.
+## 9. Vercel
 
-## 8. Vercel is no longer in the critical email path
+The existing Vercel `api/tradingview.py` receiver remains for webhook compatibility and future integrations, but it is not in the critical Free-plan email path.
 
-The existing Vercel `api/tradingview.py` receiver remains useful for webhook compatibility and future integrations, but the Free-plan live signal workflow sends its valid signal directly from GitHub Actions to Google Apps Script.
+Current critical path:
 
-This removes the need for TradingView -> Vercel webhook triggering.
+```text
+GitHub Actions -> Apps Script -> email
+```
 
-## 9. Market data
+## 10. Market data
 
-Historical and recent automation data comes from Dukascopy. The persistent research dataset is maintained separately by:
+Persistent research history is maintained separately by:
 
 ```text
 .github/workflows/market-data-sync.yml
 ```
 
-which updates:
+which maintains:
 
 ```text
 data/xauusd_m5.csv
 ```
 
-The live signal workflow fetches recent bars independently so it does not need to wait for the daily persistent-data commit.
+The live signal workflow fetches recent bars independently, so it does not need to wait for the daily persistent-data commit.
 
-## 10. Security
+## 11. Security
 
-Keep `CASIO_GAS_WEBHOOK_URL` only in GitHub Actions Secrets. Anyone with that full URL may be able to submit payloads to the Apps Script endpoint, so rotate the Apps Script token if the URL is exposed.
+Keep `CASIO_GAS_WEBHOOK_URL` only in GitHub Actions Secrets. Anyone with the complete URL may be able to submit payloads to the Apps Script endpoint, so rotate the Apps Script token if it is exposed.
 
-Do not put the secret in Pine, README files, workflow YAML or normal repository variables.
+Do not place the secret in Pine, Markdown, workflow YAML or normal repository variables.
