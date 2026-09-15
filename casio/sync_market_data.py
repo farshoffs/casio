@@ -39,7 +39,7 @@ def _normalise(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_csv(url: str) -> pd.DataFrame:
-    request = Request(url, headers={"User-Agent": "CASIO-GitHub-Sync/1"})
+    request = Request(url, headers={"User-Agent": "CASIO-GitHub-Sync/2"})
     with urlopen(request, timeout=30) as response:
         raw = response.read()
         content_type = response.headers.get("Content-Type", "")
@@ -52,9 +52,15 @@ def fetch_csv(url: str) -> pd.DataFrame:
     return _normalise(pd.read_csv(io.BytesIO(raw)))
 
 
-def sync(url: str, output: str | Path) -> tuple[int, int, int]:
+def load_csv(path: str | Path) -> pd.DataFrame:
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"market file missing or empty: {path}")
+    return _normalise(pd.read_csv(path))
+
+
+def merge_frame(remote: pd.DataFrame, output: str | Path) -> tuple[int, int, int]:
     output = Path(output)
-    remote = fetch_csv(url)
     old_count = 0
 
     if output.exists() and output.stat().st_size > 0:
@@ -68,18 +74,36 @@ def sync(url: str, output: str | Path) -> tuple[int, int, int]:
     serial = merged.copy()
     serial["timestamp"] = serial["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     serial.to_csv(output, index=False)
-
     return old_count, len(remote), len(merged)
 
 
+def sync_url(url: str, output: str | Path) -> tuple[int, int, int]:
+    return merge_frame(fetch_csv(url), output)
+
+
+def sync_file(source: str | Path, output: str | Path) -> tuple[int, int, int]:
+    return merge_frame(load_csv(source), output)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Merge the CASIO realtime M5 feed into data/xauusd_m5.csv")
-    parser.add_argument("--url", required=True, help="CASIO Vercel public market CSV endpoint")
+    parser = argparse.ArgumentParser(description="Merge XAUUSD M5 market data into data/xauusd_m5.csv")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--url", help="Remote market CSV endpoint")
+    source.add_argument("--file", help="Local market CSV file, e.g. Dukascopy download")
     parser.add_argument("--output", default="data/xauusd_m5.csv")
     args = parser.parse_args()
 
-    before, received, after = sync(args.url, args.output)
-    print(f"CASIO M5 sync: local_before={before} remote={received} merged={after} added={max(0, after-before)}")
+    if args.url:
+        before, received, after = sync_url(args.url, args.output)
+        source_name = args.url
+    else:
+        before, received, after = sync_file(args.file, args.output)
+        source_name = args.file
+
+    print(
+        f"CASIO M5 sync: source={source_name} local_before={before} "
+        f"received={received} merged={after} added={max(0, after-before)}"
+    )
 
 
 if __name__ == "__main__":
