@@ -1,0 +1,114 @@
+name: CASIO v3 Live Signal Email
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run just after each M15 close. GitHub Actions schedules can be delayed,
+    # so live_signal.py rejects stale setups older than 35 minutes.
+    - cron: '2,17,32,47 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-v3-live-signal
+  cancel-in-progress: true
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CASIO_GAS_WEBHOOK_URL: ${{ secrets.CASIO_GAS_WEBHOOK_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Determine live fetch window
+        id: window
+        shell: bash
+        run: |
+          START=$(python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path('data/xauusd_m5.csv')
+          now = pd.Timestamp.now(tz='UTC')
+          if path.exists() and path.stat().st_size > 0:
+              ts = pd.read_csv(path, usecols=['timestamp'])['timestamp']
+              latest = pd.to_datetime(ts, utc=True, errors='coerce').dropna().max()
+              start = latest - pd.Timedelta(days=5) if pd.notna(latest) else now - pd.Timedelta(days=120)
+          else:
+              start = now - pd.Timedelta(days=120)
+          print(start.isoformat())
+          PY
+          )
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch latest Dukascopy M5 bars
+        run: |
+          node scripts/fetch_dukascopy.mjs \
+            --from '${{ steps.window.outputs.start }}' \
+            --output tmp/latest_xauusd_m5.csv \
+            --price-type bid
+
+      - name: Build current live dataset
+        shell: bash
+        run: |
+          if [ -f data/xauusd_m5.csv ]; then
+            cp data/xauusd_m5.csv tmp/live_xauusd_m5.csv
+            python -m casio.sync_market_data \
+              --file tmp/latest_xauusd_m5.csv \
+              --output tmp/live_xauusd_m5.csv
+          else
+            python -m casio.sync_market_data \
+              --file tmp/latest_xauusd_m5.csv \
+              --output tmp/live_xauusd_m5.csv
+          fi
+
+      - name: Evaluate latest CASIO v3 setup
+        run: |
+          python -m casio.live_signal \
+            --data tmp/live_xauusd_m5.csv \
+            --output tmp/casio_live_signal.json \
+            --max-age-minutes 35
+
+      - name: Send email through Google Apps Script
+        shell: bash
+        run: |
+          if [ ! -f tmp/casio_live_signal.json ]; then
+            echo '## CASIO v3 live signal' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No fresh valid LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo '## CASIO v3 live signal' >> "$GITHUB_STEP_SUMMARY"
+          cat tmp/casio_live_signal.json >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$CASIO_GAS_WEBHOOK_URL" ]; then
+            echo 'Signal found, but CASIO_GAS_WEBHOOK_URL secret is not configured. Email skipped.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          RESPONSE=$(curl -sS -L --retry 3 --retry-delay 2 \
+            -H 'Content-Type: application/json' \
+            --data-binary @tmp/casio_live_signal.json \
+            "$CASIO_GAS_WEBHOOK_URL")
+          echo "Apps Script response: $RESPONSE" >> "$GITHUB_STEP_SUMMARY"
