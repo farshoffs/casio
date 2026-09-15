@@ -1,8 +1,16 @@
-# CASIO + TradingView
+# CASIO v3 + TradingView
 
-TradingView remains the primary CASIO interface, but the project now separates **fast live operation** from **heavy research/backtesting**.
+TradingView is the primary **live CASIO v3 interface**. The current v3 live strategy still uses the **v2 regime-first MTF rule baseline**.
 
-## Use v3 FAST for normal charting
+CASIO separates fast live charting from deeper automated research:
+
+```text
+TradingView v3 FAST -> current signal/dashboard
+Python v3 research  -> ablations, candidate search, walk-forward/OOS
+v2 Pine strategy    -> TradingView historical reference for baseline rules
+```
+
+## 1. Use v3 FAST for normal charting
 
 Primary live script:
 
@@ -10,95 +18,30 @@ Primary live script:
 pine/CASIO_XAUUSD_v3_FAST.pine
 ```
 
-Run it on:
+Recommended setup:
 
 ```text
-XAUUSD
-15 minutes
-Strategy mode = AUTO
+Symbol: XAUUSD
+Chart: M15
+Mode: AUTO
 ```
 
-v3 FAST is an `indicator()` rather than a historical strategy simulator. It keeps the current MTF decision engine in TradingView while Vercel handles background webhook/email work.
+v3 FAST is an `indicator()` rather than a historical strategy simulator. It keeps the current MTF decision engine in TradingView while Vercel handles webhook/email work and Python handles deeper independent research.
 
-## Use v2 for Strategy Tester and rolling audit
+## 2. Timeframe hierarchy
 
-Research script:
-
-```text
-pine/CASIO_XAUUSD_v2_MTF.pine
-```
-
-Use v2 when you specifically want:
-
-```text
-Strategy Tester
-rolling last-100 performance
-expectancy / PF / drawdown
-Intraday vs Scalping research
-```
-
-Because v2 replays historical trades and rebuilds its rolling audit, it is naturally slower to load than v3 FAST.
-
-## Why Vercel cannot render the TradingView dashboard for Pine
-
-Pine cannot synchronously make an arbitrary HTTP request to Vercel/GitHub and wait for the result before drawing the chart panel. Therefore the chart-side decision logic must still execute inside TradingView.
-
-CASIO uses this split instead:
-
-```text
-TradingView v3 FAST
-    |
-    |-- H4/H1/M15/M5 current analysis
-    |-- dashboard
-    |-- LONG / SHORT / WAIT
-    |
-    +-- confirmed alert
-             |
-             v
-        Vercel backend
-             |
-             +-- validation/logging
-             +-- Google Apps Script email
-```
-
-The speed improvement comes from reducing what Pine has to recalculate.
-
-## v3 FAST optimizations
-
-The fast script makes only three external-timeframe request groups:
-
-```text
-H4 -> close + EMA20 + EMA50 in one request
-H1 -> close + EMA20 + EMA50 + ATR + range high/low in one request
-M5 -> open + close + EMA20 in one request
-```
-
-It also uses `calc_bars_count` limits instead of requesting unnecessary external history.
-
-Default FAST budgets:
-
-```text
-H4: 300 bars
-H1: 500 bars
-M5: 1500 bars
-```
-
-These can be changed in the **FAST Performance** settings. Larger values may increase recalculation time.
-
-## Timeframe hierarchy
-
-Both v2 and v3 use the same intended trade hierarchy:
+The current baseline rules use:
 
 ```text
 H4  -> directional context
-H1  -> structure, value, opposing liquidity, range regime
-M15 -> execution chart: sweep, BOS, session and trade levels
-M5  -> range/scalping confirmation only
+H1  -> structure, value proxy, opposing liquidity, range regime
+M15 -> primary execution chart: sweep, BOS, session and levels
+M5  -> Scalping confirmation only
 ```
 
-You should normally leave the chart on M15. CASIO pulls the other timeframes internally.
+Stay on M15 for normal use. CASIO reads H4/H1/M5 internally.
 
-## AUTO routing
+## 3. AUTO routing
 
 ```text
 H1 range regime
@@ -108,43 +51,65 @@ H1 range regime
         +--> false -> INTRADAY
 ```
 
-## Intraday logic
+### Intraday baseline
 
 A long requires:
 
 ```text
 H4 bullish
-+ H1 not bearish
-+ H1 value/pullback condition
-+ recent M15 sell-side sweep
-+ bullish M15 BOS/confirmation
-+ London or New York session
-+ >= 1:2.5 usable R:R to opposing H1 liquidity
-+ score >= configured minimum
-= LONG
+H1 not bearish
+H1 value/pullback condition
+recent M15 sell-side sweep
+bullish M15 BOS proxy
+London or New York session
+>= 1:2.5 usable R:R before H1 opposing liquidity
+score >= 80
 ```
 
 Short is the inverse.
 
-Preferred target is about 1:3, but CASIO caps the target at nearer opposing H1 liquidity.
+Preferred target is about 1:3, capped by nearer H1 opposing liquidity.
 
-## Scalping logic
-
-Scalping is a separate mean-reversion engine:
+### Scalping baseline
 
 ```text
 H1 compressed/ranging
-+ M15 low-ADX compressed range
-+ M15 sweep/reclaim of range edge
-+ M5 confirmation
-+ >= 1:1.3 to range mean
-+ score >= configured minimum
-= SCALP
+M15 low-ADX compressed range
+M15 sweep/reclaim of range edge
+M5 confirmation
+>= 1:1.3 to range mean
+score >= 85
 ```
 
-## v3 FAST dashboard
+Scalping is a separate mean-reversion engine.
 
-The live panel shows:
+## 4. v3 FAST performance optimizations
+
+v3 groups external-timeframe calculations:
+
+```text
+H4 -> close + EMA20 + EMA50 in one request
+H1 -> close + EMA20 + EMA50 + ATR + range high/low in one request
+M5 -> open + close + EMA20 in one request
+```
+
+It also uses `calc_bars_count` budgets.
+
+Defaults:
+
+```text
+H4: 300 bars
+H1: 500 bars
+M5: 1500 bars
+```
+
+Those settings live under **FAST Performance**. Larger budgets can increase recalculation time.
+
+Changing TradingView chart timeframe still forces Pine recalculation. The intended workflow is simply to remain on M15.
+
+## 5. v3 FAST dashboard
+
+The live panel shows the current decision state, including:
 
 ```text
 STATUS
@@ -162,11 +127,13 @@ H1 RANGE
 ENGINE
 ```
 
-`WAIT` is an intended output.
+`WAIT` is a normal and intentional result.
 
-## Create the v3 TradingView alert
+The score is not a win probability.
 
-After adding the latest v3 script:
+## 6. TradingView alert
+
+After adding the latest v3 FAST script:
 
 ```text
 Create Alert
@@ -196,55 +163,93 @@ h1_bias
 m15_adx
 ```
 
-A configurable M15-bar cooldown prevents repeated alerts from spamming the same setup.
+A configurable M15-bar cooldown helps avoid repeated alerts from the same continuing condition.
 
-Important: TradingView alerts store a snapshot of the script. Whenever Pine alert logic changes, delete and recreate the alert.
+Important: TradingView stores an alert snapshot. When alert-producing Pine logic changes, delete the old alert and create it again from the latest script.
 
-## Vercel background flow
+## 7. Vercel and email path
 
 ```text
-TradingView alert
+TradingView v3 FAST
       |
       v
 /api/tradingview
       |
-      +-- validate token
-      +-- validate v1/v2/v3 schema
-      +-- log signal
-      +-- relay current v2/v3 signals to Apps Script
-                     |
-                     v
-           farhanshoffi@moe.gov.my
+      +-- token validation
+      +-- v3 schema validation
+      +-- runtime logging
+      +-- Apps Script relay
+                 |
+                 v
+       farhanshoffi@moe.gov.my
 ```
 
-Vercel does not make the TradingView panel draw itself. It handles the work that does not need to happen synchronously inside Pine.
+See `docs/CASIO_V3_EMAIL.md` for full setup.
 
-## When should I use v2 instead?
+## 8. Where historical research now lives
 
-Open `pine/CASIO_XAUUSD_v2_MTF.pine` when you want to answer research questions such as:
+### Python v3 research engine — primary automated research
+
+Use:
+
+```bash
+python -m casio.research_cli \
+  --data data/xauusd_m5.csv \
+  --output reports/v3-research
+```
+
+It tests the current strategy questions independently using M5 history, including H4 veto, H1 value model, sweep freshness, session profiles, M5 confirmation, R:R, costs and multi-period stability.
+
+See `docs/RESEARCH_V3.md`.
+
+### v2 Pine — TradingView reference
+
+Use:
 
 ```text
-How many trades?
-What is the win rate?
-What is the rolling expectancy?
-What is the profit factor?
-What is the max drawdown?
-Which mode contributes more?
+pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-Then return to v3 FAST for normal live chart usage.
-
-## Why changing timeframe still causes some recalculation
-
-Any Pine script must be recalculated when TradingView changes chart timeframe. v3 should be substantially lighter than v2, but it still needs to rebuild its M15-native series and current MTF context.
-
-The intended workflow remains:
+This remains a heavier `strategy()` reference for the v2-rule baseline. It provides:
 
 ```text
-stay on XAUUSD M15
-let CASIO read H4/H1/M5 internally
+Strategy Tester
+historical trade replay
+rolling last-100 audit
+win rate / expectancy / PF / max DD
 ```
 
-See `docs/STRATEGY.md` for the detailed rationale and `docs/CASIO_V2_MTF_EMAIL.md` for the webhook/email setup.
+It is useful for checking TradingView-side behavior, but it is not the current product version.
+
+## 9. Why Python research cannot simply use all TradingView data automatically
+
+TradingView supplies data to Pine inside TradingView, but it does not expose the user's entire private chart feed as a normal GitHub/Python database endpoint.
+
+Therefore:
+
+```text
+live chart -> TradingView data automatically
+research   -> independent data/xauusd_m5.csv
+```
+
+Once the M5 dataset is present, GitHub Actions can run the v3 research automatically.
+
+## 10. Recommended workflow
+
+```text
+Day-to-day:
+XAUUSD M15 + v3 FAST + AUTO
+
+When a setup fires:
+TradingView -> Vercel -> email
+
+Research:
+GitHub/Python v3 research engine
+
+Cross-check:
+v2 Pine Strategy Tester over matching historical periods
+```
+
+For the complete rule rationale see `docs/STRATEGY_V3.md`.
 
 > Research software only. Historical performance does not guarantee future results.
