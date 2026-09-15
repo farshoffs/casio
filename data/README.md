@@ -1,8 +1,16 @@
 # CASIO market data
 
-CASIO v3 uses TradingView for visual charting, but the **automated research/live-signal data source is Dukascopy**, not TradingView alerts.
+CASIO v3 uses TradingView for visual charting, while the **automated research/live-signal data source is Dukascopy**. This keeps the system usable with TradingView Free.
 
-This keeps CASIO usable with a TradingView Free account.
+The current strategy is:
+
+```text
+v2 regime-first MTF core
++
+v3 adaptive 24h session overlay
+```
+
+The same M5 source is used to reconstruct the session-aware Python context.
 
 ## Automatic XAUUSD M5 dataset
 
@@ -36,15 +44,13 @@ data/xauusd_m5.csv
 CASIO v3 Research & Robustness
 ```
 
-The first successful sync backfills from:
+The sync is configured to backfill from:
 
 ```text
 2020-01-09T00:00:00Z
 ```
 
-Later daily runs start a few days before the newest stored timestamp. The overlap is intentional: the merger sorts and deduplicates by timestamp so recent data can be refreshed safely.
-
-No TradingView CSV download is required.
+Later runs overlap recent stored data, then sort and deduplicate timestamps. No TradingView CSV download is required.
 
 ## Data format
 
@@ -64,15 +70,24 @@ Requirements:
 The v3 engine rebuilds:
 
 ```text
-M15 -> primary setup/execution features
-H1  -> structure, value and range context
+M15 -> primary setup/execution features + session classification
+H1  -> bias, value and range context
 H4  -> directional context
 M5  -> Scalping confirmation + finer execution simulation
 ```
 
+UTC timestamps matter because the current session buckets are evaluated as:
+
+```text
+ASIA        00:00-06:00 UTC
+LONDON      07:00-11:00 UTC
+NEW YORK    12:30-16:30 UTC
+TRANSITION  all remaining times
+```
+
 ## Source and pricing
 
-The automatic downloader currently requests:
+The automatic downloader requests:
 
 ```text
 instrument: XAUUSD
@@ -81,21 +96,30 @@ price side: bid
 UTC offset: 0
 ```
 
-Bid candles are used as a consistent research source. The separate CASIO cost model is still required because a bid-only OHLC history does not reproduce the live bid/ask spread, commissions or slippage by itself.
+Bid candles provide a consistent research source, but the separate CASIO cost model is still required because bid-only OHLC does not reproduce live bid/ask spread, commissions or slippage.
 
-Dukascopy and the broker/feed shown in TradingView can have different XAUUSD candles. The research engine therefore does not claim tick-for-tick TradingView parity.
+Dukascopy and the provider shown in TradingView can have different XAUUSD candles. CASIO therefore does not claim tick-for-tick TradingView parity.
 
 ## Rate limiting and reliability
 
-Long historical backfills are split into chunks. The downloader includes pacing and exponential-style cooldown/retry behavior for provider rate limiting. Daily incremental runs are much smaller than the initial backfill.
+Long historical backfills are split into chunks and paced because public data providers can rate-limit aggressive requests. Incremental updates are much smaller.
 
-If a data-sync workflow fails, it must not commit a partial invalid dataset. The workflow validates row count, timestamp order and duplicate timestamps before committing.
+A failed sync should not commit a partial invalid dataset. The workflow validates row count, timestamp order and duplicate timestamps before committing.
 
 ## Free-plan live signal data
 
-`.github/workflows/live-signal.yml` also fetches recent Dukascopy M5 data shortly after each M15 close. It combines that recent data with the stored dataset, runs `casio/live_signal.py`, and only emits a fresh valid CASIO setup.
+`.github/workflows/live-signal.yml` fetches recent Dukascopy M5 shortly after each M15 close, rebuilds H4/H1/M15/M5 context, classifies the current session and applies the active session playbook.
 
-The live job does **not** modify `data/xauusd_m5.csv` every 15 minutes; the persistent research dataset remains on the slower daily sync.
+It can therefore evaluate:
+
+```text
+London / New York normal Intraday
+Asia stricter trend exception
+Transition stricter trend exception
+Scalping range playbook across sessions
+```
+
+The live job does **not** rewrite `data/xauusd_m5.csv` every 15 minutes; the persistent research dataset remains on the slower sync.
 
 ## Run research manually
 
@@ -108,16 +132,22 @@ python -m casio.research_cli \
   --cost-bps 1.0
 ```
 
+Session-specific research output is written to:
+
+```text
+reports/v3-research/session_performance.csv
+```
+
 ## Optional TradingView collector
 
-`pine/CASIO_XAUUSD_M5_FEED.pine` is retained only for TradingView accounts that support alerts/webhooks. It is not required and is not the primary data source for the current Free-plan setup.
+`pine/CASIO_XAUUSD_M5_FEED.pine` is retained only for TradingView accounts that support alerts/webhooks. It is not required for the current Free-plan setup.
 
 ## Legacy dataset
 
-The older single-timeframe research engine still accepts:
+The older single-timeframe engine still accepts:
 
 ```text
 data/xauusd.csv
 ```
 
-That path is retained only for historical comparison. New CASIO v3 MTF work should use `data/xauusd_m5.csv`.
+That path is for historical comparison only. Current CASIO v3 MTF work should use `data/xauusd_m5.csv`.
