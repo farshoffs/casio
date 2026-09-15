@@ -1,0 +1,58 @@
+name: CASIO TradingView M5 Data Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 21 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: casio-market-data-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch and merge TradingView M5 bars
+        run: |
+          python -m casio.sync_market_data \
+            --url 'https://casio-farhan-shoffis-projects.vercel.app/api/tradingview?export=m5' \
+            --output data/xauusd_m5.csv
+
+      - name: Commit new bars
+        shell: bash
+        run: |
+          git add data/xauusd_m5.csv
+          if git diff --cached --quiet; then
+            echo '## CASIO M5 sync' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No new M5 bars to commit.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          ROWS=$(($(wc -l < data/xauusd_m5.csv) - 1))
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "Sync XAUUSD M5 TradingView data"
+          git push origin HEAD:main
+
+          echo '## CASIO M5 sync' >> "$GITHUB_STEP_SUMMARY"
+          echo "Updated data/xauusd_m5.csv to ${ROWS} bars." >> "$GITHUB_STEP_SUMMARY"
