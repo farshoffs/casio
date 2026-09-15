@@ -3,7 +3,8 @@ indicator("CASIO XAUUSD v3 FAST — Live MTF", overlay=true, max_labels_count=20
 
 // CASIO v3 FAST
 // Purpose: fast day-to-day TradingView dashboard.
-// Heavy rolling audit / Strategy Tester work stays in v2; external relay/email stays on Vercel.
+// Core logic: v2 regime-first MTF rules + v3 adaptive 24h session overlay.
+// Automated free-plan signals/email run independently in Python/GitHub Actions.
 // Recommended chart: XAUUSD M15, Strategy mode AUTO.
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,16 +17,23 @@ showLevels = input.bool(true, "Show setup levels", group=groupMode)
 
 // Intraday
 groupIntraday = "Intraday MTF"
-intradayMinScore = input.int(80, "Minimum setup score", minval=50, maxval=100, group=groupIntraday)
+intradayMinScore = input.int(80, "Primary-session minimum score", minval=50, maxval=100, group=groupIntraday)
 intradayTargetRR = input.float(3.0, "Preferred target R:R", minval=2.5, step=0.1, group=groupIntraday)
-intradayMinRR = input.float(2.5, "Minimum usable R:R", minval=1.5, step=0.1, group=groupIntraday)
+intradayMinRR = input.float(2.5, "Primary-session minimum usable R:R", minval=1.5, step=0.1, group=groupIntraday)
 h1ValueAtr = input.float(0.65, "H1 value-zone distance (ATR)", minval=0.1, step=0.05, group=groupIntraday)
 sweepFreshBars = input.int(3, "M15 sweep remains valid (bars)", minval=0, maxval=6, group=groupIntraday)
 
-// Session filter
-groupSession = "Intraday Sessions (UTC)"
-londonSession = input.session("0700-1100", "London window", group=groupSession)
-newYorkSession = input.session("1230-1630", "New York window", group=groupSession)
+// Session-aware execution
+groupSession = "Session-Aware 24H (UTC)"
+sessionPolicy = input.string("ADAPTIVE_24H", "Intraday session policy", options=["ADAPTIVE_24H", "PRIMARY_ONLY"], group=groupSession)
+asiaSession = input.session("0000-0600", "Asia window", group=groupSession)
+londonSession = input.session("0700-1100", "London primary window", group=groupSession)
+newYorkSession = input.session("1230-1630", "New York primary window", group=groupSession)
+asiaIntradayMinScore = input.int(90, "Asia trend-exception minimum score", minval=70, maxval=100, group=groupSession)
+asiaIntradayMinRR = input.float(3.0, "Asia trend-exception minimum R:R", minval=2.0, step=0.1, group=groupSession)
+transitionIntradayMinScore = input.int(90, "Transition trend-exception minimum score", minval=70, maxval=100, group=groupSession)
+transitionIntradayMinRR = input.float(3.0, "Transition trend-exception minimum R:R", minval=2.0, step=0.1, group=groupSession)
+transitionMinAdx = input.float(25.0, "Transition minimum M15 ADX", minval=10.0, step=0.5, group=groupSession)
 
 // Scalping
 groupScalp = "Scalping / Range"
@@ -43,7 +51,7 @@ h1CalcBars = input.int(500, "H1 bars requested", minval=100, maxval=5000, group=
 m5CalcBars = input.int(1500, "M5 bars requested", minval=300, maxval=10000, group=groupPerf)
 signalCooldownBars = input.int(4, "Alert cooldown (M15 bars)", minval=1, maxval=24, group=groupPerf)
 
-// Alerts
+// Optional Pine alert path. Free-plan automation does not depend on this.
 groupAlert = "Webhook / Email"
 sendWebhookAlerts = input.bool(true, "Emit CASIO signal JSON", group=groupAlert)
 
@@ -130,12 +138,21 @@ autoMode = scalpRegime ? "SCALPING" : "INTRADAY"
 activeMode = modeInput == "AUTO" ? autoMode : modeInput
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Session context
+// Session context — every M15 bar belongs to a playbook bucket.
 // ─────────────────────────────────────────────────────────────────────────────
+inAsia = not na(time(timeframe.period, asiaSession, "UTC"))
 inLondon = not na(time(timeframe.period, londonSession, "UTC"))
 inNewYork = not na(time(timeframe.period, newYorkSession, "UTC"))
 inPrimarySession = inLondon or inNewYork
-sessionName = inLondon ? "LONDON" : inNewYork ? "NEW YORK" : "OFF-SESSION"
+inTransition = not inAsia and not inPrimarySession
+sessionName = inAsia ? "ASIA" : inLondon ? "LONDON" : inNewYork ? "NEW YORK" : "TRANSITION"
+
+requiredIntradayScore = inPrimarySession ? intradayMinScore : inAsia ? asiaIntradayMinScore : transitionIntradayMinScore
+requiredIntradayRR = inPrimarySession ? intradayMinRR : inAsia ? asiaIntradayMinRR : transitionIntradayMinRR
+sessionBonus = inPrimarySession ? 10 : inAsia ? 5 : 0
+
+longSessionGate = sessionPolicy == "PRIMARY_ONLY" ? inPrimarySession : (inPrimarySession or (inAsia and h1Bias == 1) or (inTransition and h1Bias == 1 and adx14 >= transitionMinAdx))
+shortSessionGate = sessionPolicy == "PRIMARY_ONLY" ? inPrimarySession : (inPrimarySession or (inAsia and h1Bias == -1) or (inTransition and h1Bias == -1 and adx14 >= transitionMinAdx))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Intraday engine — vetoes first, score second
@@ -145,8 +162,8 @@ intradayShortStopDistance = math.max((hh20 + atr14 * 0.20) - close, atr14 * 1.00
 
 longLiquidityRR = intradayLongStopDistance > 0 ? (h1High20 - close) / intradayLongStopDistance : na
 shortLiquidityRR = intradayShortStopDistance > 0 ? (close - h1Low20) / intradayShortStopDistance : na
-longRRPass = not na(longLiquidityRR) and longLiquidityRR >= intradayMinRR
-shortRRPass = not na(shortLiquidityRR) and shortLiquidityRR >= intradayMinRR
+longRRPass = not na(longLiquidityRR) and longLiquidityRR >= requiredIntradayRR
+shortRRPass = not na(shortLiquidityRR) and shortLiquidityRR >= requiredIntradayRR
 
 intradayLongScore = 0
 intradayLongScore += h4Bias == 1 ? 20 : 0
@@ -154,7 +171,7 @@ intradayLongScore += h1Bias == 1 ? 15 : h1Bias == 0 ? 8 : 0
 intradayLongScore += h1LongValue ? 15 : 0
 intradayLongScore += recentSellSweep ? 20 : 0
 intradayLongScore += m15BosLong ? 15 : 0
-intradayLongScore += inPrimarySession ? 10 : 0
+intradayLongScore += sessionBonus
 intradayLongScore += longRRPass ? 5 : 0
 
 intradayShortScore = 0
@@ -163,13 +180,13 @@ intradayShortScore += h1Bias == -1 ? 15 : h1Bias == 0 ? 8 : 0
 intradayShortScore += h1ShortValue ? 15 : 0
 intradayShortScore += recentBuySweep ? 20 : 0
 intradayShortScore += m15BosShort ? 15 : 0
-intradayShortScore += inPrimarySession ? 10 : 0
+intradayShortScore += sessionBonus
 intradayShortScore += shortRRPass ? 5 : 0
 
-intradayLongMandatory = chartIsM15 and activeMode == "INTRADAY" and h4Bias == 1 and not h1LongVeto and h1LongValue and recentSellSweep and m15BosLong and inPrimarySession and longRRPass
-intradayShortMandatory = chartIsM15 and activeMode == "INTRADAY" and h4Bias == -1 and not h1ShortVeto and h1ShortValue and recentBuySweep and m15BosShort and inPrimarySession and shortRRPass
-intradayLongValid = intradayLongMandatory and intradayLongScore >= intradayMinScore
-intradayShortValid = intradayShortMandatory and intradayShortScore >= intradayMinScore
+intradayLongMandatory = chartIsM15 and activeMode == "INTRADAY" and h4Bias == 1 and not h1LongVeto and h1LongValue and recentSellSweep and m15BosLong and longSessionGate and longRRPass
+intradayShortMandatory = chartIsM15 and activeMode == "INTRADAY" and h4Bias == -1 and not h1ShortVeto and h1ShortValue and recentBuySweep and m15BosShort and shortSessionGate and shortRRPass
+intradayLongValid = intradayLongMandatory and intradayLongScore >= requiredIntradayScore
+intradayShortValid = intradayShortMandatory and intradayShortScore >= requiredIntradayScore
 
 intradayDirection = intradayLongValid ? 1 : intradayShortValid ? -1 : 0
 intradayScore = intradayDirection == 1 ? intradayLongScore : intradayDirection == -1 ? intradayShortScore : math.max(intradayLongScore, intradayShortScore)
@@ -181,6 +198,7 @@ intradayActualRR = intradayDirection == 1 ? (intradayTarget - close) / intradayS
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scalping engine — H1+M15 range, M15 edge sweep, M5 confirmation
+// Available across sessions whenever the range regime genuinely qualifies.
 // ─────────────────────────────────────────────────────────────────────────────
 scalpLongSweep = low < rangeLow30 and close > rangeLow30
 scalpShortSweep = high > rangeHigh30 and close < rangeHigh30
@@ -226,6 +244,7 @@ signalEntry = signalValid ? close : na
 signalStopDistance = intradayDirection != 0 ? intradayStopDistance : scalpDirection != 0 ? scalpStopDistance : na
 signalStop = signalDirection == 1 ? signalEntry - signalStopDistance : signalDirection == -1 ? signalEntry + signalStopDistance : na
 signalTarget = intradayDirection != 0 ? intradayTarget : scalpDirection != 0 ? scalpTarget : na
+playbookName = activeMode == "SCALPING" ? "RANGE_MEAN_REVERSION" : inPrimarySession ? "PRIMARY_INTRADAY" : inAsia ? "ASIA_TREND_EXCEPTION" : "TRANSITION_TREND_EXCEPTION"
 
 f_bias(v) => v == 1 ? "BULLISH" : v == -1 ? "BEARISH" : "NEUTRAL"
 f_num(v) => na(v) ? "—" : str.tostring(v, format.mintick)
@@ -251,12 +270,16 @@ if canAlert and sendWebhookAlerts
       "\"mode\":\"" + f_mode(activeMode) + "\"," +
       "\"direction\":\"" + f_dir(signalDirection) + "\"," +
       "\"score\":" + str.tostring(signalScore) + "," +
+      "\"required_score\":" + str.tostring(requiredIntradayScore) + "," +
       "\"entry\":" + str.tostring(signalEntry, format.mintick) + "," +
       "\"stop\":" + str.tostring(signalStop, format.mintick) + "," +
       "\"target\":" + str.tostring(signalTarget, format.mintick) + "," +
       "\"rr\":" + str.tostring(signalRR, "#.##") + "," +
+      "\"required_rr\":" + str.tostring(requiredIntradayRR, "#.##") + "," +
       "\"regime\":\"" + (scalpRegime ? "range" : "directional") + "\"," +
       "\"session\":\"" + sessionName + "\"," +
+      "\"playbook\":\"" + playbookName + "\"," +
+      "\"session_policy\":\"" + str.lower(sessionPolicy) + "\"," +
       "\"h4_bias\":\"" + str.lower(f_bias(h4Bias)) + "\"," +
       "\"h1_bias\":\"" + str.lower(f_bias(h1Bias)) + "\"," +
       "\"m15_adx\":" + str.tostring(adx14, "#.##") +
@@ -286,7 +309,7 @@ statusBg = chartIsM15 ? color.new(color.green, 78) : color.new(color.red, 68)
 f_cell(tbl, col, row, txt, bg) =>
     table.cell(tbl, col, row, txt, text_color=color.white, bgcolor=bg, text_size=size.small)
 
-var table dash = table.new(position.top_right, 2, 14, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
+var table dash = table.new(position.top_right, 2, 15, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
 if barstate.islast
     if showDashboard
         f_cell(dash, 0, 0, "CASIO v3 FAST", headerBg)
@@ -301,21 +324,23 @@ if barstate.islast
         f_cell(dash, 1, 4, f_bias(h4Bias) + " / " + f_bias(h1Bias), panelBg)
         f_cell(dash, 0, 5, "SESSION", labelBg)
         f_cell(dash, 1, 5, sessionName, panelBg)
-        f_cell(dash, 0, 6, "ADX / SCORE", labelBg)
-        f_cell(dash, 1, 6, str.tostring(adx14, "#.##") + " / " + str.tostring(signalScore), panelBg)
-        f_cell(dash, 0, 7, "SIGNAL", labelBg)
-        f_cell(dash, 1, 7, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT", signalBg)
-        f_cell(dash, 0, 8, "ENTRY", labelBg)
-        f_cell(dash, 1, 8, f_num(signalEntry), panelBg)
-        f_cell(dash, 0, 9, "STOP", labelBg)
-        f_cell(dash, 1, 9, f_num(signalStop), panelBg)
-        f_cell(dash, 0, 10, "TARGET", labelBg)
-        f_cell(dash, 1, 10, f_num(signalTarget), panelBg)
-        f_cell(dash, 0, 11, "R:R", labelBg)
-        f_cell(dash, 1, 11, f_rr(signalRR), panelBg)
-        f_cell(dash, 0, 12, "H1 RANGE", labelBg)
-        f_cell(dash, 1, 12, f_num(h1Low20) + " — " + f_num(h1High20), panelBg)
-        f_cell(dash, 0, 13, "ENGINE", labelBg)
-        f_cell(dash, 1, 13, "LIVE • VERCEL BG", panelBg)
+        f_cell(dash, 0, 6, "SESSION RULE", labelBg)
+        f_cell(dash, 1, 6, activeMode == "SCALPING" ? "RANGE PLAYBOOK" : str.tostring(requiredIntradayScore) + " • MIN 1:" + str.tostring(requiredIntradayRR, "#.##"), panelBg)
+        f_cell(dash, 0, 7, "ADX / SCORE", labelBg)
+        f_cell(dash, 1, 7, str.tostring(adx14, "#.##") + " / " + str.tostring(signalScore), panelBg)
+        f_cell(dash, 0, 8, "SIGNAL", labelBg)
+        f_cell(dash, 1, 8, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT", signalBg)
+        f_cell(dash, 0, 9, "ENTRY", labelBg)
+        f_cell(dash, 1, 9, f_num(signalEntry), panelBg)
+        f_cell(dash, 0, 10, "STOP", labelBg)
+        f_cell(dash, 1, 10, f_num(signalStop), panelBg)
+        f_cell(dash, 0, 11, "TARGET", labelBg)
+        f_cell(dash, 1, 11, f_num(signalTarget), panelBg)
+        f_cell(dash, 0, 12, "R:R", labelBg)
+        f_cell(dash, 1, 12, f_rr(signalRR), panelBg)
+        f_cell(dash, 0, 13, "H1 RANGE", labelBg)
+        f_cell(dash, 1, 13, f_num(h1Low20) + " — " + f_num(h1High20), panelBg)
+        f_cell(dash, 0, 14, "ENGINE", labelBg)
+        f_cell(dash, 1, 14, "TV VIEW • PY AUTO", panelBg)
     else
-        table.clear(dash, 0, 0, 1, 13)
+        table.clear(dash, 0, 0, 1, 14)
