@@ -1,8 +1,37 @@
 # CASIO
 
-CASIO is an experimental **XAUUSD AI-assisted strategy lab** with two deterministic trading modes plus automated backtest/audit agents.
+CASIO is an experimental **XAUUSD AI-assisted strategy lab** with two deterministic trading modes plus automated backtest/audit agents and a TradingView live-signal adapter.
 
 > Research software only. Historical performance is not a guarantee of future results.
+
+## TradingView integration
+
+CASIO now includes:
+
+```text
+pine/CASIO_XAUUSD_v1.pine   TradingView strategy + live JSON alerts
+api/tradingview.py          secure webhook receiver for live alerts
+docs/TRADINGVIEW.md         setup guide
+```
+
+Recommended first chart: **XAUUSD M15**, with strategy mode set to `AUTO`.
+
+The live flow is:
+
+```text
+TradingView XAUUSD
+       |
+       +--> CASIO Pine strategy
+                |
+                +--> Intraday / Scalping regime selection
+                +--> Strategy Tester
+                +--> confirmed-bar JSON alert
+                            |
+                            v
+                    /api/tradingview
+```
+
+See [`docs/TRADINGVIEW.md`](docs/TRADINGVIEW.md) for the full setup.
 
 ## Strategy modes
 
@@ -141,13 +170,18 @@ casio/
   backtest.py     deterministic trade simulator + rolling metrics
   audit.py        strategy health / degradation audit
   cli.py          report runner
-
+pine/
+  CASIO_XAUUSD_v1.pine
+api/
+  tradingview.py
+docs/
+  TRADINGVIEW.md
 data/
-  README.md       market-data contract
+  README.md
 .github/workflows/
   strategy-audit.yml
 ```
 
 ## Next planned layer
 
-The strategy/backtest layer is deliberately deterministic first. An AI reasoning layer can later consume the resulting structured setup and audit data to explain the trade, rank setup quality, identify regime changes, and propose parameter experiments without inventing the underlying performance statistics.
+The live TradingView adapter and deterministic research layer now share the same initial thresholds. The next layer is persistent live-signal storage plus a dashboard that shows the current CASIO signal beside rolling last-100 performance and audit health.
