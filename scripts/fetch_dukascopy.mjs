@@ -7,12 +7,46 @@ function arg(name, fallback = null) {
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : fallback;
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function isoFloorToClosedM5(value) {
   const d = value ? new Date(value) : new Date();
   if (Number.isNaN(d.getTime())) throw new Error(`Invalid --to date: ${value}`);
   const ms5 = 5 * 60 * 1000;
   const floored = Math.floor(d.getTime() / ms5) * ms5;
   return new Date(floored - ms5);
+}
+
+async function fetchChunk(from, to, priceType) {
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await getHistoricalRates({
+        instrument: 'xauusd',
+        dates: { from, to },
+        timeframe: 'm5',
+        format: 'json',
+        priceType,
+        volumes: true,
+        utcOffset: 0,
+        ignoreFlats: true,
+        batchSize: 5,
+        pauseBetweenBatchesMs: 500,
+        retryCount: 5,
+        pauseBetweenRetriesMs: 2500,
+        retryOnEmpty: false,
+      });
+    } catch (error) {
+      if (attempt === maxAttempts) throw error;
+      const message = String(error && error.message ? error.message : error);
+      const rateLimited = message.includes('429');
+      const waitMs = rateLimited ? 30000 * attempt : 5000 * attempt;
+      console.warn(`Dukascopy chunk failed (attempt ${attempt}/${maxAttempts}): ${message}. Waiting ${Math.round(waitMs / 1000)}s.`);
+      await sleep(waitMs);
+    }
+  }
 }
 
 const fromArg = arg('--from');
@@ -33,27 +67,13 @@ stream.write('timestamp,open,high,low,close,volume\n');
 const chunkMs = 31 * 24 * 60 * 60 * 1000;
 let cursor = new Date(from);
 let rows = 0;
+let chunks = 0;
 
 while (cursor < to) {
   const chunkEnd = new Date(Math.min(cursor.getTime() + chunkMs, to.getTime()));
   console.log(`Fetching XAUUSD M5 ${priceType}: ${cursor.toISOString()} -> ${chunkEnd.toISOString()}`);
 
-  const data = await getHistoricalRates({
-    instrument: 'xauusd',
-    dates: { from: cursor, to: chunkEnd },
-    timeframe: 'm5',
-    format: 'json',
-    priceType,
-    volumes: true,
-    utcOffset: 0,
-    ignoreFlats: true,
-    batchSize: 10,
-    pauseBetweenBatchesMs: 250,
-    retryCount: 3,
-    pauseBetweenRetriesMs: 1000,
-    retryOnEmpty: false,
-  });
-
+  const data = await fetchChunk(cursor, chunkEnd, priceType);
   for (const bar of data) {
     if (!bar || !Number.isFinite(Number(bar.timestamp))) continue;
     const timestamp = new Date(Number(bar.timestamp)).toISOString().replace('.000Z', 'Z');
@@ -65,6 +85,9 @@ while (cursor < to) {
   }
 
   cursor = chunkEnd;
+  chunks += 1;
+  // Deliberately pace long backfills; daily incremental runs only fetch a few days.
+  if (cursor < to) await sleep(1000);
 }
 
 await new Promise((resolve, reject) => {
@@ -73,4 +96,4 @@ await new Promise((resolve, reject) => {
 });
 
 if (rows === 0) throw new Error('Dukascopy returned zero XAUUSD M5 bars');
-console.log(`Wrote ${rows} XAUUSD M5 ${priceType} bars to ${output}`);
+console.log(`Wrote ${rows} XAUUSD M5 ${priceType} bars from ${chunks} chunks to ${output}`);
