@@ -1,8 +1,6 @@
 # CASIO v3 + TradingView Free
 
-TradingView is the primary **visual CASIO v3 interface**, but the current user setup is a **TradingView Free account without alert/webhook automation**.
-
-Therefore the live architecture deliberately separates charting from automation:
+TradingView is the primary **visual CASIO v3 interface**, while automation runs independently because the current setup uses **TradingView Free without alert/webhook automation**.
 
 ```text
 TradingView Free
@@ -12,7 +10,7 @@ TradingView Free
 
 Dukascopy + GitHub Actions
   -> current XAUUSD M5 data
-  -> same CASIO v3/v2-rule baseline in Python
+  -> CASIO v3 Python decision engine
   -> automatic signal email
   -> independent research/backtest data
 ```
@@ -33,20 +31,29 @@ Recommended:
 Symbol: XAUUSD
 Chart: M15
 Mode: AUTO
+Session policy: ADAPTIVE_24H
 ```
 
-v3 FAST is the day-to-day visual indicator. It reads H4/H1/M5 internally, so you normally remain on M15 rather than changing timeframes manually.
+v3 FAST reads H4/H1/M5 internally, so you normally remain on M15 rather than switching timeframes manually.
 
-## 2. Timeframe hierarchy
+## 2. Current rule family
+
+CASIO v3 now means:
+
+```text
+v2 regime-first MTF core
++
+v3 adaptive 24h session overlay
+```
+
+Timeframe roles:
 
 ```text
 H4  -> directional context
-H1  -> structure, value proxy, opposing liquidity, range regime
+H1  -> bias, value proxy, opposing liquidity, range regime
 M15 -> main setup: sweep, BOS, session, levels
-M5  -> Scalping confirmation only
+M5  -> Scalping confirmation
 ```
-
-The current product is **CASIO v3** and the current trading-rule baseline is the **v2 regime-first MTF rule set**.
 
 ## 3. AUTO routing
 
@@ -57,37 +64,65 @@ H1 range regime + M15 range regime
         +--> false -> INTRADAY
 ```
 
-### Intraday baseline
+The session overlay then controls how strict Intraday must be.
 
-A long requires:
+## 4. Session-aware behavior
+
+UTC session buckets:
 
 ```text
-H4 bullish
-H1 not bearish
-H1 value/pullback condition
-recent M15 sell-side sweep
-bullish M15 BOS proxy
-London or New York session
->= 1:2.5 usable R:R before H1 opposing liquidity
+ASIA        00:00-06:00
+LONDON      07:00-11:00
+NEW YORK    12:30-16:30
+TRANSITION  everything else
+```
+
+### London / New York
+
+Normal Intraday directional rules:
+
+```text
+H4 aligned
+H1 not strongly opposite
+H1 value condition
+recent M15 sweep
+M15 BOS
+usable R:R >= 2.5
 score >= 80
 ```
 
-Short is the inverse. Preferred target is about 1:3, capped by nearer H1 opposing liquidity.
+### Asia
 
-### Scalping baseline
+If the market is ranging, AUTO still prefers Scalping.
+
+A directional Asia Intraday trade is an exception and requires:
 
 ```text
-H1 compressed/ranging
-M15 low-ADX compressed range
-M15 sweep/reclaim of range edge
-M5 confirmation
->= 1:1.3 to range mean
-score >= 85
+H1 aligned with the trade
+usable R:R >= 3.0
+score >= 90
 ```
 
-## 4. v3 FAST dashboard
+plus the normal H4/value/sweep/BOS gates.
 
-The panel shows:
+### Transition
+
+Directional Transition trades are even more selective:
+
+```text
+H1 aligned
+M15 ADX >= 25
+usable R:R >= 3.0
+score >= 90
+```
+
+### Scalping
+
+Scalping remains available across sessions whenever the H1+M15 range regime, edge sweep, M5 confirmation and range-mean R:R all qualify.
+
+## 5. Dashboard
+
+The current v3 FAST panel shows:
 
 ```text
 STATUS
@@ -95,6 +130,7 @@ MODE
 REGIME
 H4 / H1 BIAS
 SESSION
+SESSION RULE
 ADX / SCORE
 SIGNAL
 ENTRY
@@ -105,11 +141,15 @@ H1 RANGE
 ENGINE
 ```
 
+`SESSION RULE` shows the active minimum score/R:R for Intraday, or `RANGE PLAYBOOK` when AUTO has selected Scalping.
+
 `WAIT` is intentional. Score is setup confluence, not a calibrated win probability.
 
-## 5. Why the dashboard may take time to load
+## 6. Why the dashboard may take time to load
 
-Changing chart timeframe forces TradingView to recalculate Pine. v3 FAST is lighter than the old v2 strategy because it bundles H4/H1/M5 requests and limits requested MTF history.
+Changing chart timeframe forces TradingView to recalculate Pine and its external timeframe requests.
+
+v3 FAST is lighter than the old v2 strategy because it bundles H4/H1/M5 requests and limits requested MTF history.
 
 Default request budgets:
 
@@ -121,9 +161,9 @@ M5: 1500 bars
 
 The intended workflow is to leave CASIO on XAUUSD M15.
 
-## 6. Automatic email signals without TradingView alerts
+## 7. Automatic email signals without TradingView alerts
 
-The current Free-plan signal path is:
+The Free-plan signal path is:
 
 ```text
 Dukascopy XAUUSD M5
@@ -136,11 +176,11 @@ GitHub Actions
 casio/live_signal.py
         |
         v
-same v3/v2-rule baseline
+CASIO v3 adaptive 24h rules
         |
         +-- no setup -> do nothing
         |
-        +-- valid fresh setup
+        +-- fresh valid setup
                 |
                 v
          Google Apps Script
@@ -158,66 +198,79 @@ The job is scheduled at approximately:
 :47
 ```
 
-UTC minute positions each hour, just after M15 closes.
+just after each M15 close.
 
-GitHub scheduled jobs are not a low-latency trading exchange. They can start late. CASIO therefore rejects a signal if the corresponding setup has become too stale rather than emailing an old entry.
+The payload includes:
 
-## 7. Automatic research data
+```text
+session
+playbook
+session_policy
+required_score
+required_rr
+```
 
-The research dataset is also independent of TradingView alerts:
+so an emailed Asia or Transition setup can be distinguished from a normal London/New York setup.
+
+GitHub scheduled jobs can start late, so CASIO rejects stale setups rather than emailing a very old entry.
+
+## 8. Automatic research data
 
 ```text
 Dukascopy bid M5
--> daily GitHub sync
+-> GitHub data sync/backfill
 -> data/xauusd_m5.csv
 -> CASIO v3 Research & Robustness
 ```
 
-The first successful automatic sync backfills from 2020-01-09 UTC. Later runs fetch only a recent overlap and deduplicate it into the existing dataset.
+The historical sync is configured to backfill from 2020-01-09 UTC and then maintain a recent overlap. Historical downloads are chunked and paced to reduce provider-rate-limit problems.
 
-This solves both the historical-backfill problem and the ongoing-data problem without requiring manual TradingView CSV downloads.
+## 9. Feed differences
 
-## 8. Feed differences
+Your TradingView chart may use a different provider than Dukascopy. XAUUSD is not represented by one universal candle feed across every broker/provider.
 
-Your TradingView chart may use a different provider than Dukascopy. Gold/FX is not a single centralized exchange feed, so exact candles and therefore individual setup timing can differ slightly between providers.
+Therefore:
 
-Use TradingView as your visual execution/context screen, while treating the Python/Dukascopy engine as an independent automation and research implementation. We should validate broad parity before trusting exact trade-for-trade correspondence.
+```text
+TradingView -> visual context
+Python/Dukascopy -> automation + research
+```
 
-## 9. v2 Pine reference
+The two should express the same strategy family, but exact candle values and individual signal timing can differ.
+
+## 10. v2 Pine reference
 
 ```text
 pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-This heavier `strategy()` remains a historical TradingView reference for the baseline rule family. It is useful for Strategy Tester/rolling audit where available, but it is not the current v3 product.
+v2 remains useful as a historical reference for the original MTF core. It does **not** contain the new adaptive 24h session overlay, so it is no longer a full 1:1 historical reference for current v3 entry gating.
 
-## 10. Optional TradingView alert collector
+## 11. Optional TradingView alerts
 
-```text
-pine/CASIO_XAUUSD_M5_FEED.pine
-```
+`CASIO_XAUUSD_v3_FAST.pine` still contains optional `alert()` JSON for accounts that support alerts, and `pine/CASIO_XAUUSD_M5_FEED.pine` remains as an optional collector.
 
-This file is retained for accounts that have TradingView alerts/webhooks. It is **not needed in the current Free-plan setup**.
+Neither is required for the current Free-plan automation.
 
-## 11. Recommended current workflow
+## 12. Recommended workflow
 
 ```text
 Chart:
-TradingView Free -> XAUUSD M15 -> v3 FAST -> AUTO
+TradingView Free -> XAUUSD M15 -> v3 FAST -> AUTO -> ADAPTIVE_24H
 
 Automatic signal:
 Dukascopy -> GitHub Actions -> Python v3 -> Apps Script -> email
 
 Historical data:
-Dukascopy -> daily GitHub sync -> data/xauusd_m5.csv
+Dukascopy -> GitHub sync -> data/xauusd_m5.csv
 
 Research:
-Python v3 robustness engine
+Python v3 robustness engine + per-session analysis
 
-Reference check:
-v2 Pine Strategy Tester when useful/available
+Reference:
+v2 Pine for the original core only
 ```
 
-See `docs/CASIO_V3_EMAIL.md` for the one-time email-secret setup and `docs/RESEARCH_V3.md` for research methodology.
+See `docs/STRATEGY_V3.md` for rule rationale, `docs/CASIO_V3_EMAIL.md` for email setup, and `docs/RESEARCH_V3.md` for research methodology.
 
 > Research software only. Historical performance does not guarantee future results.
