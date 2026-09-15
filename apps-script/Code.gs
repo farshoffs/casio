@@ -1,5 +1,7 @@
 const CASIO_SCHEMA = 'casio.tv.v2';
 const DEFAULT_EMAIL = 'farhanshoffi@moe.gov.my';
+const QUEUE_PROPERTY = 'CASIO_EMAIL_QUEUE';
+const QUEUE_HANDLER = 'processEmailQueue_';
 
 function setupCasio() {
   const props = PropertiesService.getScriptProperties();
@@ -67,19 +69,20 @@ function doPost(e) {
     const payload = JSON.parse(e.postData.contents);
     validateSignal_(payload);
 
-    const dedupeKey = [
-      'casio', payload.bar_time, payload.mode, payload.direction, payload.entry
-    ].join(':');
+    const dedupeKey = ['casio', payload.bar_time, payload.mode, payload.direction, payload.entry].join(':');
     const cache = CacheService.getScriptCache();
     if (cache.get(dedupeKey)) {
       return jsonResponse_({ ok: true, accepted: true, duplicate: true });
     }
     cache.put(dedupeKey, '1', 21600);
 
-    sendSignalEmail_(payload);
+    enqueueSignal_(payload);
+    ensureQueueTrigger_();
+
     return jsonResponse_({
       ok: true,
       accepted: true,
+      queued: true,
       duplicate: false,
       mode: payload.mode,
       direction: payload.direction,
@@ -88,6 +91,71 @@ function doPost(e) {
   } catch (err) {
     console.error(err && err.stack ? err.stack : err);
     return jsonResponse_({ ok: false, error: String(err && err.message ? err.message : err) });
+  }
+}
+
+function enqueueSignal_(payload) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(3000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    let queue = [];
+    const raw = props.getProperty(QUEUE_PROPERTY);
+    if (raw) {
+      try {
+        queue = JSON.parse(raw);
+        if (!Array.isArray(queue)) queue = [];
+      } catch (err) {
+        queue = [];
+      }
+    }
+    queue.push(payload);
+    if (queue.length > 20) queue = queue.slice(queue.length - 20);
+    props.setProperty(QUEUE_PROPERTY, JSON.stringify(queue));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function ensureQueueTrigger_() {
+  const exists = ScriptApp.getProjectTriggers().some(function (trigger) {
+    return trigger.getHandlerFunction() === QUEUE_HANDLER;
+  });
+  if (!exists) {
+    ScriptApp.newTrigger(QUEUE_HANDLER).timeBased().after(1000).create();
+  }
+}
+
+function processEmailQueue_() {
+  try {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(5000);
+    let queue = [];
+    try {
+      const props = PropertiesService.getScriptProperties();
+      const raw = props.getProperty(QUEUE_PROPERTY);
+      if (raw) {
+        queue = JSON.parse(raw);
+        if (!Array.isArray(queue)) queue = [];
+      }
+      props.deleteProperty(QUEUE_PROPERTY);
+    } finally {
+      lock.releaseLock();
+    }
+
+    queue.forEach(function (payload) {
+      try {
+        sendSignalEmail_(payload);
+      } catch (err) {
+        console.error('CASIO email failed: ' + (err && err.stack ? err.stack : err));
+      }
+    });
+  } finally {
+    ScriptApp.getProjectTriggers().forEach(function (trigger) {
+      if (trigger.getHandlerFunction() === QUEUE_HANDLER) {
+        ScriptApp.deleteTrigger(trigger);
+      }
+    });
   }
 }
 
