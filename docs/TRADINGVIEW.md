@@ -1,23 +1,19 @@
 # CASIO + TradingView
 
-CASIO can now run directly on TradingView as a Pine Script strategy and emit live XAUUSD setup alerts to a CASIO webhook endpoint.
+TradingView is the **primary CASIO interface**. Vercel stays in the background for webhook ingestion/logging, while the chart itself shows the strategy, signal, performance and rolling audit.
 
-## 1. Add the CASIO Pine strategy
+## Add CASIO to TradingView
 
-Open TradingView and select an **XAUUSD** chart. Start with **15 minute (M15)**.
+1. Open an **XAUUSD** chart.
+2. Start with **M15**.
+3. Open **Pine Editor**.
+4. Paste `pine/CASIO_XAUUSD_v1.pine`.
+5. Save and choose **Add to chart**.
+6. Leave `Strategy mode = AUTO` initially.
 
-Open **Pine Editor**, paste the contents of:
-
-```text
-pine/CASIO_XAUUSD_v1.pine
-```
-
-Save it and choose **Add to chart**.
-
-Recommended first settings:
+Recommended defaults:
 
 ```text
-Strategy mode: AUTO
 Intraday minimum score: 70
 Intraday target RR: 3.0
 Scalping minimum score: 68
@@ -25,117 +21,99 @@ Scalping target RR: 1.5
 Maximum ADX: 22
 Maximum range / ATR: 5.5
 Range-edge fraction: 0.22
-Emit alert() JSON: ON
+Rolling audit: 100 trades
+Minimum trades before audit: 30
 ```
 
-AUTO means:
+AUTO routing:
 
 ```text
 ADX <= 22 AND 30-bar range <= 5.5 ATR -> SCALPING
 otherwise                                -> INTRADAY
 ```
 
-The chart dashboard shows the active mode, ADX, current score, signal state and detected regime.
+## TradingView dashboard
 
-## 2. TradingView Strategy Tester
-
-Because the Pine file is a `strategy()`, TradingView's **Strategy Tester** will show historical trades from the chart's own data.
-
-Use it as a visual/independent reference. CASIO's Python audit remains the canonical rolling-last-100-trades research engine because its simulator has its own conservative execution assumptions.
-
-## 3. Deploy the CASIO webhook
-
-The repository includes a Vercel-compatible Python function:
+The CASIO panel is rendered directly on the chart and shows:
 
 ```text
-api/tradingview.py
+MODE
+REGIME
+ADX / SCORE
+SIGNAL
+ENTRY
+STOP
+TARGET
+LAST 100 CLOSED TRADES
+WIN RATE
+EXPECTANCY (R)
+PROFIT FACTOR
+MAX DRAWDOWN (R)
+INTRADAY WIN RATE
+SCALPING WIN RATE
+AUDIT STATUS
 ```
 
-Deploy the repository to Vercel, then configure an environment variable:
+The latest rolling window is compared against the preceding window. Audit states are:
 
 ```text
-CASIO_WEBHOOK_TOKEN=<a long random token>
+INSUFFICIENT  fewer than configured minimum closed trades
+HEALTHY       positive expectancy/PF and no material degradation
+WARNING       win rate or expectancy degraded versus the previous window
+CRITICAL      profit factor below threshold or non-positive expectancy
 ```
 
-The resulting endpoint is:
+CASIO stores up to 200 closed-trade R results inside Pine so the latest 100 can be compared with the preceding 100 without leaving TradingView.
+
+## Strategy Tester
+
+Because the script uses `strategy()`, TradingView's **Strategy Tester** provides its own full performance view from TradingView market data. Use CASIO's on-chart rolling statistics for the most recent strategy health and Strategy Tester for deeper historical inspection.
+
+## Live alerts to Vercel
+
+The existing Vercel webhook remains useful for logging or future external automation.
+
+Create an alert using:
 
 ```text
-https://YOUR-CASIO-DOMAIN.vercel.app/api/tradingview?token=YOUR_TOKEN
+Condition: CASIO XAUUSD v1 — Intraday + Scalping
+Trigger: alert() function calls only
 ```
 
-Do not put the token inside the Pine alert JSON. Keep it in the webhook URL configured in TradingView.
+Enable the webhook URL and use the CASIO Vercel endpoint configured for this project.
 
-A GET request to `/api/tradingview` returns a simple health response.
-
-The receiver currently validates and normalizes the live signal then writes it to Vercel runtime logs with the prefix:
+The Pine strategy emits JSON only on confirmed bar-close setups, including:
 
 ```text
-CASIO_SIGNAL
+mode
+direction
+score
+entry
+stop
+target
+RR
+ADX
+ATR
 ```
 
-The next CASIO layer can persist these normalized signals into a database/dashboard without changing the TradingView payload contract.
-
-## 4. Create the TradingView alert
-
-With **CASIO XAUUSD v1 — Intraday + Scalping** added to the chart:
-
-1. Click **Create alert**.
-2. For **Condition**, select the CASIO strategy.
-3. Select **alert() function calls only**.
-4. Enable **Webhook URL**.
-5. Paste:
+## Architecture
 
 ```text
-https://YOUR-CASIO-DOMAIN.vercel.app/api/tradingview?token=YOUR_TOKEN
+TradingView XAUUSD
+      |
+      |-- CASIO Pine
+      |     |-- Intraday / Scalping AUTO routing
+      |     |-- BUY / SELL / WAIT
+      |     |-- Entry / SL / TP
+      |     |-- Strategy Tester
+      |     |-- Rolling last-100 audit
+      |
+      +-- alert() JSON --> Vercel webhook --> CASIO backend logs
+
+GitHub
+      +-- versioned Pine + Python research engine
 ```
 
-6. Create the alert.
+TradingView is therefore the day-to-day interface; GitHub is the source of truth for code/versioning; Vercel is the optional backend integration layer.
 
-The Pine strategy itself controls the alert frequency and only emits a setup on a confirmed bar close.
-
-## 5. Payload
-
-Example live webhook body:
-
-```json
-{
-  "schema": "casio.tv.v1",
-  "event": "signal",
-  "symbol": "OANDA:XAUUSD",
-  "ticker": "XAUUSD",
-  "timeframe": "15",
-  "bar_time": 1789472700000,
-  "mode": "intraday",
-  "direction": "long",
-  "score": 85,
-  "entry": 3675.20,
-  "stop": 3668.40,
-  "target": 3695.60,
-  "rr": 3.0,
-  "adx": 27.4,
-  "atr": 6.18
-}
-```
-
-## 6. How the two systems relate
-
-```text
-TradingView XAUUSD M15
-        |
-        +--> Pine strategy -> chart + Strategy Tester
-        |
-        +--> alert() JSON -> CASIO webhook -> live signal stream
-
-Historical OHLC CSV
-        |
-        +--> Python CASIO -> rolling last 100 trades -> audit agent
-```
-
-The Pine and Python implementations intentionally use the same initial thresholds. When CASIO's audit recommends a researched parameter change, update both implementations in the same Git commit so live and historical logic stay versioned together.
-
-## Notes
-
-- CASIO is research software, not an auto-execution broker bot.
-- Start with M15 XAUUSD.
-- Use confirmed-bar alerts to avoid acting on an unfinished candle.
-- A TradingView Strategy Tester result and the Python backtest can differ because execution simulators use different fill assumptions.
+> Research software only. Historical performance does not guarantee future results.
