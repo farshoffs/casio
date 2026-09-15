@@ -176,7 +176,7 @@ jobs:
           fi
 
           ROWS=$(($(wc -l < data/xauusd_m5.csv) - 1))
-          FIRST=$(tail -n +2 data/xauusd_m5.csv | head -n 1 | cut -d, -f1)
+          FIRST=$(sed -n '2p' data/xauusd_m5.csv | cut -d, -f1)
           LAST=$(tail -n 1 data/xauusd_m5.csv | cut -d, -f1)
 
           git config user.name 'github-actions[bot]'
