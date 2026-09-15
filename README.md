@@ -32,7 +32,7 @@ casio/v3_research.py
 casio/research_cli.py
 ```
 
-This engine rebuilds M15/H1/H4 causally from **M5 OHLC**, reproduces the current v2-rule baseline in Python, runs ablations, evaluates bounded candidate combinations, performs walk-forward checks, keeps the final 20% as an untouched OOS segment, applies configurable trading friction, and ranks candidates by robustness rather than raw win rate.
+This engine rebuilds M15/H1/H4 causally from **M5 OHLC**, reproduces the current v2-rule baseline in Python, runs ablations, evaluates bounded candidate combinations, performs walk-forward checks, keeps the final 20% as an untouched OOS segment, applies configurable trading friction, stress-tests the selected trade distribution with Monte Carlo bootstrap simulations, and ranks candidates by robustness rather than raw win rate.
 
 Run it with:
 
@@ -130,7 +130,7 @@ The research engine directly targets the current priority questions:
 5. M5 confirmation ON vs OFF.
 6. Intraday minimum usable R:R from 2.0 to 3.0.
 7. Scalping expectancy under multiple trading-cost assumptions.
-8. Stability across years, strategy modes and walk-forward folds.
+8. Stability across years, strategy modes, walk-forward folds and Monte Carlo trade-sequence stress tests.
 
 It also samples bounded combinations of those dimensions and ranks them using a robustness score based on expectancy, profit factor, drawdown, walk-forward results, sample size, yearly stability and mode stability.
 
@@ -145,6 +145,7 @@ Development data
     -> robustness ranking
     -> choose candidate
     -> open untouched final OOS 20%
+    -> Monte Carlo stress diagnostic
     -> CANDIDATE_FOR_REVIEW / REJECT
 ```
 
@@ -160,9 +161,14 @@ reports/v3-research/ablations.csv
 reports/v3-research/candidates.csv
 reports/v3-research/walk_forward.csv
 reports/v3-research/scalping_cost_sensitivity.csv
+reports/v3-research/monte_carlo.csv
+reports/v3-research/monte_carlo_summary.json
+reports/v3-research/best_candidate.json
 reports/v3-research/best_candidate_dev_trades.csv
 reports/v3-research/best_candidate_oos_trades.csv
 ```
+
+Monte Carlo is a bootstrap diagnostic based on historical net-R trades. It is not a calibrated forecast of future returns.
 
 ## Automatic GitHub research
 
@@ -243,7 +249,7 @@ casio/
   v3_core.py                  causal MTF feature preparation
   v3_strategy.py              v3 / v2-rule signal logic
   v3_backtest.py              M5 execution + R metrics
-  v3_research.py              ablations, candidate search, OOS ranking
+  v3_research.py              ablations, candidate search, OOS + Monte Carlo
   research_cli.py             v3 research command line
   strategy.py/backtest.py/... legacy Python v1 research engine
 
