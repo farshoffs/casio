@@ -1,59 +1,87 @@
 # CASIO market data
 
-This folder is used by the **Python research/backtest engine**, not by the live TradingView v2 strategy.
+The current product is **CASIO v3**. Normal live TradingView use gets market data directly from TradingView and does **not** require a CSV file.
 
-TradingView v2 receives its market data directly from TradingView and internally requests H4, H1, M15 and M5 context. You do not need to export CSV data for normal live use.
+Historical CSV files are used by the independent Python research engines.
 
-## Python research dataset
+## CASIO v3 research dataset
 
-Place XAUUSD OHLC data at:
+The current automated MTF research engine requires:
 
 ```text
-data/xauusd.csv
+data/xauusd_m5.csv
 ```
 
 Required columns:
 
 ```csv
 timestamp,open,high,low,close,volume
-2026-01-02T00:00:00Z,2624.10,2626.40,2621.70,2625.80,0
+2026-01-02T00:00:00Z,2624.10,2625.00,2623.80,2624.70,0
 ```
 
 Requirements:
 
-- `timestamp` must be parseable as date/time.
-- `open`, `high`, `low`, and `close` are required.
-- `volume` is optional.
-- Keep one consistent timeframe in a file.
-- M15 is the recommended dataset for the existing Python engine.
-- Use sufficiently long history to avoid drawing conclusions from a very small number of trades.
+- one row per M5 bar,
+- `timestamp` is UTC **bar-open** time,
+- `open`, `high`, `low`, `close` are required,
+- `volume` is optional,
+- rows should be chronological,
+- multi-year history is strongly preferred for robustness testing.
 
-## Important v2 limitation
+The v3 research engine uses the M5 source to rebuild:
 
-The current Python strategy under `casio/` is the earlier deterministic single-timeframe research engine. It is **not yet a 1:1 implementation of `pine/CASIO_XAUUSD_v2_MTF.pine`**.
+```text
+M15 -> execution features and primary setup logic
+H1  -> structure, value and range context
+H4  -> directional context
+M5  -> finer stop/target resolution and Scalping confirmation
+```
+
+This allows one dataset to support the full current MTF rule family.
+
+## Why GitHub needs its own data
+
+TradingView supplies the live chart and Pine strategy with its own historical/feed data, but GitHub Actions/Python cannot automatically query the user's TradingView chart history as if it were a public database.
 
 Therefore:
 
 ```text
-TradingView v2 result != Python result by design, for now
+TradingView live v3 FAST -> no CSV needed
+Python v3 research       -> data/xauusd_m5.csv needed
 ```
 
-For CASIO v2 performance, use:
+If `data/xauusd_m5.csv` is absent, `.github/workflows/v3-research.yml` reports that research was skipped. It does not invent performance numbers.
 
-1. TradingView Strategy Tester for the full historical Pine strategy result.
-2. The CASIO v2 on-chart rolling audit for recent closed-trade health.
-
-The Python engine remains useful as an independent research framework and will later be upgraded to reproduce the MTF v2 rules.
-
-## GitHub Action
-
-`.github/workflows/strategy-audit.yml` checks for `data/xauusd.csv` and, when present, runs:
+## Run v3 research
 
 ```bash
-python -m casio.cli --data data/xauusd.csv --output reports
+pip install -r requirements.txt
+python -m casio.research_cli \
+  --data data/xauusd_m5.csv \
+  --output reports/v3-research \
+  --max-candidates 64 \
+  --cost-bps 1.0
 ```
 
-It produces:
+See `docs/RESEARCH_V3.md` for the methodology and generated reports.
+
+## Legacy Python dataset
+
+The older single-timeframe Python research engine still accepts:
+
+```text
+data/xauusd.csv
+```
+
+with the same basic OHLC schema. M15 was the original recommended timeframe for that engine.
+
+It is run by:
+
+```text
+.github/workflows/strategy-audit.yml
+```
+
+and produces the legacy reports:
 
 ```text
 reports/trades.csv
@@ -61,4 +89,18 @@ reports/backtest-100.json
 reports/audit.json
 ```
 
-This scheduled audit applies to the current Python research engine, not directly to the TradingView v2 MTF strategy.
+That workflow is retained for historical comparison. New MTF strategy research should use the v3 M5 engine.
+
+## Parity caveat
+
+The Python v3 engine is designed to reproduce the current **v3 product using the v2 regime-first MTF rule baseline**, but exact TradingView/Python parity is not yet assumed.
+
+Possible differences include:
+
+- source-feed OHLC differences,
+- higher-timeframe bar mapping,
+- Pine `request.security()` behavior,
+- execution assumptions,
+- live broker spread/slippage.
+
+Before promoting a research candidate to live Pine, compare the same historical period in TradingView and Python.
