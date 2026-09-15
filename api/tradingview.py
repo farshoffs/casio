@@ -9,7 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
-SUPPORTED_SCHEMAS = {"casio.tv.v1", "casio.tv.v2"}
+SUPPORTED_SCHEMAS = {"casio.tv.v1", "casio.tv.v2", "casio.tv.v3"}
 # Safe to keep in source: this is only a one-way hash of the TradingView -> Vercel token.
 DEFAULT_TOKEN_SHA256 = "59de3b12b3bf168eba0a5a4b10f84b9fc79165bcf218949fc134aaa458f563f9"
 
@@ -70,7 +70,7 @@ def _normalize(payload: dict) -> dict:
         "rr": float(payload["rr"]),
     }
 
-    if schema == "casio.tv.v2":
+    if schema in {"casio.tv.v2", "casio.tv.v3"}:
         signal.update(
             {
                 "regime": str(payload.get("regime", "")),
@@ -126,14 +126,14 @@ def _relay_to_apps_script(signal: dict) -> tuple[bool, str]:
     url = _gas_url()
     if not url:
         return True, "not_configured"
-    if signal.get("schema") != "casio.tv.v2":
-        return True, "v1_not_relayed"
+    if signal.get("schema") not in {"casio.tv.v2", "casio.tv.v3"}:
+        return True, "legacy_not_relayed"
 
     raw = json.dumps(signal, separators=(",", ":")).encode("utf-8")
     request = Request(
         url,
         data=raw,
-        headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "CASIO-Vercel/2"},
+        headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "CASIO-Vercel/3"},
         method="POST",
     )
     try:
@@ -202,7 +202,6 @@ class handler(BaseHTTPRequestHandler):
 
         relay_ok, relay_status = _relay_to_apps_script(signal)
         if not relay_ok:
-            # TradingView can retry a 5xx webhook; this keeps email delivery recoverable.
             print("CASIO_EMAIL_RELAY_FAILED " + relay_status)
             self._json(503, {"ok": False, "accepted": True, "email_relay": relay_status})
             return
