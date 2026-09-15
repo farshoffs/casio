@@ -1,4 +1,4 @@
-const CASIO_SCHEMA = 'casio.tv.v2';
+const CASIO_SCHEMAS = ['casio.tv.v2', 'casio.tv.v3'];
 const DEFAULT_EMAIL = 'farhanshoffi@moe.gov.my';
 const QUEUE_PROPERTY = 'CASIO_EMAIL_QUEUE';
 const QUEUE_HANDLER = 'processEmailQueue_';
@@ -51,7 +51,7 @@ function doGet() {
   return jsonResponse_({
     ok: true,
     service: 'casio-email-alerts',
-    schema: CASIO_SCHEMA,
+    schemas: CASIO_SCHEMAS,
     recipient: props.getProperty('CASIO_EMAIL') || DEFAULT_EMAIL
   });
 }
@@ -84,6 +84,7 @@ function doPost(e) {
       accepted: true,
       queued: true,
       duplicate: false,
+      schema: payload.schema,
       mode: payload.mode,
       direction: payload.direction,
       bar_time: payload.bar_time
@@ -161,7 +162,7 @@ function processEmailQueue_() {
 
 function validateSignal_(p) {
   if (!p || typeof p !== 'object') throw new Error('JSON body must be an object');
-  if (p.schema !== CASIO_SCHEMA) throw new Error('Unsupported schema');
+  if (CASIO_SCHEMAS.indexOf(String(p.schema)) === -1) throw new Error('Unsupported schema');
   if (p.event !== 'signal') throw new Error('Unsupported event');
   const ticker = String(p.ticker || '').toUpperCase();
   const symbol = String(p.symbol || '').toUpperCase();
@@ -181,6 +182,7 @@ function sendSignalEmail_(p) {
   const score = Number(p.score);
   const rr = Number(p.rr);
   const timestamp = new Date(Number(p.bar_time));
+  const version = String(p.schema || '').replace('casio.tv.', '').toUpperCase() || 'CASIO';
 
   const subject = '[CASIO] XAUUSD ' + direction + ' • ' + mode + ' • Score ' + score;
 
@@ -212,7 +214,7 @@ function sendSignalEmail_(p) {
   const signalColor = direction === 'LONG' ? '#22c55e' : '#ef4444';
   const htmlBody =
     '<div style="background:#090d14;color:#f8fafc;padding:22px;font-family:Arial,sans-serif;max-width:620px">' +
-      '<div style="font-size:12px;letter-spacing:1.5px;color:#94a3b8">CASIO XAUUSD v2</div>' +
+      '<div style="font-size:12px;letter-spacing:1.5px;color:#94a3b8">CASIO XAUUSD ' + html_(version) + '</div>' +
       '<h1 style="margin:8px 0 4px;color:' + signalColor + '">' + html_(direction) + ' ' + html_(mode) + '</h1>' +
       '<div style="color:#cbd5e1;margin-bottom:18px">Confirmed TradingView setup • Score ' + html_(score) + '/100</div>' +
       '<table style="border-collapse:collapse;width:100%;background:#111827">' + tableRows + '</table>' +
