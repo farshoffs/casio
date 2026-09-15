@@ -5,10 +5,12 @@ import hmac
 import json
 import os
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.request import Request, urlopen
 
-SCHEMA = "casio.tv.v1"
-# Safe to keep in source: this is only a one-way hash of the deployment token.
+SUPPORTED_SCHEMAS = {"casio.tv.v1", "casio.tv.v2"}
+# Safe to keep in source: this is only a one-way hash of the TradingView -> Vercel token.
 DEFAULT_TOKEN_SHA256 = "59de3b12b3bf168eba0a5a4b10f84b9fc79165bcf218949fc134aaa458f563f9"
 
 REQUIRED_FIELDS = {
@@ -28,11 +30,18 @@ REQUIRED_FIELDS = {
 }
 
 
+def _optional_float(payload: dict, key: str):
+    value = payload.get(key)
+    return float(value) if value is not None else None
+
+
 def _normalize(payload: dict) -> dict:
     missing = sorted(REQUIRED_FIELDS - payload.keys())
     if missing:
         raise ValueError(f"missing fields: {', '.join(missing)}")
-    if payload.get("schema") != SCHEMA:
+
+    schema = str(payload.get("schema", ""))
+    if schema not in SUPPORTED_SCHEMAS:
         raise ValueError("unsupported schema")
     if payload.get("event") != "signal":
         raise ValueError("unsupported event")
@@ -45,8 +54,8 @@ def _normalize(payload: dict) -> dict:
     if ticker != "XAUUSD" and "XAUUSD" not in str(payload.get("symbol", "")).upper():
         raise ValueError("CASIO webhook currently accepts XAUUSD only")
 
-    return {
-        "schema": SCHEMA,
+    signal = {
+        "schema": schema,
         "event": "signal",
         "symbol": str(payload["symbol"]),
         "ticker": ticker,
@@ -59,9 +68,30 @@ def _normalize(payload: dict) -> dict:
         "stop": float(payload["stop"]),
         "target": float(payload["target"]),
         "rr": float(payload["rr"]),
-        "adx": float(payload["adx"]) if payload.get("adx") is not None else None,
-        "atr": float(payload["atr"]) if payload.get("atr") is not None else None,
     }
+
+    if schema == "casio.tv.v2":
+        signal.update(
+            {
+                "regime": str(payload.get("regime", "")),
+                "session": str(payload.get("session", "")),
+                "h4_bias": str(payload.get("h4_bias", "")),
+                "h1_bias": str(payload.get("h1_bias", "")),
+                "m15_adx": _optional_float(payload, "m15_adx"),
+                "win_rate": _optional_float(payload, "win_rate"),
+                "expectancy_r": _optional_float(payload, "expectancy_r"),
+                "profit_factor": _optional_float(payload, "profit_factor"),
+                "audit_status": str(payload.get("audit_status", "")),
+            }
+        )
+    else:
+        signal.update(
+            {
+                "adx": _optional_float(payload, "adx"),
+                "atr": _optional_float(payload, "atr"),
+            }
+        )
+    return signal
 
 
 def _authorized(supplied_token: str) -> bool:
@@ -76,6 +106,49 @@ def _authorized(supplied_token: str) -> bool:
     return hmac.compare_digest(supplied_hash, expected_hash)
 
 
+def _gas_url() -> str:
+    base = os.environ.get("CASIO_GAS_WEBAPP_URL", "").strip()
+    token = os.environ.get("CASIO_GAS_TOKEN", "").strip()
+    if not base or not token:
+        return ""
+
+    parsed = urlparse(base)
+    query = parse_qs(parsed.query)
+    query["token"] = [token]
+    flat = []
+    for key, values in query.items():
+        for value in values:
+            flat.append((key, value))
+    return urlunparse(parsed._replace(query=urlencode(flat)))
+
+
+def _relay_to_apps_script(signal: dict) -> tuple[bool, str]:
+    url = _gas_url()
+    if not url:
+        return True, "not_configured"
+    if signal.get("schema") != "casio.tv.v2":
+        return True, "v1_not_relayed"
+
+    raw = json.dumps(signal, separators=(",", ":")).encode("utf-8")
+    request = Request(
+        url,
+        data=raw,
+        headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "CASIO-Vercel/2"},
+        method="POST",
+    )
+    try:
+        # Apps Script queues email before returning. Keep this under TradingView's 3s ceiling.
+        with urlopen(request, timeout=1.8) as response:
+            return 200 <= response.status < 400, f"http_{response.status}"
+    except HTTPError as exc:
+        # Apps Script ContentService can respond with redirects; doPost has already executed.
+        if 300 <= exc.code < 400:
+            return True, f"http_{exc.code}"
+        return False, f"http_{exc.code}"
+    except (URLError, TimeoutError) as exc:
+        return False, f"relay_error:{type(exc).__name__}"
+
+
 class handler(BaseHTTPRequestHandler):
     def _json(self, status: int, body: dict) -> None:
         raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -87,7 +160,15 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self) -> None:
-        self._json(200, {"ok": True, "service": "casio-tradingview", "schema": SCHEMA})
+        self._json(
+            200,
+            {
+                "ok": True,
+                "service": "casio-tradingview",
+                "schemas": sorted(SUPPORTED_SCHEMAS),
+                "email_relay_configured": bool(_gas_url()),
+            },
+        )
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -118,14 +199,23 @@ class handler(BaseHTTPRequestHandler):
             return
 
         print("CASIO_SIGNAL " + json.dumps(signal, separators=(",", ":"), sort_keys=True))
+
+        relay_ok, relay_status = _relay_to_apps_script(signal)
+        if not relay_ok:
+            # TradingView can retry a 5xx webhook; this keeps email delivery recoverable.
+            print("CASIO_EMAIL_RELAY_FAILED " + relay_status)
+            self._json(503, {"ok": False, "accepted": True, "email_relay": relay_status})
+            return
+
         self._json(
             202,
             {
                 "ok": True,
                 "accepted": True,
-                "schema": SCHEMA,
+                "schema": signal["schema"],
                 "mode": signal["mode"],
                 "direction": signal["direction"],
                 "bar_time": signal["bar_time"],
+                "email_relay": relay_status,
             },
         )
