@@ -9,15 +9,17 @@ The purpose is not to search for the prettiest historical equity curve. The purp
 ```text
 casio/v3_core.py          causal MTF feature construction
 casio/v3_strategy.py      v3 / v2-rule signal logic
+casio/live_signal.py      latest closed-M15 signal evaluator
 casio/v3_backtest.py      M5 execution simulator + metrics
 casio/v3_research.py      ablations, candidate search, OOS + Monte Carlo
 casio/research_cli.py     research CLI
-casio/sync_market_data.py automatic realtime-feed CSV merger
+casio/sync_market_data.py market-data normalizer/merger
+scripts/fetch_dukascopy.mjs automatic XAUUSD M5 downloader
 ```
 
 ## 2. Research data
 
-The engine uses:
+Primary dataset:
 
 ```text
 data/xauusd_m5.csv
@@ -33,7 +35,7 @@ timestamp,open,high,low,close,volume
 Requirements:
 
 - M5 OHLC bars,
-- timestamp is UTC **bar-open** time,
+- UTC bar-open timestamps,
 - OHLC required,
 - volume optional,
 - chronological multi-year history strongly preferred.
@@ -48,34 +50,41 @@ M5 source
   +-- resolve stop/target at finer granularity than M15
 ```
 
-### Automatic collection from TradingView
+### Automatic source: Dukascopy
 
-CASIO now collects **new realtime M5 bars automatically** after one TradingView collector alert is created:
+The current Free-plan architecture does **not** rely on TradingView alerts or manual TradingView CSV downloads.
 
 ```text
-pine/CASIO_XAUUSD_M5_FEED.pine
-        -> Vercel
-        -> Apps Script Google Sheet
-        -> Vercel CSV proxy
-        -> .github/workflows/market-data-sync.yml
+Dukascopy XAUUSD bid M5
+        -> scripts/fetch_dukascopy.mjs
+        -> casio/sync_market_data.py
         -> data/xauusd_m5.csv
+        -> CASIO v3 research
 ```
 
-The market-data sync runs daily at 21:20 UTC and merges/deduplicates the remote bars with any existing local history.
+`.github/workflows/market-data-sync.yml` maintains the dataset automatically.
 
-### Historical backfill limitation
+The first successful sync backfills from:
 
-TradingView script alerts only trigger on realtime bars. Therefore automatic collection starts from activation forward and cannot reconstruct several years of past history by itself.
+```text
+2020-01-09 UTC
+```
 
-A one-time TradingView M5 CSV export can still be added to `data/xauusd_m5.csv`. The automatic sync preserves the old rows and appends future bars. This hybrid approach is the preferred way to get both **historical depth** and **automatic ongoing updates**.
+Later runs overlap the latest few stored days and deduplicate timestamps. This makes the ongoing sync smaller and lets recent bars be refreshed safely.
+
+Long downloads are chunked and include pacing/backoff because public data providers can rate-limit aggressive historical requests.
+
+### Feed caveat
+
+Dukascopy is an independent XAUUSD feed. The candles can differ from the broker/provider selected in TradingView. Therefore Python/Pine results are expected to be directionally comparable when the implementations are aligned, but exact trade-for-trade parity is not assumed.
 
 ## 3. Causality and lookahead
 
 The engine is designed to avoid intentional future-data access.
 
-Higher-timeframe values are made available only after the corresponding H1/H4 bar has closed. The pivot-zone experiment also uses a confirmed pivot proxy rather than reading a future swing before it would have been known.
+Higher-timeframe values become available only after the corresponding H1/H4 bar has closed. The pivot-zone experiment uses a confirmed causal pivot proxy rather than reading an unconfirmed future swing.
 
-This is still not a claim of perfect Pine parity. TradingView feed construction and `request.security()` behavior should be checked against exported TradingView results before calling the two implementations exact.
+This is still not a claim of perfect Pine parity. Feed construction, higher-timeframe mapping and broker execution can create differences.
 
 ## 4. Baseline
 
@@ -213,9 +222,9 @@ CLI option:
 --cost-bps 1.0
 ```
 
-This is a research friction assumption, not a claim of live-broker equivalence. Replace it with an estimate measured from the actual XAUUSD broker/feed.
+This is a research friction assumption, not a claim of live-broker equivalence. A bid-only historical feed does not itself model ask spread, commissions or slippage.
 
-For Scalping, CASIO also writes a cost-sensitivity report across multiples of the baseline friction.
+For Scalping, CASIO writes a cost-sensitivity report across multiples of the baseline friction.
 
 ## 10. Metrics
 
@@ -320,35 +329,37 @@ python -m casio.research_cli \
 
 ## 17. GitHub Actions automation
 
-Two workflows now cooperate:
+The current automated chain is:
 
 ```text
 .github/workflows/market-data-sync.yml
     daily 21:20 UTC
-    -> pulls stored TradingView M5 bars
-    -> merges/deduplicates data/xauusd_m5.csv
-    -> commits only when data changed
+    -> fetch/backfill Dukascopy XAUUSD M5
+    -> validate + merge/deduplicate
+    -> commit data/xauusd_m5.csv when changed
 
 .github/workflows/v3-research.yml
-    -> triggered by data/xauusd_m5.csv commits
+    -> automatically triggered by dataset commits
     -> triggered by relevant research-code changes
     -> manual dispatch
     -> weekly scheduled safety run
 ```
 
-When the dataset is absent or the collector has not been configured yet, the research workflow validates the code but skips performance claims rather than fabricating results.
+The separate `.github/workflows/live-signal.yml` uses recent Dukascopy data around each M15 close for email notifications. It does not need to wait for the daily persistent dataset commit.
+
+If the persistent dataset is absent, the research workflow validates code but does not invent performance numbers.
 
 ## 18. What remains before strong conclusions
 
-The automatic feed solves **ongoing collection**, not historical depth. Robust conclusions still need a sufficiently long history covering different XAUUSD regimes.
-
-Best path:
+Once the automatic backfill exists, CASIO has enough historical depth to begin answering the research questions, but strong conclusions still require:
 
 ```text
-one-time historical M5 backfill
-+ automatic realtime M5 collection thereafter
-+ Pine/Python parity checks
-+ broker-specific cost calibration
+clean multi-year data
++ enough trades
++ sequential/OOS stability
++ realistic cost assumptions
++ Python/Pine cross-checks
++ awareness of Dukascopy vs TradingView feed differences
 ```
 
-Only after those steps should a research candidate be considered for promotion into the live v3 rule set.
+Only after those checks should a research candidate be considered for promotion into the live v3 rule set.
