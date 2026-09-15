@@ -1,7 +1,11 @@
 const CASIO_SCHEMAS = ['casio.tv.v2', 'casio.tv.v3'];
+const CASIO_MARKET_SCHEMA = 'casio.market.v1';
 const DEFAULT_EMAIL = 'farhanshoffi@moe.gov.my';
 const QUEUE_PROPERTY = 'CASIO_EMAIL_QUEUE';
 const QUEUE_HANDLER = 'processEmailQueue_';
+const MARKET_SHEET_NAME = 'XAUUSD_M5';
+const MARKET_SHEET_ID_PROPERTY = 'CASIO_MARKET_SHEET_ID';
+const LAST_M5_BAR_PROPERTY = 'CASIO_LAST_M5_BAR_TIME';
 
 function setupCasio() {
   const props = PropertiesService.getScriptProperties();
@@ -13,9 +17,14 @@ function setupCasio() {
     props.setProperty('CASIO_TOKEN', token);
   }
 
+  const sheet = getOrCreateMarketSheet_();
+  const spreadsheet = sheet.getParent();
+
   const result = {
     email: props.getProperty('CASIO_EMAIL'),
     token: props.getProperty('CASIO_TOKEN'),
+    marketSpreadsheetId: spreadsheet.getId(),
+    marketSpreadsheetUrl: spreadsheet.getUrl(),
     webAppUrl: ScriptApp.getService().getUrl() || 'Deploy as Web App first, then run printWebhookUrl().'
   };
   console.log(JSON.stringify(result, null, 2));
@@ -46,27 +55,51 @@ function sendTestEmail() {
   return 'Test email sent to ' + to;
 }
 
-function doGet() {
+function doGet(e) {
+  const action = e && e.parameter ? String(e.parameter.action || '') : '';
+  if (action === 'csv') {
+    if (!authorized_(e)) {
+      return jsonResponse_({ ok: false, error: 'unauthorized' });
+    }
+    return marketCsvResponse_();
+  }
+
   const props = PropertiesService.getScriptProperties();
   return jsonResponse_({
     ok: true,
-    service: 'casio-email-alerts',
-    schemas: CASIO_SCHEMAS,
-    recipient: props.getProperty('CASIO_EMAIL') || DEFAULT_EMAIL
+    service: 'casio-email-marketdata',
+    schemas: CASIO_SCHEMAS.concat([CASIO_MARKET_SCHEMA]),
+    recipient: props.getProperty('CASIO_EMAIL') || DEFAULT_EMAIL,
+    marketSheetConfigured: Boolean(props.getProperty(MARKET_SHEET_ID_PROPERTY))
   });
 }
 
 function doPost(e) {
   try {
-    const props = PropertiesService.getScriptProperties();
-    const expectedToken = props.getProperty('CASIO_TOKEN');
-    const suppliedToken = e && e.parameter ? String(e.parameter.token || '') : '';
-
-    if (!expectedToken) return jsonResponse_({ ok: false, error: 'CASIO_TOKEN not configured' });
-    if (!suppliedToken || suppliedToken !== expectedToken) return jsonResponse_({ ok: false, error: 'unauthorized' });
-    if (!e || !e.postData || !e.postData.contents) return jsonResponse_({ ok: false, error: 'empty body' });
+    if (!authorized_(e)) {
+      return jsonResponse_({ ok: false, error: 'unauthorized' });
+    }
+    if (!e || !e.postData || !e.postData.contents) {
+      return jsonResponse_({ ok: false, error: 'empty body' });
+    }
 
     const payload = JSON.parse(e.postData.contents);
+
+    if (payload.event === 'bar') {
+      validateMarketBar_(payload);
+      const stored = storeMarketBar_(payload);
+      return jsonResponse_({
+        ok: true,
+        accepted: true,
+        event: 'bar',
+        stored: stored,
+        duplicate: !stored,
+        schema: payload.schema,
+        timeframe: payload.timeframe,
+        bar_time: payload.bar_time
+      });
+    }
+
     validateSignal_(payload);
 
     const dedupeKey = ['casio', payload.bar_time, payload.mode, payload.direction, payload.entry].join(':');
@@ -93,6 +126,114 @@ function doPost(e) {
     console.error(err && err.stack ? err.stack : err);
     return jsonResponse_({ ok: false, error: String(err && err.message ? err.message : err) });
   }
+}
+
+function authorized_(e) {
+  const props = PropertiesService.getScriptProperties();
+  const expectedToken = props.getProperty('CASIO_TOKEN');
+  const suppliedToken = e && e.parameter ? String(e.parameter.token || '') : '';
+  return Boolean(expectedToken && suppliedToken && suppliedToken === expectedToken);
+}
+
+function getOrCreateMarketSheet_() {
+  const props = PropertiesService.getScriptProperties();
+  let spreadsheet = null;
+  const existingId = props.getProperty(MARKET_SHEET_ID_PROPERTY);
+
+  if (existingId) {
+    try {
+      spreadsheet = SpreadsheetApp.openById(existingId);
+    } catch (err) {
+      console.warn('Could not open existing market sheet; creating a new one. ' + err);
+    }
+  }
+
+  if (!spreadsheet) {
+    spreadsheet = SpreadsheetApp.create('CASIO XAUUSD M5 Data');
+    props.setProperty(MARKET_SHEET_ID_PROPERTY, spreadsheet.getId());
+  }
+
+  let sheet = spreadsheet.getSheetByName(MARKET_SHEET_NAME);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(MARKET_SHEET_NAME);
+  }
+
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['timestamp', 'open', 'high', 'low', 'close', 'volume', 'symbol']);
+    sheet.setFrozenRows(1);
+  }
+
+  return sheet;
+}
+
+function validateMarketBar_(p) {
+  if (!p || typeof p !== 'object') throw new Error('JSON body must be an object');
+  if (String(p.schema) !== CASIO_MARKET_SCHEMA) throw new Error('Unsupported market schema');
+  if (p.event !== 'bar') throw new Error('Unsupported market event');
+
+  const ticker = String(p.ticker || '').toUpperCase();
+  const symbol = String(p.symbol || '').toUpperCase();
+  if (ticker !== 'XAUUSD' && symbol.indexOf('XAUUSD') === -1) throw new Error('XAUUSD only');
+  if (['5', '5m', '5M'].indexOf(String(p.timeframe)) === -1) throw new Error('M5 only');
+
+  ['bar_time', 'open', 'high', 'low', 'close'].forEach(function (key) {
+    if (p[key] === undefined || p[key] === null || p[key] === '') throw new Error('Missing ' + key);
+    if (!isFinite(Number(p[key]))) throw new Error('Invalid ' + key);
+  });
+}
+
+function storeMarketBar_(p) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const barTime = Number(p.bar_time);
+    const lastTime = Number(props.getProperty(LAST_M5_BAR_PROPERTY) || 0);
+
+    // TradingView alerts are chronological. Ignore retries/duplicates and stale out-of-order bars.
+    if (lastTime && barTime <= lastTime) {
+      return false;
+    }
+
+    const sheet = getOrCreateMarketSheet_();
+    sheet.appendRow([
+      new Date(barTime).toISOString(),
+      Number(p.open),
+      Number(p.high),
+      Number(p.low),
+      Number(p.close),
+      isFinite(Number(p.volume)) ? Number(p.volume) : 0,
+      String(p.symbol || p.ticker || 'XAUUSD')
+    ]);
+
+    props.setProperty(LAST_M5_BAR_PROPERTY, String(barTime));
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function marketCsvResponse_() {
+  const sheet = getOrCreateMarketSheet_();
+  const rows = sheet.getDataRange().getValues();
+  const wanted = rows.map(function (row, index) {
+    if (index === 0) return ['timestamp', 'open', 'high', 'low', 'close', 'volume'];
+    return row.slice(0, 6);
+  });
+
+  const csv = wanted.map(function (row) {
+    return row.map(csvCell_).join(',');
+  }).join('\n');
+
+  return ContentService.createTextOutput(csv).setMimeType(ContentService.MimeType.CSV);
+}
+
+function csvCell_(value) {
+  const text = String(value === null || value === undefined ? '' : value);
+  if (/[",\n]/.test(text)) {
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+  return text;
 }
 
 function enqueueSignal_(payload) {
