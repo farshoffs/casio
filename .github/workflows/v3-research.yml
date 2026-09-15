@@ -24,8 +24,7 @@ on:
         description: 'Round-trip cost assumption in basis points'
         required: false
         default: '1.0'
-  # Daily research normally starts when the Dukascopy data-sync workflow commits new bars.
-  # Keep a weekly schedule as a safety rerun.
+  # Data commits normally start research. Keep a weekly safety rerun too.
   schedule:
     - cron: '43 21 * * 0'
 
@@ -58,22 +57,60 @@ jobs:
           from casio.v3_core import V3Config, prepare_features
           from casio.v3_strategy import signals_for_config
           from casio.v3_backtest import backtest_signals, metrics
-          from casio.v3_research import monte_carlo_bootstrap, run_research
-          print('CASIO v3 research, market sync and Vercel API modules import successfully')
+          from casio.v3_research import monte_carlo_bootstrap, run_research, session_stability
+          print('CASIO v3 session-aware research, market sync and API modules import successfully')
           PY
 
-      - name: Check v3 research data
+      - name: Check research-data maturity
         id: data
         shell: bash
         run: |
-          if [ -f data/xauusd_m5.csv ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "## CASIO v3 research skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "Research/API code validation passed, but data/xauusd_m5.csv is not present yet." >> "$GITHUB_STEP_SUMMARY"
-            echo "The automatic Dukascopy XAUUSD M5 workflow will create/backfill it." >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
+          import pandas as pd
+
+          path = Path('data/xauusd_m5.csv')
+          if not path.exists() or path.stat().st_size == 0:
+              print('available=false')
+              print('reason=missing')
+              raise SystemExit
+
+          ts = pd.to_datetime(pd.read_csv(path, usecols=['timestamp'])['timestamp'], utc=True, errors='coerce').dropna()
+          if ts.empty:
+              print('available=false')
+              print('reason=invalid')
+              raise SystemExit
+
+          first, latest = ts.min(), ts.max()
+          now = pd.Timestamp.now(tz='UTC')
+          span_days = (latest - first).total_seconds() / 86400
+          age_days = (now - latest).total_seconds() / 86400
+
+          # Avoid producing seductive "optimization results" from an early partial
+          # backfill. Full research starts only after at least two years of history
+          # are present AND the dataset has caught up to the current market.
+          ready = span_days >= 730 and age_days <= 7
+          print(f'available={str(ready).lower()}')
+          print(f'reason={"ready" if ready else "backfill_in_progress"}')
+          print(f'first={first.isoformat()}')
+          print(f'latest={latest.isoformat()}')
+          print(f'span_days={span_days:.1f}')
+          print(f'age_days={age_days:.1f}')
+          PY
+
+      - name: Explain research hold
+        if: steps.data.outputs.available != 'true'
+        shell: bash
+        run: |
+          echo '## CASIO v3 research held' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Research/API code validation passed, but full strategy optimization is intentionally held until the historical dataset is mature.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Reason: ${{ steps.data.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.data.outputs.first }}" ]; then
+            echo "Coverage: ${{ steps.data.outputs.first }} -> ${{ steps.data.outputs.latest }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Span: ${{ steps.data.outputs.span_days }} days; latest bar age: ${{ steps.data.outputs.age_days }} days." >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo 'Gate: >=730 days of history and latest data <=7 days old.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This prevents CASIO from treating a partial backfill as robust evidence.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run v3 research
         if: steps.data.outputs.available == 'true'
