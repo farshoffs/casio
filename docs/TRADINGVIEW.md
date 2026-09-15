@@ -1,25 +1,33 @@
-# CASIO v3 + TradingView
+# CASIO v3 + TradingView Free
 
-TradingView is the primary **live CASIO v3 interface**. The current v3 live strategy still uses the **v2 regime-first MTF rule baseline**.
+TradingView is the primary **visual CASIO v3 interface**, but the current user setup is a **TradingView Free account without alert/webhook automation**.
 
-CASIO separates fast live charting, automatic market-data collection and deeper research:
+Therefore the live architecture deliberately separates charting from automation:
 
 ```text
-TradingView v3 FAST -> current signal/dashboard
-TradingView M5 feed -> automatic research bars
-Python v3 research  -> ablations, candidate search, walk-forward/OOS
-v2 Pine strategy    -> TradingView historical reference for baseline rules
+TradingView Free
+  -> XAUUSD M15
+  -> CASIO v3 FAST dashboard
+  -> visual LONG / SHORT / WAIT context
+
+Dukascopy + GitHub Actions
+  -> current XAUUSD M5 data
+  -> same CASIO v3/v2-rule baseline in Python
+  -> automatic signal email
+  -> independent research/backtest data
 ```
 
-## 1. Use v3 FAST for normal charting
+No TradingView alert is required.
 
-Primary live script:
+## 1. Normal TradingView setup
+
+Use:
 
 ```text
 pine/CASIO_XAUUSD_v3_FAST.pine
 ```
 
-Recommended setup:
+Recommended:
 
 ```text
 Symbol: XAUUSD
@@ -27,26 +35,23 @@ Chart: M15
 Mode: AUTO
 ```
 
-v3 FAST is an `indicator()` rather than a historical strategy simulator. It keeps the current MTF decision engine in TradingView while Vercel handles webhook/email/data relay and Python handles deeper independent research.
+v3 FAST is the day-to-day visual indicator. It reads H4/H1/M5 internally, so you normally remain on M15 rather than changing timeframes manually.
 
 ## 2. Timeframe hierarchy
-
-The current baseline rules use:
 
 ```text
 H4  -> directional context
 H1  -> structure, value proxy, opposing liquidity, range regime
-M15 -> primary execution chart: sweep, BOS, session and levels
+M15 -> main setup: sweep, BOS, session, levels
 M5  -> Scalping confirmation only
 ```
 
-Stay on M15 for normal use. CASIO reads H4/H1/M5 internally.
+The current product is **CASIO v3** and the current trading-rule baseline is the **v2 regime-first MTF rule set**.
 
 ## 3. AUTO routing
 
 ```text
-H1 range regime
-+ M15 range regime
+H1 range regime + M15 range regime
         |
         +--> true  -> SCALPING
         +--> false -> INTRADAY
@@ -80,31 +85,9 @@ M5 confirmation
 score >= 85
 ```
 
-Scalping is a separate mean-reversion engine.
+## 4. v3 FAST dashboard
 
-## 4. v3 FAST performance optimizations
-
-v3 groups external-timeframe calculations:
-
-```text
-H4 -> close + EMA20 + EMA50 in one request
-H1 -> close + EMA20 + EMA50 + ATR + range high/low in one request
-M5 -> open + close + EMA20 in one request
-```
-
-It also uses `calc_bars_count` budgets. Defaults:
-
-```text
-H4: 300 bars
-H1: 500 bars
-M5: 1500 bars
-```
-
-Changing TradingView chart timeframe still forces Pine recalculation. The intended workflow is simply to remain on M15.
-
-## 5. v3 FAST dashboard
-
-The live panel shows:
+The panel shows:
 
 ```text
 STATUS
@@ -122,143 +105,119 @@ H1 RANGE
 ENGINE
 ```
 
-`WAIT` is a normal result. The score is not a win probability.
+`WAIT` is intentional. Score is setup confluence, not a calibrated win probability.
 
-## 6. Live signal alert
+## 5. Why the dashboard may take time to load
 
-After adding the latest v3 FAST script:
+Changing chart timeframe forces TradingView to recalculate Pine. v3 FAST is lighter than the old v2 strategy because it bundles H4/H1/M5 requests and limits requested MTF history.
 
-```text
-Create Alert
-Condition: CASIO XAUUSD v3 FAST — Live MTF
-Trigger: alert() function calls only
-Webhook URL: ON
-```
-
-Use the existing CASIO Vercel webhook. v3 emits schema `casio.tv.v3`.
-
-Important: TradingView stores an alert snapshot. When alert-producing Pine logic changes, delete the old alert and create it again from the latest script.
-
-## 7. Automatic M5 research-data collector
-
-CASIO now has a second, tiny Pine script dedicated to data collection:
+Default request budgets:
 
 ```text
-pine/CASIO_XAUUSD_M5_FEED.pine
+H4: 300 bars
+H1: 500 bars
+M5: 1500 bars
 ```
 
-One-time TradingView setup:
+The intended workflow is to leave CASIO on XAUUSD M15.
+
+## 6. Automatic email signals without TradingView alerts
+
+The current Free-plan signal path is:
 
 ```text
-1. Open the SAME XAUUSD symbol/feed used by CASIO.
-2. Change that chart to 5 minutes.
-3. Paste CASIO_XAUUSD_M5_FEED.pine into Pine Editor.
-4. Save + Add to chart.
-5. Create Alert.
-6. Condition: CASIO XAUUSD M5 DATA FEED.
-7. Select: Any alert() function call.
-8. Enable Webhook URL.
-9. Use the same CASIO Vercel webhook URL used by the signal alert.
+Dukascopy XAUUSD M5
+        |
+        v
+GitHub Actions
+.github/workflows/live-signal.yml
+        |
+        v
+casio/live_signal.py
+        |
+        v
+same v3/v2-rule baseline
+        |
+        +-- no setup -> do nothing
+        |
+        +-- valid fresh setup
+                |
+                v
+         Google Apps Script
+                |
+                v
+       farhanshoffi@moe.gov.my
 ```
 
-After that, TradingView sends one `casio.market.v1` JSON message after each newly closed M5 bar. TradingView alerts execute on TradingView servers, so your browser and chart do not need to remain open.
-
-The storage path is:
+The job is scheduled at approximately:
 
 ```text
-TradingView M5 alert
-      -> Vercel
-      -> Apps Script
-      -> Google Sheet
-      -> Vercel CSV proxy
-      -> GitHub daily sync
-      -> data/xauusd_m5.csv
-      -> v3 research
+:02
+:17
+:32
+:47
 ```
 
-### Historical limitation
+UTC minute positions each hour, just after M15 closes.
 
-Script alerts only trigger on realtime bars. The M5 feed therefore starts collecting **after the alert is created**; it does not replay old historical bars through the webhook.
+GitHub scheduled jobs are not a low-latency trading exchange. They can start late. CASIO therefore rejects a signal if the corresponding setup has become too stale rather than emailing an old entry.
 
-For multi-year research you can still do a one-time TradingView M5 CSV export later. `casio/sync_market_data.py` merges and deduplicates the automatic realtime feed with any existing historical rows, so manual backfill and automatic collection can coexist.
+## 7. Automatic research data
 
-## 8. Vercel + Apps Script path
-
-The same backend handles both signal alerts and M5 bars:
+The research dataset is also independent of TradingView alerts:
 
 ```text
-/api/tradingview
-   |
-   +-- casio.tv.v3      -> signal/email
-   +-- casio.market.v1  -> M5 market-data storage
+Dukascopy bid M5
+-> daily GitHub sync
+-> data/xauusd_m5.csv
+-> CASIO v3 Research & Robustness
 ```
 
-Apps Script creates/uses a Google Sheet named:
+The first successful automatic sync backfills from 2020-01-09 UTC. Later runs fetch only a recent overlap and deduplicate it into the existing dataset.
 
-```text
-CASIO XAUUSD M5 Data
-```
+This solves both the historical-backfill problem and the ongoing-data problem without requiring manual TradingView CSV downloads.
 
-The server-side market CSV proxy is:
+## 8. Feed differences
 
-```text
-https://casio-farhan-shoffis-projects.vercel.app/api/tradingview?export=m5
-```
+Your TradingView chart may use a different provider than Dukascopy. Gold/FX is not a single centralized exchange feed, so exact candles and therefore individual setup timing can differ slightly between providers.
 
-This endpoint contains public XAUUSD OHLC data only. The private Apps Script token stays in Vercel environment variables.
+Use TradingView as your visual execution/context screen, while treating the Python/Dukascopy engine as an independent automation and research implementation. We should validate broad parity before trusting exact trade-for-trade correspondence.
 
-See `docs/CASIO_V3_EMAIL.md` for Apps Script/Vercel deployment.
-
-## 9. Automatic GitHub sync and research
-
-`.github/workflows/market-data-sync.yml` runs daily at 21:20 UTC. It downloads the current stored M5 bars, merges them into `data/xauusd_m5.csv`, deduplicates timestamps and commits only when the dataset changed.
-
-That data commit automatically triggers `.github/workflows/v3-research.yml`.
-
-The v3 research workflow then tests the current strategy questions using the updated dataset. It also has a weekly scheduled safety run and manual dispatch.
-
-## 10. Historical research references
-
-### Python v3 research engine — primary automated research
-
-```bash
-python -m casio.research_cli \
-  --data data/xauusd_m5.csv \
-  --output reports/v3-research
-```
-
-It tests H4 veto, H1 value model, sweep freshness, sessions, M5 confirmation, R:R, costs and multi-period stability.
-
-### v2 Pine — TradingView reference
+## 9. v2 Pine reference
 
 ```text
 pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-The heavier `strategy()` remains the TradingView historical reference for the v2-rule baseline and provides Strategy Tester plus rolling last-100 metrics. It is not the current product version.
+This heavier `strategy()` remains a historical TradingView reference for the baseline rule family. It is useful for Strategy Tester/rolling audit where available, but it is not the current v3 product.
 
-## 11. Recommended workflow
+## 10. Optional TradingView alert collector
 
 ```text
-Day-to-day trading:
-XAUUSD M15 + v3 FAST + AUTO
-
-Data collection:
-XAUUSD M5 + M5 DATA FEED alert (runs server-side)
-
-Signals:
-TradingView -> Vercel -> Apps Script -> email
-
-Dataset:
-TradingView -> Apps Script Sheet -> GitHub daily CSV sync
-
-Research:
-GitHub/Python v3 robustness engine
-
-Cross-check:
-v2 Pine Strategy Tester over matching periods
+pine/CASIO_XAUUSD_M5_FEED.pine
 ```
 
-For the complete rule rationale see `docs/STRATEGY_V3.md`; for research methodology see `docs/RESEARCH_V3.md`.
+This file is retained for accounts that have TradingView alerts/webhooks. It is **not needed in the current Free-plan setup**.
+
+## 11. Recommended current workflow
+
+```text
+Chart:
+TradingView Free -> XAUUSD M15 -> v3 FAST -> AUTO
+
+Automatic signal:
+Dukascopy -> GitHub Actions -> Python v3 -> Apps Script -> email
+
+Historical data:
+Dukascopy -> daily GitHub sync -> data/xauusd_m5.csv
+
+Research:
+Python v3 robustness engine
+
+Reference check:
+v2 Pine Strategy Tester when useful/available
+```
+
+See `docs/CASIO_V3_EMAIL.md` for the one-time email-secret setup and `docs/RESEARCH_V3.md` for research methodology.
 
 > Research software only. Historical performance does not guarantee future results.
