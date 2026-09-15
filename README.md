@@ -1,18 +1,48 @@
 # CASIO
 
-CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView, a Python robustness engine, a Vercel webhook backend, Google Apps Script email alerts, and an automatic TradingView-to-CSV market-data pipeline.
+CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView for charting, a Python v3 decision/research engine, Dukascopy market data, GitHub Actions automation, and Google Apps Script email delivery.
 
 > Current product version: **CASIO v3**. The live v3 strategy still uses the **v2 regime-first MTF rule set** as its baseline trading logic. Research software only; historical or simulated performance does not guarantee future results.
 
-## What to use
+## Current architecture — TradingView Free friendly
 
-### Live TradingView dashboard — CASIO v3 FAST
+The user does **not** need TradingView alerts or webhooks.
+
+```text
+                    CASIO v3
+                       |
+        +--------------+--------------+
+        |                             |
+        v                             v
+ TradingView Free                Automation
+ visual chart only                  |
+ XAUUSD M15                          v
+ v3 FAST dashboard           Dukascopy XAUUSD M5
+                                      |
+                         +------------+------------+
+                         |                         |
+                         v                         v
+                  v3 live signal            historical dataset
+                  every M15 close           daily sync/backfill
+                         |                         |
+                         v                         v
+                  GitHub Actions          data/xauusd_m5.csv
+                         |                         |
+                         v                         v
+                  Apps Script email       v3 research engine
+```
+
+TradingView remains the preferred visual interface, but it is **not** the automation source on the Free plan.
+
+## Live TradingView dashboard
+
+Use:
 
 ```text
 pine/CASIO_XAUUSD_v3_FAST.pine
 ```
 
-Recommended setup:
+Recommended:
 
 ```text
 Symbol: XAUUSD
@@ -20,32 +50,87 @@ Chart: M15
 Mode: AUTO
 ```
 
-v3 FAST is the primary day-to-day `indicator()`. It keeps the same H4/H1/M15/M5 regime-first rules while reducing TradingView load by bundling MTF requests and limiting requested history.
+v3 FAST reads H4/H1/M5 internally and displays the current regime, bias, setup score, signal, entry, stop, target and R:R. No TradingView alert is required for normal chart use.
 
-### Automatic M5 collector
+## Free live signal email engine
 
-```text
-pine/CASIO_XAUUSD_M5_FEED.pine
-```
-
-Run this once on the **same XAUUSD feed, 5-minute chart**, create an alert using **Any alert() function call**, and point it to the existing CASIO Vercel webhook. TradingView then sends every newly closed M5 bar automatically.
+Workflow:
 
 ```text
-TradingView M5 alert
-    -> Vercel
-    -> Google Apps Script
-    -> CASIO XAUUSD M5 Google Sheet
-    -> Vercel CSV export
-    -> GitHub scheduled sync
-    -> data/xauusd_m5.csv
-    -> CASIO v3 research
+.github/workflows/live-signal.yml
 ```
 
-The browser does not need to stay open after the TradingView alert is created.
+It runs shortly after each M15 close:
 
-**Historical caveat:** TradingView script alerts fire on realtime bars only. This collector automatically maintains data from activation forward; it cannot backfill years of past bars. A one-time historical M5 export can still be merged later, and the automatic sync will preserve/deduplicate it.
+```text
+02 / 17 / 32 / 47 minutes past each hour
+```
 
-### Automated research — CASIO v3 Python engine
+Each run:
+
+```text
+fetch latest Dukascopy XAUUSD M5
+-> rebuild H4/H1/M15/M5 CASIO context
+-> run the same v3/v2-rule baseline
+-> reject stale/invalid setups
+-> LONG / SHORT / no signal
+-> Google Apps Script
+-> farhanshoffi@moe.gov.my
+```
+
+The signal evaluator is:
+
+```text
+casio/live_signal.py
+```
+
+Email delivery requires one GitHub Actions secret:
+
+```text
+CASIO_GAS_WEBHOOK_URL
+```
+
+Set it to the complete Apps Script Web App URL returned by `printWebhookUrl()`, including its private token. Do not commit that URL to source control.
+
+GitHub Actions schedules are suitable for bar-close notification/research automation but are not guaranteed millisecond/second-level execution timing. CASIO rejects signals older than 35 minutes so a badly delayed job cannot send a very stale setup.
+
+## Automatic historical market data
+
+Research data no longer depends on TradingView exporting CSV.
+
+Workflow:
+
+```text
+.github/workflows/market-data-sync.yml
+```
+
+CASIO automatically downloads **Dukascopy XAUUSD bid M5** data. The first successful run backfills from:
+
+```text
+2020-01-09 UTC
+```
+
+Later runs overlap the previous few days, merge/deduplicate timestamps and maintain:
+
+```text
+data/xauusd_m5.csv
+```
+
+The downloader is:
+
+```text
+scripts/fetch_dukascopy.mjs
+```
+
+and the normalizer/merger is:
+
+```text
+casio/sync_market_data.py
+```
+
+Dukascopy is an independent feed, so its XAUUSD candles can differ slightly from the broker/feed displayed in TradingView. CASIO therefore does not claim tick-for-tick feed parity.
+
+## Automated research — CASIO v3 Python engine
 
 ```text
 casio/v3_core.py
@@ -55,9 +140,9 @@ casio/v3_research.py
 casio/research_cli.py
 ```
 
-This engine rebuilds M15/H1/H4 causally from **M5 OHLC**, reproduces the current v2-rule baseline in Python, runs ablations, evaluates bounded candidate combinations, performs walk-forward checks, keeps the final 20% as an untouched OOS segment, applies configurable trading friction, stress-tests the selected trade distribution with Monte Carlo bootstrap simulations, and ranks candidates by robustness rather than raw win rate.
+The engine rebuilds M15/H1/H4 causally from M5 data, reproduces the current v2-rule baseline in Python, runs ablations and bounded candidate combinations, uses sequential validation, reserves the final 20% as untouched OOS, applies configurable trading friction, performs Monte Carlo bootstrap stress tests and ranks candidates by robustness rather than raw win rate.
 
-Run it with:
+Manual command:
 
 ```bash
 pip install -r requirements.txt
@@ -68,23 +153,7 @@ python -m casio.research_cli \
   --cost-bps 1.0
 ```
 
-`1.0` bps is only a research assumption. Replace it with friction measured from the broker/feed you actually use.
-
-### Historical Pine reference — v2 MTF
-
-```text
-pine/CASIO_XAUUSD_v2_MTF.pine
-```
-
-This heavier `strategy()` is retained as the TradingView historical reference for the rule set that v3 currently uses. It provides Strategy Tester and the on-chart rolling audit, but it is slower than v3 FAST.
-
-### Legacy baseline — v1
-
-```text
-pine/CASIO_XAUUSD_v1.pine
-```
-
-v1 is kept only for comparison.
+`1.0` bps is a research assumption, not a claim about a particular broker's real spread/slippage.
 
 ## Strategy hierarchy
 
@@ -110,11 +179,9 @@ XAUUSD M15
 
 A score never overrides a mandatory veto.
 
-## Current baseline rules
+### Intraday baseline
 
-### Intraday
-
-A long currently requires:
+A long requires:
 
 ```text
 H4 bullish
@@ -129,7 +196,7 @@ score >= 80
 
 Short is the inverse. Preferred target is approximately 1:3, capped by nearer H1 opposing liquidity.
 
-### Scalping
+### Scalping baseline
 
 ```text
 H1 compressed/ranging
@@ -140,154 +207,74 @@ M5 direction confirmation
 score >= 85
 ```
 
-Scalping is a separate mean-reversion engine, not simply Intraday with a smaller R:R.
+Scalping is a separate mean-reversion engine.
 
-## What the v3 research engine tests automatically
+## Research questions tested automatically
 
-The research engine directly targets the current priority questions:
+The v3 research engine tests:
 
 1. H4 veto ON vs OFF.
 2. H1 EMA/ATR value proxy vs a causal pivot-zone proxy.
-3. Several London/New York UTC session profiles.
+3. Alternative London/New York session profiles.
 4. `sweepFreshBars` = 1, 2, 3, 4, 5.
 5. M5 confirmation ON vs OFF.
 6. Intraday minimum usable R:R from 2.0 to 3.0.
-7. Scalping expectancy under multiple trading-cost assumptions.
-8. Stability across years, strategy modes, walk-forward folds and Monte Carlo trade-sequence stress tests.
+7. Scalping expectancy under multiple cost assumptions.
+8. Stability across years, modes, sequential validation periods and Monte Carlo trade sequences.
 
-It also samples bounded combinations of those dimensions and ranks them using a robustness score based on expectancy, profit factor, drawdown, walk-forward results, sample size, yearly stability and mode stability.
+The optimizer never silently changes production settings. `auto_deploy` remains false.
 
-## Anti-overfitting guardrail
-
-CASIO research **does not automatically deploy the historically best-looking settings**.
+## Historical TradingView reference
 
 ```text
-Development data
-    -> ablations + candidate search
-    -> walk-forward validation
-    -> robustness ranking
-    -> choose candidate
-    -> open untouched final OOS 20%
-    -> Monte Carlo stress diagnostic
-    -> CANDIDATE_FOR_REVIEW / REJECT
+pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-The selected candidate is written to reports, but `auto_deploy` is always false. Live Pine is never silently rewritten by the optimizer.
+This heavier `strategy()` remains the TradingView historical reference for the rule family used by v3. It provides Strategy Tester and rolling audit when those TradingView features are available, but it is not the current product version.
 
-Generated reports include:
+`pine/CASIO_XAUUSD_v1.pine` is retained as the legacy baseline.
 
-```text
-reports/v3-research/REPORT.md
-reports/v3-research/research_summary.json
-reports/v3-research/priority_questions.json
-reports/v3-research/ablations.csv
-reports/v3-research/candidates.csv
-reports/v3-research/walk_forward.csv
-reports/v3-research/scalping_cost_sensitivity.csv
-reports/v3-research/monte_carlo.csv
-reports/v3-research/monte_carlo_summary.json
-reports/v3-research/best_candidate.json
-reports/v3-research/best_candidate_dev_trades.csv
-reports/v3-research/best_candidate_oos_trades.csv
-```
-
-Monte Carlo is a bootstrap diagnostic based on historical net-R trades. It is not a calibrated forecast of future returns.
-
-## Automatic GitHub data + research
-
-`.github/workflows/market-data-sync.yml` runs daily at **21:20 UTC** and merges the realtime TradingView M5 store into:
-
-```text
-data/xauusd_m5.csv
-```
-
-If new bars are committed, the push automatically triggers `.github/workflows/v3-research.yml`. The research workflow also has a weekly scheduled safety run and can be launched manually.
-
-The market sync client is:
-
-```text
-casio/sync_market_data.py
-```
-
-The public market-only CSV proxy is:
-
-```text
-https://casio-farhan-shoffis-projects.vercel.app/api/tradingview?export=m5
-```
-
-The private Apps Script token stays inside Vercel environment variables and is not exposed through this CSV endpoint.
-
-## Data contract for v3 research
-
-```csv
-timestamp,open,high,low,close,volume
-2026-01-02T00:00:00Z,2624.10,2625.00,2623.80,2624.70,0
-```
-
-Requirements:
-
-```text
-M5 bars
-timestamp = UTC bar-open time
-OHLC required
-volume optional
-chronological multi-year history strongly preferred
-```
-
-The engine resamples M5 into M15, H1 and H4 with no intentional future-data access. M5 is also used to resolve stop/target execution at finer resolution than M15.
+`pine/CASIO_XAUUSD_M5_FEED.pine` is retained only as an optional collector for accounts that support TradingView alerts; it is **not used by the current Free-plan architecture**.
 
 ## Important parity limitation
 
-The Python v3 engine is designed to mirror the live v3/v2-rule logic, but exact tick-for-tick parity with TradingView is **not yet claimed** until it is validated against exported TradingView signals/trades. Feed differences, Pine `request.security()` mapping details and broker execution can still create differences.
+The Python v3 engine is designed to mirror the current v3/v2-rule logic, but exact tick-for-tick parity with TradingView is not yet claimed. Differences can arise from source-feed candles, higher-timeframe mapping, Pine behavior and execution assumptions.
 
-## Live alerts
-
-```text
-TradingView v3 FAST
-      |
-      v
-Vercel /api/tradingview
-      |
-      +-- token/schema validation
-      +-- runtime logging
-      +-- Google Apps Script relay
-                 |
-                 v
-       farhanshoffi@moe.gov.my
-```
-
-v3 emits `casio.tv.v3`; the M5 collector emits `casio.market.v1`.
-
-Whenever Pine alert logic changes, recreate the TradingView alert because TradingView stores a snapshot of the script when the alert is created.
+Before promoting a research candidate, compare both implementations over matching periods and focus on robust conclusions rather than exact trade-for-trade identity.
 
 ## Project structure
 
 ```text
 pine/
-  CASIO_XAUUSD_v3_FAST.pine     primary live dashboard
-  CASIO_XAUUSD_M5_FEED.pine     automatic realtime M5 collector
-  CASIO_XAUUSD_v2_MTF.pine      v2-rule TradingView research reference
+  CASIO_XAUUSD_v3_FAST.pine     primary TradingView visual dashboard
+  CASIO_XAUUSD_v2_MTF.pine      TradingView historical reference
+  CASIO_XAUUSD_M5_FEED.pine     optional paid-alert collector, not required
   CASIO_XAUUSD_v1.pine          legacy baseline
 
 casio/
   v3_core.py                     causal MTF feature preparation
   v3_strategy.py                 v3 / v2-rule signal logic
+  live_signal.py                 latest closed-M15 signal evaluator
   v3_backtest.py                 M5 execution + R metrics
-  v3_research.py                 ablations, candidate search, OOS + Monte Carlo
-  research_cli.py                v3 research command line
-  sync_market_data.py            Vercel CSV -> GitHub dataset merger
-  strategy.py/backtest.py/...    legacy Python v1 research engine
+  v3_research.py                 ablations, OOS + Monte Carlo
+  research_cli.py                research CLI
+  sync_market_data.py            market CSV normalizer/merger
 
-api/tradingview.py               Vercel signals + M5 bar receiver + CSV proxy
-apps-script/Code.gs              email delivery + M5 Google Sheet store
-.github/workflows/market-data-sync.yml
-.github/workflows/v3-research.yml
+scripts/
+  fetch_dukascopy.mjs            automatic XAUUSD M5 downloader
+
+apps-script/Code.gs              email delivery
+
+.github/workflows/
+  live-signal.yml                free live signal/email scheduler
+  market-data-sync.yml           automatic Dukascopy dataset sync
+  v3-research.yml                research/robustness automation
 ```
 
 ## Documentation
 
-- [`docs/STRATEGY_V3.md`](docs/STRATEGY_V3.md) — understand the current v3 strategy and v2-rule baseline.
-- [`docs/RESEARCH_V3.md`](docs/RESEARCH_V3.md) — research methodology, outputs and guardrails.
-- [`docs/TRADINGVIEW.md`](docs/TRADINGVIEW.md) — live TradingView operation.
-- [`docs/CASIO_V3_EMAIL.md`](docs/CASIO_V3_EMAIL.md) — Vercel + Apps Script email setup.
-- [`data/README.md`](data/README.md) — automatic M5 collection and historical data format.
+- [`docs/STRATEGY_V3.md`](docs/STRATEGY_V3.md) — current strategy logic.
+- [`docs/RESEARCH_V3.md`](docs/RESEARCH_V3.md) — research methodology and guardrails.
+- [`docs/TRADINGVIEW.md`](docs/TRADINGVIEW.md) — TradingView Free operating instructions.
+- [`docs/CASIO_V3_EMAIL.md`](docs/CASIO_V3_EMAIL.md) — Apps Script + GitHub email setup.
+- [`data/README.md`](data/README.md) — automatic Dukascopy M5 dataset.
