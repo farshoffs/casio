@@ -8,23 +8,42 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class V3Config:
-    """CASIO v3 product config using the v2 regime-first MTF rule set."""
+    """CASIO v3 config: v2 regime-first MTF core plus v3 session-aware execution."""
+
     mode: str = "AUTO"
+
+    # Intraday core
     intraday_min_score: int = 80
     intraday_target_rr: float = 3.0
     intraday_min_rr: float = 2.5
     h1_value_atr: float = 0.65
     sweep_fresh_bars: int = 3
+
+    # Session-aware execution. Primary London/NY keeps the original threshold.
+    # Asia and transition hours can still trade, but only through stricter
+    # trend-exception gates. AUTO continues to prefer Scalping in range regimes.
+    session_policy: str = "adaptive_24h"  # adaptive_24h | primary_only
+    asia_start: str = "00:00"
+    asia_end: str = "06:00"
     london_start: str = "07:00"
     london_end: str = "11:00"
     new_york_start: str = "12:30"
     new_york_end: str = "16:30"
+    asia_intraday_min_score: int = 90
+    asia_intraday_min_rr: float = 3.0
+    transition_intraday_min_score: int = 90
+    transition_intraday_min_rr: float = 3.0
+    transition_min_adx: float = 25.0
+
+    # Range / Scalping core
     scalp_min_score: int = 85
     scalp_min_rr: float = 1.3
     h1_compression_atr: float = 0.40
     h1_max_range_atr: float = 8.0
     m15_max_adx: float = 22.0
     m15_max_range_atr: float = 5.5
+
+    # Research toggles
     h4_veto: bool = True
     h1_value_model: str = "ema_atr"  # ema_atr | pivot
     use_m5_confirmation: bool = True
@@ -37,6 +56,8 @@ SESSION_PROFILES = {
     "late": ("08:00", "12:00", "13:00", "17:00"),
     "wide": ("06:00", "12:00", "12:00", "17:00"),
 }
+
+SESSION_POLICIES = ("adaptive_24h", "primary_only")
 
 
 def load_m5_csv(path: str | Path) -> pd.DataFrame:
@@ -88,7 +109,10 @@ def _rma(s: pd.Series, n: int) -> pd.Series:
 
 def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
     pc = df["close"].shift(1)
-    tr = pd.concat([df["high"] - df["low"], (df["high"] - pc).abs(), (df["low"] - pc).abs()], axis=1).max(axis=1)
+    tr = pd.concat(
+        [df["high"] - df["low"], (df["high"] - pc).abs(), (df["low"] - pc).abs()],
+        axis=1,
+    ).max(axis=1)
     return _rma(tr, n)
 
 
@@ -140,14 +164,26 @@ def prepare_features(m5: pd.DataFrame) -> pd.DataFrame:
     f["m15_bos_long"] = (m15.close > f.prior_high5) & (m15.close > m15.open)
     f["m15_bos_short"] = (m15.close < f.prior_low5) & (m15.close < m15.open)
 
-    h4f = pd.DataFrame({"h4_close": h4.close, "h4_ema20": _ema(h4.close, 20), "h4_ema50": _ema(h4.close, 50)})
+    h4f = pd.DataFrame(
+        {"h4_close": h4.close, "h4_ema20": _ema(h4.close, 20), "h4_ema50": _ema(h4.close, 50)}
+    )
     f = f.join(_align_htf(h4f, m15.index, pd.Timedelta(hours=4)))
-    f["h4_bias"] = np.select([
-        (f.h4_ema20 > f.h4_ema50) & (f.h4_close > f.h4_ema20),
-        (f.h4_ema20 < f.h4_ema50) & (f.h4_close < f.h4_ema20)], [1, -1], default=0)
+    f["h4_bias"] = np.select(
+        [
+            (f.h4_ema20 > f.h4_ema50) & (f.h4_close > f.h4_ema20),
+            (f.h4_ema20 < f.h4_ema50) & (f.h4_close < f.h4_ema20),
+        ],
+        [1, -1],
+        default=0,
+    )
 
     h1f = pd.DataFrame(index=h1.index)
-    h1f["h1_close"], h1f["h1_ema20"], h1f["h1_ema50"], h1f["h1_atr"] = h1.close, _ema(h1.close, 20), _ema(h1.close, 50), _atr(h1)
+    h1f["h1_close"], h1f["h1_ema20"], h1f["h1_ema50"], h1f["h1_atr"] = (
+        h1.close,
+        _ema(h1.close, 20),
+        _ema(h1.close, 50),
+        _atr(h1),
+    )
     h1f["h1_high20"] = h1.high.shift(1).rolling(20, min_periods=20).max()
     h1f["h1_low20"] = h1.low.shift(1).rolling(20, min_periods=20).min()
     lo5, hi5 = h1.low.rolling(5, min_periods=5).min(), h1.high.rolling(5, min_periods=5).max()
@@ -157,12 +193,20 @@ def prepare_features(m5: pd.DataFrame) -> pd.DataFrame:
     h1f["pivot_low_atr"] = h1f.h1_atr.shift(2).where(pl.notna()).ffill()
     h1f["pivot_high_atr"] = h1f.h1_atr.shift(2).where(ph.notna()).ffill()
     f = f.join(_align_htf(h1f, m15.index, pd.Timedelta(hours=1)))
-    f["h1_bias"] = np.select([
-        (f.h1_ema20 > f.h1_ema50) & (f.h1_close > f.h1_ema20),
-        (f.h1_ema20 < f.h1_ema50) & (f.h1_close < f.h1_ema20)], [1, -1], default=0)
+    f["h1_bias"] = np.select(
+        [
+            (f.h1_ema20 > f.h1_ema50) & (f.h1_close > f.h1_ema20),
+            (f.h1_ema20 < f.h1_ema50) & (f.h1_close < f.h1_ema20),
+        ],
+        [1, -1],
+        default=0,
+    )
 
-    m5x = m5.copy(); m5x["m5_ema20"] = _ema(m5.close, 20)
-    last = m5x[["open", "close", "m5_ema20"]].resample("15min", label="left", closed="left", origin="epoch").last()
+    m5x = m5.copy()
+    m5x["m5_ema20"] = _ema(m5.close, 20)
+    last = m5x[["open", "close", "m5_ema20"]].resample(
+        "15min", label="left", closed="left", origin="epoch"
+    ).last()
     last = last.rename(columns={"open": "m5_open", "close": "m5_close"})
     f = f.join(last)
     f["m5_bull_confirm"] = (f.m5_close > f.m5_open) & (f.m5_close > f.m5_ema20)
