@@ -1,15 +1,17 @@
 # CASIO v2 — MTF + Google Apps Script Email Alerts
 
+This guide covers the current live alert path for `pine/CASIO_XAUUSD_v2_MTF.pine`.
+
 ## Architecture
 
 ```text
 TradingView XAUUSD M15
         |
-        | CASIO v2 alert() JSON
+        | confirmed casio.tv.v2 alert JSON
         v
 Vercel /api/tradingview
         |
-        | validated CASIO v2 signal
+        | validate + log + relay
         v
 Google Apps Script Web App
         |
@@ -18,21 +20,26 @@ Google Apps Script Web App
 farhanshoffi@moe.gov.my
 ```
 
-TradingView should point to Vercel, not directly to Apps Script. Google Apps Script ContentService responses are redirected; Vercel absorbs that behavior and gives TradingView a clean, fast webhook response.
+TradingView should point to **Vercel**, not directly to Apps Script. Vercel is the fast, stable webhook front door; Apps Script handles email delivery behind it.
 
-## 1. Add CASIO v2 to TradingView
+## 1. Use CASIO v2 in TradingView
 
-Open XAUUSD on **15 minutes**.
+Open:
 
-Paste this GitHub file into Pine Editor:
+```text
+XAUUSD
+15 minute chart
+```
+
+Paste:
 
 ```text
 pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-Save and **Add to chart**.
+into Pine Editor, save, and **Add to chart**.
 
-Recommended initial setting:
+Recommended operating mode:
 
 ```text
 Strategy mode: AUTO
@@ -40,44 +47,56 @@ Strategy mode: AUTO
 
 CASIO v2 internally reads:
 
-- H4 — directional bias
-- H1 — structure, value location and range regime
-- M15 — liquidity sweep, BOS and main chart execution
-- M5 — range/scalping rejection confirmation
+```text
+H4  directional bias
+H1  structure, value, liquidity and range regime
+M15 liquidity sweep, BOS and execution
+M5  scalping confirmation
+```
 
-### Intraday engine
+Do not switch chart timeframe just to feed those timeframes; they are already requested internally. The strategy is designed to execute on M15.
+
+## 2. What produces an email
+
+Email is sent only when CASIO produces a confirmed trade setup. `WAIT` states do not send trade emails.
+
+### Intraday
+
+A simplified eligible setup is:
 
 ```text
 H4 directional bias
- -> H1 must not veto direction
- -> H1 value/pullback location
- -> recent M15 liquidity sweep
- -> M15 BOS/confirmation
- -> London or New York window
- -> >= 1:2.5 room before opposing H1 liquidity
- -> signal
+-> H1 does not veto the direction
+-> H1 value/pullback location
+-> recent M15 liquidity sweep
+-> M15 BOS/confirmation
+-> London or New York session
+-> >= 1:2.5 usable R:R before opposing H1 liquidity
+-> score threshold
+-> signal
 ```
 
-Preferred target is 1:3, but CASIO will not target through nearer opposing H1 liquidity. It requires at least 1:2.5 available room.
+Preferred target is about 1:3, but the target is constrained by nearer H1 opposing liquidity.
 
-### Scalping engine
+### Scalping
 
 ```text
 H1 compressed/ranging
- -> M15 low-ADX compressed range
- -> M15 sweep of range edge
- -> M5 rejection confirmation
- -> >= 1:1.3 to range mean
- -> scalp signal
+-> M15 low-ADX compressed range
+-> M15 range-edge sweep + reclaim
+-> M5 rejection confirmation
+-> >= 1:1.3 to range mean
+-> score threshold
+-> signal
 ```
 
-This keeps scalping as a separate mean-reversion strategy rather than a smaller version of the intraday engine.
+Scalping is therefore a separate mean-reversion playbook, not a smaller Intraday trade.
 
-## 2. Create the Google Apps Script
+## 3. Create the Google Apps Script
 
-1. Open `script.google.com` using the Google account that can send mail to `farhanshoffi@moe.gov.my`.
-2. Create a new standalone Apps Script project named **CASIO Email Alerts**.
-3. Replace `Code.gs` with:
+1. Open `script.google.com` using the Google account that can send email to `farhanshoffi@moe.gov.my`.
+2. Create a standalone project named **CASIO Email Alerts**.
+3. Replace its `Code.gs` with the repository file:
 
 ```text
 apps-script/Code.gs
@@ -85,24 +104,29 @@ apps-script/Code.gs
 
 4. Run `setupCasio()` once.
 5. Approve the requested permissions.
-6. Run `sendTestEmail()` and confirm the test reaches `farhanshoffi@moe.gov.my`.
+6. Run `sendTestEmail()`.
+7. Confirm the test reaches:
 
-`setupCasio()` automatically creates a private `CASIO_TOKEN` in Script Properties and sets the recipient email.
+```text
+farhanshoffi@moe.gov.my
+```
 
-## 3. Deploy Apps Script as a Web App
+`setupCasio()` stores the recipient and creates a private `CASIO_TOKEN` in Script Properties.
 
-Apps Script:
+## 4. Deploy Apps Script as a Web App
+
+Use:
 
 ```text
 Deploy
- -> New deployment
- -> Type: Web app
- -> Execute as: Me
- -> Who has access: Anyone
- -> Deploy
+-> New deployment
+-> Type: Web app
+-> Execute as: Me
+-> Who has access: Anyone
+-> Deploy
 ```
 
-If your Google Workspace administrator does not allow `Anyone`, the external webhook relay cannot invoke the script; an account/admin policy change or another Google account capable of public Web App deployment is required.
+If your Google Workspace policy does not allow `Anyone`, an external webhook cannot call the Web App. In that case the Workspace policy must be changed or a Google account that permits public Web App deployment must be used.
 
 After deployment, run:
 
@@ -110,34 +134,78 @@ After deployment, run:
 printWebhookUrl()
 ```
 
-The execution log prints a URL similar to:
+It prints a URL similar to:
 
 ```text
 https://script.google.com/macros/s/DEPLOYMENT_ID/exec?token=LONG_PRIVATE_TOKEN
 ```
 
-Keep this URL private.
+Keep the token private.
 
-## 4. Configure Vercel environment variables
+## 5. Configure Vercel
+
+The repository contains:
+
+```text
+api/tradingview.py
+pyproject.toml
+```
+
+`pyproject.toml` defines the Python entrypoint required by Vercel:
+
+```toml
+[tool.vercel]
+entrypoint = "api.tradingview:handler"
+```
 
 In the Vercel project connected to `farshoffs/casio`, add these **Production** environment variables:
 
 ```text
 CASIO_GAS_WEBAPP_URL=https://script.google.com/macros/s/DEPLOYMENT_ID/exec
-CASIO_GAS_TOKEN=THE_TOKEN_PRINTED_BY_setupCasio
+CASIO_GAS_TOKEN=THE_PRIVATE_TOKEN_CREATED_BY_setupCasio
 ```
 
-Do not include `?token=...` in `CASIO_GAS_WEBAPP_URL`; keep the token in `CASIO_GAS_TOKEN`.
+Do not append `?token=...` to `CASIO_GAS_WEBAPP_URL`; Vercel adds `CASIO_GAS_TOKEN` when relaying.
 
-Redeploy Production after adding/changing environment variables.
+Redeploy Production after adding or changing environment variables.
 
-The existing TradingView -> Vercel token can remain unchanged.
+### TradingView -> Vercel authentication
 
-## 5. Create/re-create the TradingView alert
+The TradingView-facing webhook is separately protected by the CASIO webhook token. Do not confuse it with the Apps Script token.
 
-Any time Pine alert logic changes, recreate the TradingView alert so TradingView uses the latest compiled script snapshot.
+Conceptually:
 
-With CASIO v2 on the XAUUSD M15 chart:
+```text
+TradingView token  -> protects TradingView -> Vercel
+Apps Script token  -> protects Vercel -> Apps Script
+```
+
+## 6. Check Vercel health
+
+A GET request to:
+
+```text
+https://casio-farhan-shoffis-projects.vercel.app/api/tradingview
+```
+
+returns service information including whether the Apps Script relay is configured.
+
+Expected conceptually:
+
+```json
+{
+  "ok": true,
+  "service": "casio-tradingview",
+  "schemas": ["casio.tv.v1", "casio.tv.v2"],
+  "email_relay_configured": true
+}
+```
+
+If `email_relay_configured` is `false`, recheck the two Production environment variables and redeploy.
+
+## 7. Create/re-create the TradingView alert
+
+With v2 attached to the XAUUSD M15 chart:
 
 ```text
 Create Alert
@@ -146,58 +214,114 @@ Trigger: alert() function calls only
 Webhook URL: ON
 ```
 
-Use the existing CASIO Vercel webhook:
+Use the existing Vercel webhook URL:
 
 ```text
-https://casio-farhan-shoffis-projects.vercel.app/api/tradingview?token=<YOUR_EXISTING_CASIO_TOKEN>
+https://casio-farhan-shoffis-projects.vercel.app/api/tradingview?token=<TRADINGVIEW_TO_VERCEL_TOKEN>
 ```
 
-Do **not** use the Apps Script URL in TradingView.
+Do **not** paste the Apps Script URL into TradingView.
 
-## 6. Signal email
+Important: TradingView alerts contain a compiled snapshot of the strategy. If the Pine alert logic changes, delete/recreate the TradingView alert after updating the script.
 
-A confirmed signal email contains:
+## 8. Signal payload and email contents
 
-- LONG / SHORT
-- Intraday / Scalping
-- market regime
-- London / New York / off-session context
-- setup score
-- entry
-- stop
-- target
-- R:R
-- H4 bias
-- H1 bias
-- M15 ADX
-- rolling win rate
-- expectancy
-- profit factor
-- audit health
-- Malaysian timestamp
+CASIO v2 sends a `casio.tv.v2` payload with the confirmed setup and relevant current performance context.
 
-The Apps Script queues email work before returning, then a time trigger sends it through `MailApp` so webhook handling stays fast.
-
-## 7. Testing order
-
-Use this order to isolate problems quickly:
+The email can contain:
 
 ```text
-A. Apps Script sendTestEmail() -> email arrives
-B. Vercel GET /api/tradingview -> email_relay_configured: true
-C. TradingView alert -> Vercel webhook status successful
-D. Real CASIO setup -> email arrives
+LONG / SHORT
+Intraday / Scalping
+regime
+session
+score
+entry
+stop
+target
+R:R
+H4 bias
+H1 bias
+M15 ADX
+rolling win rate
+expectancy
+profit factor
+audit status
+TradingView bar time in Malaysia time
 ```
 
-## 8. v1 vs v2
+The score is a setup-quality score, not a guaranteed win probability.
 
-Keep v1 temporarily for comparison. In TradingView Strategy Tester compare:
+## 9. Deduplication and queued delivery
 
-- net profit
-- profit factor
-- max drawdown
-- number of trades
-- average trade
-- Intraday vs Scalping behavior
+Apps Script deduplicates repeated alerts using the setup identity so the same bar/setup does not generate repeated emails.
 
-Do not decide from win rate alone. The v2 goal is better expectancy and drawdown behavior through regime selection and higher-timeframe vetoes.
+The Web App queues email work and returns quickly. A short-lived Apps Script trigger then sends the message through `MailApp`. This reduces the chance of webhook processing being delayed by email delivery.
+
+## 10. Testing order
+
+Use this order so each layer is tested independently:
+
+```text
+A. Apps Script: run setupCasio()
+B. Apps Script: run sendTestEmail() -> email arrives
+C. Apps Script: deploy Web App + run printWebhookUrl()
+D. Vercel: set CASIO_GAS_WEBAPP_URL + CASIO_GAS_TOKEN
+E. Vercel: redeploy Production
+F. Vercel GET /api/tradingview -> email_relay_configured: true
+G. TradingView: add latest v2 Pine script
+H. TradingView: recreate alert using Vercel webhook URL
+I. Confirmed CASIO setup -> Vercel -> Apps Script -> email
+```
+
+## 11. Troubleshooting
+
+### Test email works, but TradingView email does not
+
+Check:
+
+```text
+Vercel environment variables
+Production redeployment after env changes
+TradingView alert webhook URL
+TradingView alert is using latest v2 script snapshot
+Vercel runtime logs for CASIO_SIGNAL / relay failures
+```
+
+### Vercel reports Python entrypoint missing
+
+Make sure `pyproject.toml` is present at repository root with:
+
+```toml
+[tool.vercel]
+entrypoint = "api.tradingview:handler"
+```
+
+### Apps Script cannot be public
+
+If Workspace policy does not permit `Who has access: Anyone`, the relay cannot invoke the Web App anonymously. This is an account policy issue, not a Pine issue.
+
+### Duplicate emails
+
+The Apps Script already includes deduplication. If duplicates still appear, inspect whether multiple TradingView alerts were created for the same strategy/chart.
+
+## 12. v1 vs v2
+
+Keep v1 only as a research comparison baseline.
+
+For v2, compare in TradingView Strategy Tester:
+
+```text
+trade count
+net profit / return
+profit factor
+average trade / expectancy
+maximum drawdown
+Intraday results
+Scalping results
+stability across different date ranges
+```
+
+Do not select a version from win rate alone.
+
+See `docs/STRATEGY.md` for the complete strategy rationale and `docs/TRADINGVIEW.md` for normal TradingView operation.
