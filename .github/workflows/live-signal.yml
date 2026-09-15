@@ -62,9 +62,11 @@ jobs:
           if path.exists() and path.stat().st_size > 0:
               ts = pd.read_csv(path, usecols=['timestamp'])['timestamp']
               latest = pd.to_datetime(ts, utc=True, errors='coerce').dropna().max()
-              start = latest - pd.Timedelta(days=5) if pd.notna(latest) else now - pd.Timedelta(days=120)
+              start = latest - pd.Timedelta(days=5) if pd.notna(latest) else now - pd.Timedelta(days=30)
           else:
-              start = now - pd.Timedelta(days=120)
+              # 30 days comfortably warms H4 EMA50/H1/M15/M5 features while
+              # keeping each live run lightweight until the long-term CSV exists.
+              start = now - pd.Timedelta(days=30)
           print(start.isoformat())
           PY
           )
