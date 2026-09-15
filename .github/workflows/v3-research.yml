@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
     paths:
+      - 'casio/v3_core.py'
+      - 'casio/v3_strategy.py'
+      - 'casio/v3_backtest.py'
       - 'casio/v3_research.py'
       - 'casio/research_cli.py'
       - 'data/xauusd_m5.csv'
