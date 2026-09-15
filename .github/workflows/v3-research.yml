@@ -22,8 +22,10 @@ on:
         description: 'Round-trip cost assumption in basis points'
         required: false
         default: '1.0'
+  # Daily runs are normally triggered by the automatic M5 data-sync commit.
+  # Keep a weekly schedule as a safety rerun even if no new bar commit occurred.
   schedule:
-    - cron: '43 21 * * *'
+    - cron: '43 21 * * 0'
 
 permissions:
   contents: read
@@ -66,7 +68,7 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "## CASIO v3 research skipped" >> "$GITHUB_STEP_SUMMARY"
             echo "Research code validation passed, but data/xauusd_m5.csv is not present." >> "$GITHUB_STEP_SUMMARY"
-            echo "Add/update UTC M5 XAUUSD OHLC data to activate the full robustness run." >> "$GITHUB_STEP_SUMMARY"
+            echo "The TradingView M5 collector/data-sync pipeline will create it after setup and new realtime bars arrive." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Run v3 research
