@@ -1,6 +1,15 @@
 name: CASIO v3 Live Signal Email
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/live_signal.py'
+      - 'casio/v3_core.py'
+      - 'casio/v3_strategy.py'
+      - 'casio/sync_market_data.py'
+      - 'scripts/fetch_dukascopy.mjs'
+      - '.github/workflows/live-signal.yml'
   workflow_dispatch:
   schedule:
     # Run just after each M15 close. GitHub Actions schedules can be delayed,
