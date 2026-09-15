@@ -10,7 +10,7 @@ The purpose is not to search for the most beautiful historical equity curve. The
 casio/v3_core.py       causal MTF feature construction
 casio/v3_strategy.py   v3 / v2-rule signal logic
 casio/v3_backtest.py   M5 execution simulator + metrics
-casio/v3_research.py   ablations, candidate search and OOS evaluation
+casio/v3_research.py   ablations, candidate search, OOS + Monte Carlo
 casio/research_cli.py  CLI entrypoint
 ```
 
@@ -157,7 +157,7 @@ The full Cartesian space can grow quickly, so the workflow evaluates a determini
 
 This can be changed through CLI or GitHub Actions manual dispatch.
 
-## 7. Development, walk-forward and final OOS
+## 7. Development, sequential validation and final OOS
 
 After a 30-day feature warmup, available history is split conceptually into:
 
@@ -166,7 +166,7 @@ first 80% -> development / candidate research
 last 20%  -> final untouched OOS
 ```
 
-Within development data, the engine also evaluates several later walk-forward slices.
+Within development data, the engine evaluates several later sequential validation slices to penalize candidates that work only in one portion of history.
 
 The important guardrail is:
 
@@ -217,7 +217,7 @@ profit factor
 maximum drawdown in R
 yearly stability
 Intraday/Scalping mode stability
-walk-forward stability
+sequential validation stability
 final OOS result
 ```
 
@@ -231,8 +231,8 @@ The current ranking combines several dimensions rather than maximizing one stati
 development expectancy
 profit factor
 maximum drawdown
-walk-forward expectancy
-positive walk-forward ratio
+sequential validation expectancy
+positive validation ratio
 sample size
 positive-year ratio
 positive-mode ratio
@@ -242,7 +242,7 @@ The exact formula is implementation logic, not a statistically calibrated probab
 
 A robustness score of 80/100 does **not** mean an 80% probability of future success.
 
-## 12. Candidate verdict
+## 12. Final OOS verdict
 
 After ranking on development data, the best candidate is tested on the untouched final OOS segment.
 
@@ -256,7 +256,33 @@ REJECT_OR_INSUFFICIENT
 
 A candidate needs meaningful OOS evidence before it can reach review status.
 
-## 13. No automatic live mutation
+## 13. Monte Carlo stress diagnostic
+
+After a candidate has been selected, CASIO performs 1,000 bootstrap simulations from its historical **net-R** trade distribution.
+
+Each simulation records:
+
+```text
+total R
+maximum drawdown in R
+minimum equity in R
+```
+
+The summary includes statistics such as:
+
+```text
+probability of positive simulated total R
+5th / 50th / 95th percentile total R
+50th / 90th / 95th percentile max drawdown
+```
+
+This helps answer a different question from the normal backtest:
+
+> What could drawdown look like if the historical trade outcomes arrive in less favorable combinations?
+
+It is still only a bootstrap diagnostic from historical trades. It is **not** a calibrated forecast of future performance and it does not rescue a weak OOS candidate.
+
+## 14. No automatic live mutation
 
 This is a hard guardrail:
 
@@ -274,7 +300,7 @@ research -> silently rewrite live settings -> auto-deploy
 
 This prevents the latest few trades from turning CASIO into a constantly self-overfitting system.
 
-## 14. Outputs
+## 15. Outputs
 
 A successful run writes:
 
@@ -286,6 +312,8 @@ reports/v3-research/ablations.csv
 reports/v3-research/candidates.csv
 reports/v3-research/walk_forward.csv
 reports/v3-research/scalping_cost_sensitivity.csv
+reports/v3-research/monte_carlo.csv
+reports/v3-research/monte_carlo_summary.json
 reports/v3-research/best_candidate.json
 reports/v3-research/best_candidate_dev_trades.csv
 reports/v3-research/best_candidate_oos_trades.csv
@@ -293,7 +321,7 @@ reports/v3-research/best_candidate_oos_trades.csv
 
 `priority_questions.json` is intended to directly answer the eight current strategy questions using measured data rather than intuition.
 
-## 15. Run locally
+## 16. Run locally
 
 ```bash
 pip install -r requirements.txt
@@ -304,7 +332,7 @@ python -m casio.research_cli \
   --cost-bps 1.0
 ```
 
-## 16. GitHub Actions automation
+## 17. GitHub Actions automation
 
 Workflow:
 
@@ -320,7 +348,7 @@ It runs:
 
 If the M5 dataset is missing, the workflow reports that research was skipped. It does not fabricate results.
 
-## 17. What remains before real conclusions
+## 18. What remains before real conclusions
 
 The engine is implemented, but actual claims about which rules are better require real, sufficiently long XAUUSD M5 history.
 
