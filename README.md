@@ -1,47 +1,59 @@
 # CASIO
 
-CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView, with regime-first multi-timeframe analysis, a Vercel webhook backend, and Google Apps Script email alerts.
+CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView, a Python robustness engine, a Vercel webhook backend, and Google Apps Script email alerts.
 
-> Research software only. Historical or simulated performance does not guarantee future results.
+> Current product version: **CASIO v3**. The live v3 strategy still uses the **v2 regime-first MTF rule set** as its baseline trading logic. Research software only; historical or simulated performance does not guarantee future results.
 
-## Which CASIO script should I use?
+## What to use
 
-### Daily/live use — v3 FAST
-
-Use:
+### Live TradingView dashboard — CASIO v3 FAST
 
 ```text
 pine/CASIO_XAUUSD_v3_FAST.pine
 ```
 
-Run it on:
+Recommended setup:
 
 ```text
 Symbol: XAUUSD
-Chart timeframe: 15 minutes
-Strategy mode: AUTO
+Chart: M15
+Mode: AUTO
 ```
 
-v3 FAST is a lightweight `indicator()` intended for the fastest TradingView dashboard experience. It keeps only the **live MTF decision engine** inside Pine, bundles higher/lower-timeframe requests, caps the amount of requested MTF history, and sends confirmed signals to the Vercel backend.
+v3 FAST is the primary day-to-day `indicator()`. It keeps the same H4/H1/M15/M5 regime-first rules while reducing TradingView load by bundling MTF requests and limiting requested history.
 
-It deliberately does **not** replay strategy trades or rebuild a rolling 200-trade audit on every chart load.
+### Automated research — CASIO v3 Python engine
 
-### Research/backtest — v2 MTF
+```text
+casio/v3_core.py
+casio/v3_strategy.py
+casio/v3_backtest.py
+casio/v3_research.py
+casio/research_cli.py
+```
 
-Use:
+This engine rebuilds M15/H1/H4 causally from **M5 OHLC**, reproduces the current v2-rule baseline in Python, runs ablations, evaluates bounded candidate combinations, performs walk-forward checks, keeps the final 20% as an untouched OOS segment, applies configurable trading friction, and ranks candidates by robustness rather than raw win rate.
+
+Run it with:
+
+```bash
+pip install -r requirements.txt
+python -m casio.research_cli \
+  --data data/xauusd_m5.csv \
+  --output reports/v3-research \
+  --max-candidates 64 \
+  --cost-bps 1.0
+```
+
+`1.0` bps is only a research assumption. Replace it with friction measured from the broker/feed you actually use.
+
+### Historical Pine reference — v2 MTF
 
 ```text
 pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-v2 is the heavier `strategy()` version. Use it when you want:
-
-```text
-TradingView Strategy Tester
-rolling last-100 audit
-win rate / expectancy / PF / max DD
-Intraday vs Scalping performance comparison
-```
+This heavier `strategy()` is retained as the TradingView historical reference for the rule set that v3 currently uses. It provides Strategy Tester and the on-chart rolling audit, but it is slower than v3 FAST.
 
 ### Legacy baseline — v1
 
@@ -49,274 +61,201 @@ Intraday vs Scalping performance comparison
 pine/CASIO_XAUUSD_v1.pine
 ```
 
-v1 is retained only as a simpler comparison baseline.
+v1 is kept only for comparison.
 
-## Important TradingView limitation
+## Strategy hierarchy
 
-The actual on-chart Pine indicator cannot be moved completely to Vercel or GitHub and still behave as the same TradingView dashboard. Pine cannot synchronously call an arbitrary Vercel/GitHub API and wait for the result to draw the current panel.
-
-Therefore CASIO uses a **split architecture**:
-
-```text
-TradingView M15
-   |
-   |-- v3 FAST: current H4/H1/M15/M5 analysis + dashboard
-   |
-   +-- confirmed signal alert
-           |
-           v
-      Vercel backend
-           |
-           +-- validation/logging
-           +-- Google Apps Script email relay
-```
-
-The performance gain comes from making the TradingView-side code lighter, not from pretending the chart can outsource its synchronous Pine calculation.
-
-## Strategy philosophy
-
-CASIO is **regime-first**, not "all timeframes vote on every trade".
+CASIO is **regime-first**, not an equal-vote MTF system:
 
 ```text
 XAUUSD M15
    |
-   +--> Is H1 + M15 a valid range?
-   |       |
-   |       +--> YES -> SCALPING engine
-   |       +--> NO  -> INTRADAY engine
+   +-- H1 + M15 qualify as range? -- YES --> SCALPING
+   |                                  |
+   |                                  +-- M15 edge sweep
+   |                                  +-- M5 confirmation
+   |                                  +-- target range mean
    |
-   +--> mandatory vetoes
-   +--> setup scoring
-   +--> LONG / SHORT / WAIT
+   +-- otherwise --------------------> INTRADAY
+                                      |
+                                      +-- H4 directional context
+                                      +-- H1 veto/value/liquidity
+                                      +-- M15 sweep + BOS
+                                      +-- London / New York
+                                      +-- usable R:R veto
 ```
 
-A high score cannot override a mandatory structural veto.
+A score never overrides a mandatory veto.
 
-## Multi-timeframe hierarchy
+## Current baseline rules
 
-The current v2/v3 trade logic uses:
+### Intraday
+
+A long currently requires:
 
 ```text
-H4  -> directional context
-H1  -> structure, value location, opposing liquidity and range regime
-M15 -> main execution chart: sweep, BOS, session and trade levels
-M5  -> execution confirmation for range/scalping setups only
+H4 bullish
+H1 not bearish
+H1 value/pullback condition
+recent M15 sell-side sweep
+bullish M15 BOS/confirmation
+London or New York primary window
+>= 1:2.5 room before opposing H1 liquidity
+score >= 80
 ```
 
-### Intraday engine
+Short is the inverse. Preferred target is approximately 1:3, capped by nearer H1 opposing liquidity.
 
-Simplified long requirements:
-
-```text
-H4 bullish bias
-+ H1 not bearish
-+ price in acceptable H1 value/pullback area
-+ recent M15 sell-side liquidity sweep
-+ M15 bullish BOS/confirmation
-+ London or New York session
-+ at least 1:2.5 usable R:R before opposing H1 liquidity
-= eligible LONG
-```
-
-Shorts are the inverse.
-
-Preferred target is approximately **1:3 R:R**, but CASIO will not blindly target through nearer opposing H1 liquidity.
-
-### Scalping engine
-
-Scalping is a separate mean-reversion engine:
+### Scalping
 
 ```text
 H1 compressed/ranging
-+ M15 low-ADX compressed range
-+ M15 sweep/reclaim of a range edge
-+ M5 confirmation
-+ at least 1:1.3 back toward the range mean
-= eligible scalp
+M15 low-ADX compressed range
+M15 sweep/reclaim of a range edge
+M5 direction confirmation
+>= 1:1.3 to range mean
+score >= 85
 ```
 
-## v3 FAST performance optimizations
+Scalping is a separate mean-reversion engine, not simply Intraday with a smaller R:R.
 
-v3 is specifically designed to reduce TradingView load time:
+## What the v3 research engine tests automatically
+
+The research engine directly targets the current priority questions:
+
+1. H4 veto ON vs OFF.
+2. H1 EMA/ATR value proxy vs a causal pivot-zone proxy.
+3. Several London/New York UTC session profiles.
+4. `sweepFreshBars` = 1, 2, 3, 4, 5.
+5. M5 confirmation ON vs OFF.
+6. Intraday minimum usable R:R from 2.0 to 3.0.
+7. Scalping expectancy under multiple trading-cost assumptions.
+8. Stability across years, strategy modes and walk-forward folds.
+
+It also samples bounded combinations of those dimensions and ranks them using a robustness score based on expectancy, profit factor, drawdown, walk-forward results, sample size, yearly stability and mode stability.
+
+## Anti-overfitting guardrail
+
+CASIO research **does not automatically deploy the historically best-looking settings**.
 
 ```text
-v2: many separate MTF request.security() calls
-v3: one bundled H4 request + one bundled H1 request + one bundled M5 request
+Development data
+    -> ablations + candidate search
+    -> walk-forward validation
+    -> robustness ranking
+    -> choose candidate
+    -> open untouched final OOS 20%
+    -> CANDIDATE_FOR_REVIEW / REJECT
 ```
 
-v3 also uses `calc_bars_count` budgets so TradingView does not request unnecessary external-timeframe history for a live dashboard.
+The selected candidate is written to reports, but `auto_deploy` is always false. Live Pine is never silently rewritten by the optimizer.
 
-Default request budgets:
+Generated reports include:
 
 ```text
-H4: 300 bars
-H1: 500 bars
-M5: 1500 bars
+reports/v3-research/REPORT.md
+reports/v3-research/research_summary.json
+reports/v3-research/priority_questions.json
+reports/v3-research/ablations.csv
+reports/v3-research/candidates.csv
+reports/v3-research/walk_forward.csv
+reports/v3-research/scalping_cost_sensitivity.csv
+reports/v3-research/best_candidate_dev_trades.csv
+reports/v3-research/best_candidate_oos_trades.csv
 ```
 
-These are configurable under **FAST Performance**. Increasing them gives more requested context but may slow recalculation.
+## Automatic GitHub research
 
-## v3 FAST dashboard
-
-The live panel shows:
+`.github/workflows/v3-research.yml` runs:
 
 ```text
-STATUS
-MODE
-REGIME
-H4 / H1 BIAS
-SESSION
-ADX / SCORE
-SIGNAL
-ENTRY
-STOP
-TARGET
-R:R
-H1 RANGE
-ENGINE
+on relevant v3 code/data pushes
+daily at 21:43 UTC
+manually with workflow_dispatch
 ```
 
-Normal day-to-day workflow:
+It runs only when this file exists:
 
 ```text
-stay on XAUUSD M15
-use v3 FAST
-let CASIO read H4/H1/M5 internally
+data/xauusd_m5.csv
 ```
 
-If you want deep historical statistics, switch to the v2 strategy rather than making the live indicator heavy again.
+Without M5 history, the workflow deliberately reports **skipped** rather than inventing performance.
 
-## TradingView alerts
+## Data contract for v3 research
 
-For v3 FAST create:
+```csv
+timestamp,open,high,low,close,volume
+2026-01-02T00:00:00Z,2624.10,2625.00,2623.80,2624.70,0
+```
+
+Requirements:
 
 ```text
-Condition: CASIO XAUUSD v3 FAST — Live MTF
-Trigger: alert() function calls only
-Webhook URL: ON
+M5 bars
+timestamp = UTC bar-open time
+OHLC required
+volume optional
+chronological multi-year history strongly preferred
 ```
 
-Use the existing CASIO Vercel webhook.
+The engine resamples M5 into M15, H1 and H4 with no intentional future-data access. M5 is also used to resolve stop/target execution at finer resolution than M15.
 
-v3 sends schema:
+## Important parity limitation
+
+The Python v3 engine is designed to mirror the live v3/v2-rule logic, but exact tick-for-tick parity with TradingView is **not yet claimed** until it is validated against exported TradingView signals/trades. Feed differences, Pine `request.security()` mapping details and broker execution can still create differences.
+
+That is materially different from the old state: we now have a v3 MTF Python implementation, but it still needs parity verification before being called exact.
+
+## Live alerts
+
+```text
+TradingView v3 FAST
+      |
+      v
+Vercel /api/tradingview
+      |
+      +-- token/schema validation
+      +-- runtime logging
+      +-- Google Apps Script relay
+                 |
+                 v
+       farhanshoffi@moe.gov.my
+```
+
+v3 emits schema:
 
 ```text
 casio.tv.v3
 ```
 
-The backend currently accepts v1, v2 and v3. v2/v3 signals can be relayed to Google Apps Script when configured.
-
-Whenever Pine alert logic changes, delete/recreate the TradingView alert because TradingView stores a snapshot of the script at alert creation time.
-
-## Vercel backend
-
-`api/tradingview.py` handles the external/background side:
-
-```text
-TradingView alert
--> token validation
--> schema validation
--> CASIO runtime log
--> optional Google Apps Script relay
--> email alert
-```
-
-The Python entrypoint is declared in `pyproject.toml`:
-
-```toml
-[tool.vercel]
-entrypoint = "api.tradingview:handler"
-```
-
-Production email-relay variables:
-
-```text
-CASIO_GAS_WEBAPP_URL=https://script.google.com/macros/s/DEPLOYMENT_ID/exec
-CASIO_GAS_TOKEN=<Apps Script token>
-```
-
-## Google Apps Script email alerts
-
-`apps-script/Code.gs` accepts current v2/v3 signals and sends confirmed setups to:
-
-```text
-farhanshoffi@moe.gov.my
-```
-
-The script deduplicates repeated events and queues email delivery.
-
-## v2 research dashboard and audit
-
-v2 stores up to 200 closed-trade R results and compares the newest rolling window against the previous one.
-
-Audit states:
-
-```text
-INSUFFICIENT
-HEALTHY
-WARNING
-CRITICAL
-```
-
-Use v2 when you want the on-chart rolling audit or Strategy Tester. Do not interpret the setup score as a probability of winning.
-
-## Python research engine
-
-The `casio/` Python package is an earlier deterministic research engine. It is **not yet a 1:1 Python port of the current MTF Pine logic**.
-
-Run it with:
-
-```bash
-pip install -r requirements.txt
-python -m casio.cli --data data/xauusd.csv --output reports
-```
+Whenever Pine alert logic changes, recreate the TradingView alert because TradingView stores a snapshot of the script when the alert is created.
 
 ## Project structure
 
 ```text
 pine/
-  CASIO_XAUUSD_v3_FAST.pine  primary fast live indicator
-  CASIO_XAUUSD_v2_MTF.pine   full MTF research/backtest strategy
+  CASIO_XAUUSD_v3_FAST.pine  primary live dashboard
+  CASIO_XAUUSD_v2_MTF.pine   v2-rule TradingView research reference
   CASIO_XAUUSD_v1.pine       legacy baseline
 
-api/
-  tradingview.py              Vercel webhook + Apps Script relay
-
-apps-script/
-  Code.gs                     email webhook + MailApp delivery
-
 casio/
-  config.py
-  strategy.py
-  backtest.py
-  audit.py
-  cli.py
+  v3_core.py                  causal MTF feature preparation
+  v3_strategy.py              v3 / v2-rule signal logic
+  v3_backtest.py              M5 execution + R metrics
+  v3_research.py              ablations, candidate search, OOS ranking
+  research_cli.py             v3 research command line
+  strategy.py/backtest.py/... legacy Python v1 research engine
 
-docs/
-  STRATEGY.md
-  TRADINGVIEW.md
-  CASIO_V2_MTF_EMAIL.md
-
-data/
-  README.md
-
-.github/workflows/
-  strategy-audit.yml
-
-pyproject.toml                Vercel Python entrypoint
+api/tradingview.py            Vercel signal receiver + email relay
+apps-script/Code.gs           queued MailApp delivery
+.github/workflows/v3-research.yml
 ```
 
 ## Documentation
 
-- **Understand the strategy:** [`docs/STRATEGY.md`](docs/STRATEGY.md)
-- **Use CASIO in TradingView:** [`docs/TRADINGVIEW.md`](docs/TRADINGVIEW.md)
-- **Enable email alerts:** [`docs/CASIO_V2_MTF_EMAIL.md`](docs/CASIO_V2_MTF_EMAIL.md)
-- **Use the Python research dataset:** [`data/README.md`](data/README.md)
-
-## Current priorities
-
-1. Use v3 FAST for live chart operation and v2 for research/backtesting.
-2. Compare v2/v3 signal parity over the same periods.
-3. Add realistic spread/slippage assumptions to research tests.
-4. Port current MTF rules into Python for independent parity testing.
-5. Keep Pine live logic small; move persistence/notifications/background work to Vercel.
+- [`docs/STRATEGY_V3.md`](docs/STRATEGY_V3.md) — understand the current v3 strategy and v2-rule baseline.
+- [`docs/RESEARCH_V3.md`](docs/RESEARCH_V3.md) — research methodology, outputs and guardrails.
+- [`docs/TRADINGVIEW.md`](docs/TRADINGVIEW.md) — live TradingView operation.
+- [`docs/CASIO_V3_EMAIL.md`](docs/CASIO_V3_EMAIL.md) — Vercel + Apps Script email setup.
+- [`data/README.md`](data/README.md) — historical data formats.
