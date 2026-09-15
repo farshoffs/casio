@@ -2,11 +2,11 @@
 
 CASIO is an experimental **XAUUSD strategy research and live-signal system** built around TradingView for charting, a Python v3 decision/research engine, Dukascopy market data, GitHub Actions automation, and Google Apps Script email delivery.
 
-> Current product version: **CASIO v3**. The live v3 strategy still uses the **v2 regime-first MTF rule set** as its baseline trading logic. Research software only; historical or simulated performance does not guarantee future results.
+> Current product version: **CASIO v3**. The strategy keeps the **v2 regime-first MTF core** and now adds a **v3 adaptive 24h session overlay** so CASIO can evaluate Asia, London, New York and transition hours without treating all sessions as identical. Research software only; historical or simulated performance does not guarantee future results.
 
 ## Current architecture — TradingView Free friendly
 
-The user does **not** need TradingView alerts or webhooks.
+TradingView alerts or webhooks are not required.
 
 ```text
                     CASIO v3
@@ -48,9 +48,48 @@ Recommended:
 Symbol: XAUUSD
 Chart: M15
 Mode: AUTO
+Session policy: ADAPTIVE_24H
 ```
 
-v3 FAST reads H4/H1/M5 internally and displays the current regime, bias, setup score, signal, entry, stop, target and R:R. No TradingView alert is required for normal chart use.
+v3 FAST reads H4/H1/M5 internally and displays the current regime, session, session rule, bias, setup score, signal, entry, stop, target and R:R. No TradingView alert is required for normal chart use.
+
+## Adaptive 24h session model
+
+CASIO now checks the market continuously rather than hard-blocking Intraday outside London/New York.
+
+```text
+00:00-06:00 UTC  ASIA
+07:00-11:00 UTC  LONDON primary
+12:30-16:30 UTC  NEW YORK primary
+all other times  TRANSITION
+```
+
+The playbook changes by session:
+
+```text
+RANGE regime anywhere
+-> SCALPING mean reversion remains available
+
+LONDON / NEW YORK directional regime
+-> normal Intraday rules
+-> score >= 80
+-> usable R:R >= 2.5
+
+ASIA directional exception
+-> H1 must align with trade direction
+-> score >= 90
+-> usable R:R >= 3.0
+
+TRANSITION directional exception
+-> H1 must align with trade direction
+-> M15 ADX >= 25
+-> score >= 90
+-> usable R:R >= 3.0
+```
+
+So CASIO can capture opportunities outside the primary windows, but those trades must pass stricter gates. In `AUTO`, a genuine H1+M15 range still routes to `SCALPING`, which is especially important during quieter Asia hours.
+
+For research comparison, `session_policy="primary_only"` preserves the older Intraday rule that only London/New York may trade.
 
 ## Free live signal email engine
 
@@ -71,7 +110,9 @@ Each run:
 ```text
 fetch latest Dukascopy XAUUSD M5
 -> rebuild H4/H1/M15/M5 CASIO context
--> run the same v3/v2-rule baseline
+-> identify ASIA / LONDON / NEW YORK / TRANSITION
+-> select range or directional playbook
+-> apply session-specific gates
 -> reject stale/invalid setups
 -> LONG / SHORT / no signal
 -> Google Apps Script
@@ -83,6 +124,8 @@ The signal evaluator is:
 ```text
 casio/live_signal.py
 ```
+
+Signal JSON now includes `session`, `playbook`, `session_policy`, `required_score` and `required_rr` so session-aware decisions are auditable.
 
 Email delivery requires one GitHub Actions secret:
 
@@ -96,7 +139,7 @@ GitHub Actions schedules are suitable for bar-close notification/research automa
 
 ## Automatic historical market data
 
-Research data no longer depends on TradingView exporting CSV.
+Research data does not depend on TradingView exporting CSV.
 
 Workflow:
 
@@ -104,7 +147,7 @@ Workflow:
 .github/workflows/market-data-sync.yml
 ```
 
-CASIO automatically downloads **Dukascopy XAUUSD bid M5** data. The first successful run backfills from:
+CASIO automatically downloads **Dukascopy XAUUSD bid M5** data. The configured historical backfill starts from:
 
 ```text
 2020-01-09 UTC
@@ -116,17 +159,7 @@ Later runs overlap the previous few days, merge/deduplicate timestamps and maint
 data/xauusd_m5.csv
 ```
 
-The downloader is:
-
-```text
-scripts/fetch_dukascopy.mjs
-```
-
-and the normalizer/merger is:
-
-```text
-casio/sync_market_data.py
-```
+The downloader is `scripts/fetch_dukascopy.mjs`; the normalizer/merger is `casio/sync_market_data.py`.
 
 Dukascopy is an independent feed, so its XAUUSD candles can differ slightly from the broker/feed displayed in TradingView. CASIO therefore does not claim tick-for-tick feed parity.
 
@@ -140,7 +173,7 @@ casio/v3_research.py
 casio/research_cli.py
 ```
 
-The engine rebuilds M15/H1/H4 causally from M5 data, reproduces the current v2-rule baseline in Python, runs ablations and bounded candidate combinations, uses sequential validation, reserves the final 20% as untouched OOS, applies configurable trading friction, performs Monte Carlo bootstrap stress tests and ranks candidates by robustness rather than raw win rate.
+The engine rebuilds M15/H1/H4 causally from M5 data, reproduces the current v3 rule family in Python, runs ablations and bounded candidate combinations, uses sequential validation, reserves the final 20% as untouched OOS, applies configurable trading friction, performs Monte Carlo bootstrap stress tests and ranks candidates by robustness rather than raw win rate.
 
 Manual command:
 
@@ -157,7 +190,7 @@ python -m casio.research_cli \
 
 ## Strategy hierarchy
 
-CASIO is **regime-first**, not an equal-vote MTF system:
+CASIO is **regime-first**, then **session-aware**:
 
 ```text
 XAUUSD M15
@@ -167,19 +200,20 @@ XAUUSD M15
    |                                  +-- M15 edge sweep
    |                                  +-- M5 confirmation
    |                                  +-- target range mean
+   |                                  +-- available across sessions
    |
    +-- otherwise --------------------> INTRADAY
                                       |
                                       +-- H4 directional context
                                       +-- H1 veto/value/liquidity
                                       +-- M15 sweep + BOS
-                                      +-- London / New York
-                                      +-- usable R:R veto
+                                      +-- classify current session
+                                      +-- apply session-specific score/R:R gates
 ```
 
 A score never overrides a mandatory veto.
 
-### Intraday baseline
+### Primary Intraday — London / New York
 
 A long requires:
 
@@ -196,6 +230,26 @@ score >= 80
 
 Short is the inverse. Preferred target is approximately 1:3, capped by nearer H1 opposing liquidity.
 
+### Asia Intraday exception
+
+The same directional core applies, but Asia additionally requires H1 alignment and uses stricter defaults:
+
+```text
+score >= 90
+usable R:R >= 3.0
+```
+
+### Transition Intraday exception
+
+Transition hours require the same stronger alignment plus expansion:
+
+```text
+H1 aligned
+M15 ADX >= 25
+score >= 90
+usable R:R >= 3.0
+```
+
 ### Scalping baseline
 
 ```text
@@ -207,7 +261,7 @@ M5 direction confirmation
 score >= 85
 ```
 
-Scalping is a separate mean-reversion engine.
+Scalping is a separate mean-reversion engine and remains session-independent when its range regime qualifies.
 
 ## Research questions tested automatically
 
@@ -215,14 +269,14 @@ The v3 research engine tests:
 
 1. H4 veto ON vs OFF.
 2. H1 EMA/ATR value proxy vs a causal pivot-zone proxy.
-3. Alternative London/New York session profiles.
+3. `ADAPTIVE_24H` vs legacy `PRIMARY_ONLY`, plus alternative London/New York primary-window profiles and per-session expectancy.
 4. `sweepFreshBars` = 1, 2, 3, 4, 5.
 5. M5 confirmation ON vs OFF.
-6. Intraday minimum usable R:R from 2.0 to 3.0.
+6. Intraday minimum usable R:R from 2.0 to 3.0 for the primary-session baseline; Asia/transition exceptions keep their stricter defaults unless explicitly changed in code.
 7. Scalping expectancy under multiple cost assumptions.
-8. Stability across years, modes, sequential validation periods and Monte Carlo trade sequences.
+8. Stability across years, modes, sessions, sequential validation periods and Monte Carlo trade sequences.
 
-The optimizer never silently changes production settings. `auto_deploy` remains false.
+The optimizer writes `session_performance.csv` so Asia, London, New York and Transition can be evaluated independently. The optimizer never silently changes production settings. `auto_deploy` remains false.
 
 ## Historical TradingView reference
 
@@ -230,7 +284,7 @@ The optimizer never silently changes production settings. `auto_deploy` remains 
 pine/CASIO_XAUUSD_v2_MTF.pine
 ```
 
-This heavier `strategy()` remains the TradingView historical reference for the rule family used by v3. It provides Strategy Tester and rolling audit when those TradingView features are available, but it is not the current product version.
+This heavier `strategy()` remains the TradingView historical reference for the original v2 MTF core. v3 now has additional session-aware rules, so v2 is no longer a complete 1:1 reference for all current v3 entry gates.
 
 `pine/CASIO_XAUUSD_v1.pine` is retained as the legacy baseline.
 
@@ -238,7 +292,9 @@ This heavier `strategy()` remains the TradingView historical reference for the r
 
 ## Important parity limitation
 
-The Python v3 engine is designed to mirror the current v3/v2-rule logic, but exact tick-for-tick parity with TradingView is not yet claimed. Differences can arise from source-feed candles, higher-timeframe mapping, Pine behavior and execution assumptions.
+The Python v3 engine and v3 FAST Pine are intended to express the same current session-aware rule family, but exact tick-for-tick parity is not yet claimed. Differences can arise from source-feed candles, higher-timeframe mapping, Pine behavior and execution assumptions.
+
+The Python automation uses causal closed H1/H4 reconstruction from Dukascopy data. The TradingView visual script can still differ because of TradingView feed construction and realtime `request.security()` behavior.
 
 Before promoting a research candidate, compare both implementations over matching periods and focus on robust conclusions rather than exact trade-for-trade identity.
 
@@ -247,16 +303,16 @@ Before promoting a research candidate, compare both implementations over matchin
 ```text
 pine/
   CASIO_XAUUSD_v3_FAST.pine     primary TradingView visual dashboard
-  CASIO_XAUUSD_v2_MTF.pine      TradingView historical reference
+  CASIO_XAUUSD_v2_MTF.pine      original v2 MTF historical reference
   CASIO_XAUUSD_M5_FEED.pine     optional paid-alert collector, not required
   CASIO_XAUUSD_v1.pine          legacy baseline
 
 casio/
-  v3_core.py                     causal MTF feature preparation
-  v3_strategy.py                 v3 / v2-rule signal logic
+  v3_core.py                     causal MTF features + session-aware config
+  v3_strategy.py                 regime-first + adaptive 24h signal logic
   live_signal.py                 latest closed-M15 signal evaluator
-  v3_backtest.py                 M5 execution + R metrics
-  v3_research.py                 ablations, OOS + Monte Carlo
+  v3_backtest.py                 M5 execution + R metrics + session tags
+  v3_research.py                 ablations, session analysis, OOS + Monte Carlo
   research_cli.py                research CLI
   sync_market_data.py            market CSV normalizer/merger
 
