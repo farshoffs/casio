@@ -53,24 +53,31 @@ jobs:
         id: window
         shell: bash
         run: |
-          START=$(python - <<'PY'
+          python - <<'PY' >> "$GITHUB_OUTPUT"
           from pathlib import Path
           import pandas as pd
 
           path = Path('data/xauusd_m5.csv')
           now = pd.Timestamp.now(tz='UTC')
+          latest = None
           if path.exists() and path.stat().st_size > 0:
               ts = pd.read_csv(path, usecols=['timestamp'])['timestamp']
               latest = pd.to_datetime(ts, utc=True, errors='coerce').dropna().max()
-              start = latest - pd.Timedelta(days=5) if pd.notna(latest) else now - pd.Timedelta(days=30)
+
+          # The persistent historical file is being progressively backfilled from
+          # 2020. Never let a stale checkpoint make the live job download years of
+          # data or join a multi-year gap. Until the backfill reaches current data,
+          # live signals use an independent rolling 30-day current window.
+          repo_is_current = pd.notna(latest) and latest >= now - pd.Timedelta(days=7)
+          if repo_is_current:
+              start = latest - pd.Timedelta(days=5)
           else:
-              # 30 days comfortably warms H4 EMA50/H1/M15/M5 features while
-              # keeping each live run lightweight until the long-term CSV exists.
               start = now - pd.Timedelta(days=30)
-          print(start.isoformat())
+
+          print(f'start={start.isoformat()}')
+          print(f'use_repo_data={str(bool(repo_is_current)).lower()}')
+          print(f'repo_latest={latest.isoformat() if pd.notna(latest) else ""}')
           PY
-          )
-          echo "start=$START" >> "$GITHUB_OUTPUT"
 
       - name: Fetch latest Dukascopy M5 bars
         run: |
@@ -82,12 +89,14 @@ jobs:
       - name: Build current live dataset
         shell: bash
         run: |
-          if [ -f data/xauusd_m5.csv ]; then
+          if [ '${{ steps.window.outputs.use_repo_data }}' = 'true' ] && [ -f data/xauusd_m5.csv ]; then
             cp data/xauusd_m5.csv tmp/live_xauusd_m5.csv
             python -m casio.sync_market_data \
               --file tmp/latest_xauusd_m5.csv \
               --output tmp/live_xauusd_m5.csv
           else
+            # Backfill is not current yet: use only the recent rolling window so
+            # indicator warm-up is contiguous and independent from old checkpoints.
             python -m casio.sync_market_data \
               --file tmp/latest_xauusd_m5.csv \
               --output tmp/live_xauusd_m5.csv
@@ -106,6 +115,7 @@ jobs:
           if [ ! -f tmp/casio_live_signal.json ]; then
             echo '## CASIO v3 live signal' >> "$GITHUB_STEP_SUMMARY"
             echo 'No fresh valid LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
+            echo "Persistent data current: ${{ steps.window.outputs.use_repo_data }}" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
