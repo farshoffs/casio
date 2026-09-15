@@ -14,10 +14,15 @@ def _bias(value: int) -> str:
     return "bullish" if value == 1 else "bearish" if value == -1 else "neutral"
 
 
-def latest_signal(data_path: str | Path, max_age_minutes: int = 35, now: pd.Timestamp | None = None) -> dict | None:
+def latest_signal(
+    data_path: str | Path,
+    max_age_minutes: int = 35,
+    now: pd.Timestamp | None = None,
+) -> dict | None:
     m5 = load_m5_csv(data_path)
     features = prepare_features(m5)
-    signals = signals_for_config(features, V3Config())
+    cfg = V3Config()
+    signals = signals_for_config(features, cfg)
     if signals.empty:
         return None
 
@@ -50,6 +55,10 @@ def latest_signal(data_path: str | Path, max_age_minutes: int = 35, now: pd.Time
         "mode": str(row["mode"]).lower(),
         "regime": str(row["regime"]),
         "session": str(row["session"]),
+        "playbook": str(row["playbook"]),
+        "session_policy": cfg.session_policy,
+        "required_score": int(round(float(row["required_score"]))),
+        "required_rr": round(float(row["required_rr"]), 2),
         "direction": "long" if direction == 1 else "short",
         "score": int(round(float(row["score"]))),
         "entry": round(float(row["entry"]), 4),
@@ -66,7 +75,9 @@ def latest_signal(data_path: str | Path, max_age_minutes: int = 35, now: pd.Time
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate the latest closed CASIO v3 M15 setup from M5 data")
+    parser = argparse.ArgumentParser(
+        description="Evaluate the latest closed CASIO v3 M15 setup from M5 data"
+    )
     parser.add_argument("--data", default="data/xauusd_m5.csv")
     parser.add_argument("--output", default="tmp/casio_live_signal.json")
     parser.add_argument("--max-age-minutes", type=int, default=35)
