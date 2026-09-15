@@ -9,6 +9,8 @@ on:
       - 'casio/v3_backtest.py'
       - 'casio/v3_research.py'
       - 'casio/research_cli.py'
+      - 'casio/sync_market_data.py'
+      - 'api/tradingview.py'
       - 'data/xauusd_m5.csv'
       - 'requirements.txt'
       - '.github/workflows/v3-research.yml'
@@ -47,15 +49,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Validate v3 research modules
+      - name: Validate v3 research and API modules
         run: |
-          python -m compileall -q casio
+          python -m compileall -q casio api
           python - <<'PY'
+          from api.tradingview import handler
+          from casio.sync_market_data import sync
           from casio.v3_core import V3Config, prepare_features
           from casio.v3_strategy import signals_for_config
           from casio.v3_backtest import backtest_signals, metrics
           from casio.v3_research import monte_carlo_bootstrap, run_research
-          print('CASIO v3 research modules import successfully')
+          print('CASIO v3 research, market sync and Vercel API modules import successfully')
           PY
 
       - name: Check v3 research data
@@ -67,7 +71,7 @@ jobs:
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "## CASIO v3 research skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "Research code validation passed, but data/xauusd_m5.csv is not present." >> "$GITHUB_STEP_SUMMARY"
+            echo "Research/API code validation passed, but data/xauusd_m5.csv is not present." >> "$GITHUB_STEP_SUMMARY"
             echo "The TradingView M5 collector/data-sync pipeline will create it after setup and new realtime bars arrive." >> "$GITHUB_STEP_SUMMARY"
           fi
 
