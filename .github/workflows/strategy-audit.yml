@@ -1,11 +1,11 @@
-name: CASIO Strategy Backtest & Audit
+name: CASIO Legacy Python Backtest & Audit
 
 on:
   push:
     branches: [main]
     paths:
       - 'casio/**'
-      - 'data/**'
+      - 'data/xauusd.csv'
       - 'requirements.txt'
       - '.github/workflows/strategy-audit.yml'
   workflow_dispatch:
@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Check market data
+      - name: Check legacy market data
         id: data
         shell: bash
         run: |
@@ -39,19 +39,20 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "## CASIO audit skipped" >> "$GITHUB_STEP_SUMMARY"
-            echo "No data/xauusd.csv is present yet. Add/update OHLC data to activate the rolling backtest." >> "$GITHUB_STEP_SUMMARY"
+            echo "## CASIO legacy audit skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "No data/xauusd.csv is present. This workflow is retained for the original single-timeframe Python engine." >> "$GITHUB_STEP_SUMMARY"
+            echo "For current CASIO v3 MTF research, use the CASIO v3 Research & Robustness workflow with data/xauusd_m5.csv." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Run rolling backtest and audit
+      - name: Run legacy rolling backtest and audit
         if: steps.data.outputs.available == 'true'
         run: python -m casio.cli --data data/xauusd.csv --output reports
 
-      - name: Publish summary
+      - name: Publish legacy summary
         if: steps.data.outputs.available == 'true'
         shell: bash
         run: |
-          echo "## CASIO XAUUSD Strategy Audit" >> "$GITHUB_STEP_SUMMARY"
+          echo "## CASIO Legacy XAUUSD Strategy Audit" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           cat reports/backtest-100.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -60,10 +61,10 @@ jobs:
           cat reports/audit.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload reports
+      - name: Upload legacy reports
         if: steps.data.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: casio-strategy-reports
+          name: casio-legacy-strategy-reports
           path: reports/
           retention-days: 30
