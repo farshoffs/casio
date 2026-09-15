@@ -1,0 +1,81 @@
+name: CASIO v3 Research & Robustness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/v3_research.py'
+      - 'casio/research_cli.py'
+      - 'data/xauusd_m5.csv'
+      - 'requirements.txt'
+      - '.github/workflows/v3-research.yml'
+  workflow_dispatch:
+    inputs:
+      max_candidates:
+        description: 'Maximum candidate configurations to evaluate'
+        required: false
+        default: '64'
+      cost_bps:
+        description: 'Round-trip cost assumption in basis points'
+        required: false
+        default: '1.0'
+  schedule:
+    - cron: '43 21 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check v3 research data
+        id: data
+        shell: bash
+        run: |
+          if [ -f data/xauusd_m5.csv ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "## CASIO v3 research skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "Add/update data/xauusd_m5.csv (UTC M5 OHLC) to activate automatic MTF research." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run v3 research
+        if: steps.data.outputs.available == 'true'
+        env:
+          MAX_CANDIDATES: ${{ github.event.inputs.max_candidates || '64' }}
+          COST_BPS: ${{ github.event.inputs.cost_bps || '1.0' }}
+        run: |
+          python -m casio.research_cli \
+            --data data/xauusd_m5.csv \
+            --output reports/v3-research \
+            --max-candidates "$MAX_CANDIDATES" \
+            --cost-bps "$COST_BPS"
+
+      - name: Publish research summary
+        if: steps.data.outputs.available == 'true'
+        shell: bash
+        run: |
+          cat reports/v3-research/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload research artifacts
+        if: steps.data.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-v3-research
+          path: reports/v3-research/
+          retention-days: 60
