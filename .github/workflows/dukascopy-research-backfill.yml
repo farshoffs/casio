@@ -28,7 +28,9 @@ jobs:
     env:
       CASIO_RESEARCH_OUTPUT: 'data/xauusd_m5_dukascopy_research.csv'
       CASIO_RESEARCH_START: '2024-01-01T00:00:00Z'
-      CASIO_RESEARCH_SLICE_DAYS: '180'
+      # Large enough to reach useful recent history quickly, while the downloader
+      # still fetches in smaller provider-friendly monthly chunks internally.
+      CASIO_RESEARCH_SLICE_DAYS: '270'
       CASIO_RESEARCH_CURRENT_TOLERANCE_DAYS: '2'
     steps:
       - name: Checkout
@@ -126,6 +128,9 @@ jobs:
           print(f'latest={latest.isoformat() if latest is not None else ""}')
           PY
 
+      - name: Show selected window
+        if: steps.window.outputs.skip != 'true'
+        run: |
           echo "Mode: ${{ steps.window.outputs.mode }}"
           echo "Fetch: ${{ steps.window.outputs.start }} -> ${{ steps.window.outputs.end }}"
 
