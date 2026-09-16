@@ -83,6 +83,8 @@ def _safe(x):
         return {str(k): _safe(v) for k, v in x.items()}
     if isinstance(x, list):
         return [_safe(v) for v in x]
+    if isinstance(x, (np.bool_, bool)):
+        return bool(x)
     if isinstance(x, (np.integer,)):
         return int(x)
     if isinstance(x, (np.floating, float)):
