@@ -6,25 +6,20 @@ from pathlib import Path
 from casio.v4_confluence_research import Candidate, load_features, metrics, replay
 
 
-def gated(df, *, liq=True, breakout=True, bbma=True, sd=True, strict_sd_h4=False):
+def core(df, *, sd_score=0, sd_m15=False):
     x = df.copy()
-    if not liq:
-        x["liq_fvg_long"] = False
-        x["liq_fvg_short"] = False
-    if not breakout:
-        x["break_retest_long"] = False
-        x["break_retest_short"] = False
-    if not bbma:
-        x["bbma_reentry_long"] = False
-        x["bbma_reentry_short"] = False
-    if not sd:
-        x["sd_long"] = False
-        x["sd_short"] = False
-    if strict_sd_h4:
-        x["sd_long"] = x["sd_long"] & (x["h4_bias"] >= 0)
-        x["sd_short"] = x["sd_short"] & (x["h4_bias"] <= 0)
-    x["long_setup"] = x[["liq_fvg_long", "break_retest_long", "bbma_reentry_long", "sd_long"]].any(axis=1)
-    x["short_setup"] = x[["liq_fvg_short", "break_retest_short", "bbma_reentry_short", "sd_short"]].any(axis=1)
+    x["liq_fvg_long"] = False
+    x["liq_fvg_short"] = False
+    x["break_retest_long"] = False
+    x["break_retest_short"] = False
+    if sd_score:
+        x["sd_long"] = x["sd_long"] & (x["long_score"] >= sd_score)
+        x["sd_short"] = x["sd_short"] & (x["short_score"] >= sd_score)
+    if sd_m15:
+        x["sd_long"] = x["sd_long"] & (x["m15_bias"] == 1)
+        x["sd_short"] = x["sd_short"] & (x["m15_bias"] == -1)
+    x["long_setup"] = x[["bbma_reentry_long", "sd_long"]].any(axis=1)
+    x["short_setup"] = x[["bbma_reentry_short", "sd_short"]].any(axis=1)
     return x
 
 
@@ -56,12 +51,12 @@ def main() -> None:
     c = Candidate(55, 0.60, 0.35, 6)
 
     variants = {
-        "ALL_R060": df,
-        "NO_BREAKOUT": gated(df, breakout=False),
-        "NO_LIQ_FVG": gated(df, liq=False),
-        "BBMA_SD_ONLY": gated(df, liq=False, breakout=False),
-        "BBMA_SD_H4": gated(df, liq=False, breakout=False, strict_sd_h4=True),
-        "BREAK_BBMA_SD_H4": gated(df, liq=False, breakout=True, strict_sd_h4=True),
+        "CORE": core(df),
+        "CORE_SD_SCORE60": core(df, sd_score=60),
+        "CORE_SD_SCORE65": core(df, sd_score=65),
+        "CORE_SD_M15": core(df, sd_m15=True),
+        "CORE_SD_M15_SCORE60": core(df, sd_score=60, sd_m15=True),
+        "CORE_SD_M15_SCORE65": core(df, sd_score=65, sd_m15=True),
     }
     for name, data in variants.items():
         report(name, data, c, split_time, val_start, val_end)
