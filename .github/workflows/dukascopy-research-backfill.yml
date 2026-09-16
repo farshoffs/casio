@@ -1,0 +1,204 @@
+name: CASIO Dukascopy Research Base — Latest First
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/fetch_dukascopy.mjs'
+      - 'casio/sync_market_data.py'
+      - '.github/workflows/dukascopy-research-backfill.yml'
+  workflow_dispatch:
+  schedule:
+    # Daily current-end refresh after the historical research base is complete.
+    - cron: '35 20 * * *'
+    # Temporary accelerators while 2024 -> current history is still being built.
+    - cron: '35 0,4,8,12,16 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: casio-dukascopy-research-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CASIO_RESEARCH_OUTPUT: 'data/xauusd_m5_dukascopy_research.csv'
+      CASIO_RESEARCH_START: '2024-01-01T00:00:00Z'
+      CASIO_RESEARCH_SLICE_DAYS: '180'
+      CASIO_RESEARCH_CURRENT_TOLERANCE_DAYS: '2'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Determine latest-first fetch window
+        id: window
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
+          import os
+          import pandas as pd
+
+          path = Path(os.environ['CASIO_RESEARCH_OUTPUT'])
+          target_start = pd.Timestamp(os.environ['CASIO_RESEARCH_START'])
+          slice_days = int(os.environ['CASIO_RESEARCH_SLICE_DAYS'])
+          tolerance = pd.Timedelta(days=int(os.environ['CASIO_RESEARCH_CURRENT_TOLERANCE_DAYS']))
+          now = pd.Timestamp.now(tz='UTC').floor('5min') - pd.Timedelta(minutes=5)
+          event_name = os.environ.get('EVENT_NAME', '')
+          event_schedule = os.environ.get('EVENT_SCHEDULE', '')
+          daily_schedule = '35 20 * * *'
+
+          first = latest = None
+          if path.exists() and path.stat().st_size > 0:
+              ts = pd.read_csv(path, usecols=['timestamp'])['timestamp']
+              parsed = pd.to_datetime(ts, utc=True, errors='coerce').dropna()
+              if not parsed.empty:
+                  first, latest = parsed.min(), parsed.max()
+
+          accelerator = event_name == 'schedule' and event_schedule != daily_schedule
+          history_complete = first is not None and first <= target_start
+          current_enough = latest is not None and latest >= now - tolerance
+
+          if first is None or latest is None:
+              # Seed from TODAY backwards. This makes the file useful for current
+              # research after the very first successful run.
+              end = now
+              start = max(target_start, end - pd.Timedelta(days=slice_days))
+              mode = 'seed_latest'
+          elif not current_enough:
+              # Keep the research base current before spending requests on older data.
+              start = max(first, latest - pd.Timedelta(days=3))
+              end = now
+              mode = 'refresh_latest'
+          elif not history_complete:
+              # Backfill backwards from the earliest checkpoint, with one day of
+              # overlap. sync_market_data sorts and deduplicates after merging.
+              end = first + pd.Timedelta(days=1)
+              start = max(target_start, first - pd.Timedelta(days=slice_days))
+              mode = 'backfill_backward'
+          elif accelerator:
+              print('skip=true')
+              print('mode=history_complete_noop')
+              print(f'first={first.isoformat()}')
+              print(f'latest={latest.isoformat()}')
+              raise SystemExit
+          else:
+              start = max(target_start, latest - pd.Timedelta(days=3))
+              end = now
+              mode = 'current_incremental'
+
+          if end <= start:
+              print('skip=true')
+              print('mode=nothing_to_fetch')
+              raise SystemExit
+
+          print('skip=false')
+          print(f'mode={mode}')
+          print(f'start={start.isoformat()}')
+          print(f'end={end.isoformat()}')
+          print(f'first={first.isoformat() if first is not None else ""}')
+          print(f'latest={latest.isoformat() if latest is not None else ""}')
+          PY
+
+          echo "Mode: ${{ steps.window.outputs.mode }}"
+          echo "Fetch: ${{ steps.window.outputs.start }} -> ${{ steps.window.outputs.end }}"
+
+      - name: Skip completed accelerator
+        if: steps.window.outputs.skip == 'true'
+        run: |
+          echo '## Dukascopy research base' >> "$GITHUB_STEP_SUMMARY"
+          echo '2024 -> current research history is already complete; accelerator is a no-op.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download Dukascopy XAUUSD M5 BID
+        if: steps.window.outputs.skip != 'true'
+        run: |
+          node scripts/fetch_dukascopy.mjs \
+            --from '${{ steps.window.outputs.start }}' \
+            --to '${{ steps.window.outputs.end }}' \
+            --output tmp/dukascopy_research_slice.csv \
+            --price-type bid
+
+      - name: Merge into separate research CSV
+        if: steps.window.outputs.skip != 'true'
+        run: |
+          python -m casio.sync_market_data \
+            --file tmp/dukascopy_research_slice.csv \
+            --output "$CASIO_RESEARCH_OUTPUT"
+
+      - name: Validate research base
+        if: steps.window.outputs.skip != 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import pandas as pd
+
+          path = os.environ['CASIO_RESEARCH_OUTPUT']
+          df = pd.read_csv(path)
+          ts = pd.to_datetime(df['timestamp'], utc=True, errors='raise')
+          if len(df) < 1000:
+              raise SystemExit('Refusing implausibly small Dukascopy research dataset')
+          if not ts.is_monotonic_increasing:
+              raise SystemExit('Research CSV must remain chronological oldest -> newest')
+          if ts.duplicated().any():
+              raise SystemExit('Research CSV contains duplicate M5 timestamps')
+          if df[['open','high','low','close']].isna().any().any():
+              raise SystemExit('Research CSV contains missing OHLC values')
+          bad = ((df['high'] < df[['open','close','low']].max(axis=1)) |
+                 (df['low'] > df[['open','close','high']].min(axis=1)))
+          if bad.any():
+              raise SystemExit(f'Research CSV contains {int(bad.sum())} invalid OHLC rows')
+          print(f'Research base: {len(df):,} bars | {ts.iloc[0]} -> {ts.iloc[-1]}')
+          PY
+
+      - name: Commit research checkpoint
+        if: steps.window.outputs.skip != 'true'
+        shell: bash
+        run: |
+          git add "$CASIO_RESEARCH_OUTPUT"
+          if git diff --cached --quiet; then
+            echo 'No new research bars to commit.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          ROWS=$(($(wc -l < "$CASIO_RESEARCH_OUTPUT") - 1))
+          FIRST=$(sed -n '2p' "$CASIO_RESEARCH_OUTPUT" | cut -d, -f1)
+          LAST=$(tail -n 1 "$CASIO_RESEARCH_OUTPUT" | cut -d, -f1)
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Checkpoint latest-first Dukascopy research data'
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+          echo '## CASIO Dukascopy research base' >> "$GITHUB_STEP_SUMMARY"
+          echo "Mode: ${{ steps.window.outputs.mode }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rows: ${ROWS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Coverage: ${FIRST} -> ${LAST}" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Backfill direction is newest -> older; CSV row order remains chronological for CASIO replay.' >> "$GITHUB_STEP_SUMMARY"
