@@ -23,6 +23,7 @@ jobs:
         with:
           ref: feature/v4-confluence-signals
 
+      # One-time source repair is committed back to the feature branch, then future runs are clean.
       - name: Repair NumPy/Pandas clip compatibility
         run: |
           sed -i 's/).clip(upper=100)/)/g' casio/v4_confluence_research.py
