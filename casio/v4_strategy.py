@@ -106,15 +106,30 @@ def signals_for_config(f: pd.DataFrame, cfg: V4Config | None = None) -> pd.DataF
     # ------------------------------------------------------------------
     long_context = x.h4_bias.eq(1) | x.h1_bias.eq(1)
     short_context = x.h4_bias.eq(-1) | x.h1_bias.eq(-1)
+    trend_long_env = (
+        long_context
+        & (m15_ema20 > m15_ema50)
+        & (x.close >= m15_ema50)
+        & (x.m15_adx >= cfg.trend_min_adx)
+    )
+    trend_short_env = (
+        short_context
+        & (m15_ema20 < m15_ema50)
+        & (x.close <= m15_ema50)
+        & (x.m15_adx >= cfg.trend_min_adx)
+    )
     long_pullback = (
         x.low <= m15_ema20 + atr * cfg.trend_pullback_atr
-    ) & (x.close >= m15_ema20 - atr * 0.15) & (x.close >= m15_ema50 - atr * 0.20)
+    ) & (x.close >= m15_ema20 - atr * 0.10)
     short_pullback = (
         x.high >= m15_ema20 - atr * cfg.trend_pullback_atr
-    ) & (x.close <= m15_ema20 + atr * 0.15) & (x.close <= m15_ema50 + atr * 0.20)
+    ) & (x.close <= m15_ema20 + atr * 0.10)
 
-    trend_long_setup = long_context & long_pullback & bull_reject & ~abnormal
-    trend_short_setup = short_context & short_pullback & bear_reject & ~abnormal
+    trend_long_setup = trend_long_env & long_pullback & bull_reject & ~abnormal
+    trend_short_setup = trend_short_env & short_pullback & bear_reject & ~abnormal
+    if cfg.trend_require_m5:
+        trend_long_setup &= x.m5_bull_confirm
+        trend_short_setup &= x.m5_bear_confirm
     if cfg.strong_conflict_veto:
         trend_long_setup &= ~_strong_conflict(1, x)
         trend_short_setup &= ~_strong_conflict(-1, x)
@@ -167,6 +182,9 @@ def signals_for_config(f: pd.DataFrame, cfg: V4Config | None = None) -> pd.DataF
 
     range_long_setup = range_env & (x.low <= lower_zone) & (x.close < x.range_mean30) & bull_reject & ~abnormal
     range_short_setup = range_env & (x.high >= upper_zone) & (x.close > x.range_mean30) & bear_reject & ~abnormal
+    if cfg.range_require_edge_reclaim:
+        range_long_setup &= x.close >= lower_zone
+        range_short_setup &= x.close <= upper_zone
     if cfg.range_require_m5:
         range_long_setup &= x.m5_bull_confirm
         range_short_setup &= x.m5_bear_confirm
@@ -206,14 +224,20 @@ def signals_for_config(f: pd.DataFrame, cfg: V4Config | None = None) -> pd.DataF
     # ------------------------------------------------------------------
     prev_inside_up = x.close.shift(1) <= x.range_high30.shift(1)
     prev_inside_dn = x.close.shift(1) >= x.range_low30.shift(1)
+    pre_compressed = (
+        (x.m15_adx.shift(1) <= cfg.breakout_pre_max_adx)
+        & (x.range_atr30.shift(1) <= cfg.breakout_pre_max_range_atr)
+    )
     breakout_up = (
         prev_inside_up
+        & pre_compressed
         & (x.close > x.range_high30)
         & (x.close > x.open)
         & (candle_range >= atr * cfg.breakout_expansion_atr)
     )
     breakout_dn = (
         prev_inside_dn
+        & pre_compressed
         & (x.close < x.range_low30)
         & (x.close < x.open)
         & (candle_range >= atr * cfg.breakout_expansion_atr)
@@ -238,6 +262,9 @@ def signals_for_config(f: pd.DataFrame, cfg: V4Config | None = None) -> pd.DataF
         & bear_reject
         & ~abnormal
     )
+    if cfg.breakout_require_m5:
+        breakout_long_setup &= x.m5_bull_confirm
+        breakout_short_setup &= x.m5_bear_confirm
     if cfg.strong_conflict_veto:
         breakout_long_setup &= ~_strong_conflict(1, x)
         breakout_short_setup &= ~_strong_conflict(-1, x)
