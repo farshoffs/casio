@@ -3,7 +3,7 @@ indicator("CASIO XAUUSD — Structural Trading Assistant", overlay=true, max_lab
 
 // RESEARCH ASSISTANT — not the production v3 engine.
 // Native chart: XAUUSD 5m.
-// No ADX / RSI. The decision chain is structure -> liquidity -> displacement/FVG -> retracement -> risk/reward.
+// No ADX / RSI. Decision chain: structure -> liquidity -> displacement/BOS -> retracement -> risk/reward.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs
@@ -16,13 +16,14 @@ showTradeBox = input.bool(true, "Show risk / reward box", group=groupDisplay)
 showLabels = input.bool(true, "Show setup / fill / exit labels", group=groupDisplay)
 
 groupModel = "Structural portfolio research model"
+entryModel = input.string("DISPLACEMENT_RETRACE", "Entry model", options=["DISPLACEMENT_RETRACE", "FVG_STRICT"], group=groupModel)
 minExternalRunway = input.float(3.5, "Minimum external-liquidity runway (R)", minval=2.0, step=0.1, group=groupModel)
 targetR = input.float(3.5, "Baseline target (R)", minval=2.0, step=0.1, group=groupModel)
 bodyMin = input.float(0.52, "Minimum displacement body fraction", minval=0.35, maxval=0.90, step=0.01, group=groupModel)
 rangeAtrMin = input.float(0.65, "Minimum displacement range / ATR", minval=0.30, step=0.05, group=groupModel)
 internalSweepFresh = input.int(6, "Internal sweep fresh bars", minval=1, maxval=20, group=groupModel)
 externalSweepFresh = input.int(4, "External sweep fresh bars", minval=1, maxval=20, group=groupModel)
-retraceBars = input.int(8, "FVG retracement expiry bars", minval=1, maxval=24, group=groupModel)
+retraceBars = input.int(8, "Retracement expiry bars", minval=1, maxval=24, group=groupModel)
 d1RangeRatioMax = input.float(1.50, "External-sweep max completed D1 range ratio", minval=0.5, step=0.05, group=groupModel)
 h4RangeRatioMin = input.float(0.80, "External-sweep min completed H4 range ratio", minval=0.3, step=0.05, group=groupModel)
 
@@ -83,9 +84,8 @@ inPrimary = inLondon or inNewYork
 sessionName = inLondon ? "LONDON" : inNewYork ? "NEW YORK" : hourUtc < 6 ? "ASIA" : "OTHER"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Native M5 structure / displacement / FVG.
-// ATR is used only to normalize candle size and structural risk buffers; it does
-// not decide market direction.
+// Native M5 structure / displacement / imbalance.
+// ATR only normalizes candle size and structural risk; it does not decide bias.
 // ─────────────────────────────────────────────────────────────────────────────
 chartIsM5 = timeframe.isminutes and timeframe.multiplier == 5
 atr14 = ta.atr(14)
@@ -105,6 +105,17 @@ bearFvg = dispShort and high < low[2]
 bullFvgEntry = bullFvg ? (high[2] + low) / 2.0 : na
 bearFvgEntry = bearFvg ? (high + low[2]) / 2.0 : na
 
+// Current-market research found that requiring a literal FVG is too restrictive.
+// Default mode accepts the same displacement+BOS and waits for a 50% body retrace
+// when no FVG exists. FVG_STRICT is retained for comparison.
+strictFvg = entryModel == "FVG_STRICT"
+triggerLong = strictFvg ? bullFvg : dispLong
+triggerShort = strictFvg ? bearFvg : dispShort
+longRetraceEntry = bullFvg ? bullFvgEntry : (open + close) / 2.0
+shortRetraceEntry = bearFvg ? bearFvgEntry : (open + close) / 2.0
+entryTypeLong = bullFvg ? "FVG50" : dispLong ? "BODY50" : "—"
+entryTypeShort = bearFvg ? "FVG50" : dispShort ? "BODY50" : "—"
+
 internalSellSweep = low < priorLow5 and close > priorLow5
 internalBuySweep = high > priorHigh5 and close < priorHigh5
 internalSellAge = ta.barssince(internalSellSweep)
@@ -123,7 +134,7 @@ trendShort = trendVote <= -2 and m15Bias <= 0
 regimeOk = not na(d1RangeRatio) and not na(h4RangeRatio) and d1RangeRatio <= d1RangeRatioMax and h4RangeRatio >= h4RangeRatioMin
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Session expansion → retest memory.
+// Session expansion -> retest memory.
 // ─────────────────────────────────────────────────────────────────────────────
 breakAsiaHigh = not na(asiaHigh) and close > asiaHigh and close[1] <= asiaHigh
 breakPdh = not na(prevDayHigh) and close > prevDayHigh and close[1] <= prevDayHigh
@@ -139,22 +150,22 @@ recentRetestLow = nz(ta.barssince(retestLow), 10000) <= 4
 // ─────────────────────────────────────────────────────────────────────────────
 // Three-playbook router.
 // ─────────────────────────────────────────────────────────────────────────────
-pbLong = inPrimary and trendLong and internalSellAge <= internalSweepFresh and bullFvg and bullFvgEntry > dayOpen
-pbShort = inPrimary and trendShort and internalBuyAge <= internalSweepFresh and bearFvg and bearFvgEntry < dayOpen
-swLong = inPrimary and regimeOk and externalSellAge <= externalSweepFresh and trendVote >= 0 and bullFvg
-swShort = inPrimary and regimeOk and externalBuyAge <= externalSweepFresh and trendVote <= 0 and bearFvg
-rtLong = inPrimary and trendLong and recentRetestHigh and bullFvg
-rtShort = inPrimary and trendShort and recentRetestLow and bearFvg
+pbLong = inPrimary and trendLong and internalSellAge <= internalSweepFresh and triggerLong and longRetraceEntry > dayOpen
+pbShort = inPrimary and trendShort and internalBuyAge <= internalSweepFresh and triggerShort and shortRetraceEntry < dayOpen
+swLong = inPrimary and regimeOk and externalSellAge <= externalSweepFresh and trendVote >= 0 and triggerLong
+swShort = inPrimary and regimeOk and externalBuyAge <= externalSweepFresh and trendVote <= 0 and triggerShort
+rtLong = inPrimary and trendLong and recentRetestHigh and triggerLong
+rtShort = inPrimary and trendShort and recentRetestLow and triggerShort
 
 candidateDirection = swLong ? 1 : swShort ? -1 : rtLong ? 1 : rtShort ? -1 : pbLong ? 1 : pbShort ? -1 : 0
 candidatePlaybook = swLong or swShort ? "EXTERNAL SWEEP" : rtLong or rtShort ? "SESSION RETEST" : pbLong or pbShort ? "TREND PULLBACK" : "WAIT"
-candidateEntry = candidateDirection == 1 ? bullFvgEntry : candidateDirection == -1 ? bearFvgEntry : na
+candidateEntry = candidateDirection == 1 ? longRetraceEntry : candidateDirection == -1 ? shortRetraceEntry : na
+candidateEntryType = candidateDirection == 1 ? entryTypeLong : candidateDirection == -1 ? entryTypeShort : "—"
 candidateStop = candidateDirection == 1 ? recentLow8 - .10 * atr14 : candidateDirection == -1 ? recentHigh8 + .10 * atr14 : na
 candidateRisk = candidateDirection == 1 ? candidateEntry - candidateStop : candidateDirection == -1 ? candidateStop - candidateEntry : na
 riskAtr = atr14 > 0 and not na(candidateRisk) ? candidateRisk / atr14 : na
 riskOk = not na(riskAtr) and riskAtr >= .35 and riskAtr <= 3.0
 
-// Find the nearest external objective that is at least minExternalRunway R away.
 f_qual_above(level, entry, risk, minR) =>
     not na(level) and risk > 0 and level > entry and (level - entry) / risk >= minR ? level : na
 f_qual_below(level, entry, risk, minR) =>
@@ -187,12 +198,13 @@ candidateTarget = candidateDirection != 0 and candidateRisk > 0 ? candidateEntry
 candidateReady = chartIsM5 and candidateDirection != 0 and riskOk and runwayOk
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Assistant state machine: signal -> retracement pending -> entry live -> exit.
+// Assistant state machine.
 // ─────────────────────────────────────────────────────────────────────────────
-var int phase = 0 // 0 WAIT, 1 RETRACE PENDING, 2 TRADE ACTIVE
+var int phase = 0
 var int pendingDirection = 0
 var int pendingBar = na
 var string pendingPlaybook = "WAIT"
+var string pendingEntryType = "—"
 var float activeEntry = na
 var float activeStop = na
 var float activeTarget = na
@@ -205,6 +217,7 @@ if phase == 0 and candidateReady
     pendingDirection := candidateDirection
     pendingBar := bar_index
     pendingPlaybook := candidatePlaybook
+    pendingEntryType := candidateEntryType
     activeEntry := candidateEntry
     activeStop := candidateStop
     activeTarget := candidateTarget
@@ -217,7 +230,7 @@ if phase == 0 and candidateReady
         riskBox := box.new(left=bar_index, top=math.max(activeEntry, activeStop), right=bar_index + 1, bottom=math.min(activeEntry, activeStop), border_color=color.new(color.red, 25), bgcolor=color.new(color.red, 88), extend=extend.right)
         rewardBox := box.new(left=bar_index, top=math.max(activeEntry, activeTarget), right=bar_index + 1, bottom=math.min(activeEntry, activeTarget), border_color=color.new(color.lime, 25), bgcolor=color.new(color.lime, 90), extend=extend.right)
     if showLabels
-        label.new(bar_index, pendingDirection == 1 ? low : high, "WATCH\n" + pendingPlaybook + "\nWAIT RETRACE", style=pendingDirection == 1 ? label.style_label_up : label.style_label_down)
+        label.new(bar_index, pendingDirection == 1 ? low : high, "WATCH\n" + pendingPlaybook + "\n" + pendingEntryType + " RETRACE", style=pendingDirection == 1 ? label.style_label_up : label.style_label_down)
 
 if phase == 1 and bar_index > pendingBar
     invalid = pendingDirection == 1 ? low <= activeStop : high >= activeStop
@@ -258,10 +271,9 @@ phaseName = phase == 2 ? "ENTRY LIVE" : phase == 1 ? "RETRACE PENDING" : candida
 decision = phase == 2 ? (pendingDirection == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : phase == 1 ? "WAIT FOR PRICE" : candidateReady ? "WATCH RETRACE" : "WAIT"
 marketState = trendVote >= 2 ? "BULL STRUCTURE" : trendVote <= -2 ? "BEAR STRUCTURE" : "MIXED / ROTATION"
 
-// Assistant checklist. These are descriptive states, not extra entry rules.
 structureReady = trendLong or trendShort
 liquidityReady = (not na(internalSellAge) and internalSellAge <= internalSweepFresh) or (not na(internalBuyAge) and internalBuyAge <= internalSweepFresh) or (not na(externalSellAge) and externalSellAge <= externalSweepFresh) or (not na(externalBuyAge) and externalBuyAge <= externalSweepFresh) or recentRetestHigh or recentRetestLow
-displacementReady = bullFvg or bearFvg
+displacementReady = dispLong or dispShort
 retraceReady = phase == 1 or phase == 2
 rrReady = phase > 0 ? activeRunway >= minExternalRunway : runwayOk
 
@@ -318,7 +330,7 @@ if showDashboard and barstate.islast
 
     table.cell(dash, 0, 3, "PLAYBOOK", text_color=cMuted, bgcolor=cPanel)
     table.cell(dash, 1, 3, phase > 0 ? pendingPlaybook : candidatePlaybook, text_color=cWhite, bgcolor=cPanel)
-    table.cell(dash, 2, 3, "T " + str.tostring(targetR, "#.0") + "R", text_color=cAccent, bgcolor=cPanel)
+    table.cell(dash, 2, 3, (phase > 0 ? pendingEntryType : candidateEntryType), text_color=cAccent, bgcolor=cPanel)
 
     table.cell(dash, 0, 4, "MARKET CONTEXT", text_color=cWhite, bgcolor=color.new(cAccent, 55))
 
@@ -348,9 +360,9 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 11, f_check(liquidityReady), text_color=liquidityReady ? cGood : cMuted, bgcolor=cPanel)
     table.cell(dash, 2, 11, externalSellSweep or externalBuySweep ? "EXTERNAL" : internalSellSweep or internalBuySweep ? "INTERNAL" : recentRetestHigh or recentRetestLow ? "RETEST" : "—", text_color=cWhite, bgcolor=cPanel)
 
-    table.cell(dash, 0, 12, "DISPLACEMENT / FVG", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 0, 12, "DISPLACEMENT", text_color=cMuted, bgcolor=cPanel)
     table.cell(dash, 1, 12, f_check(displacementReady), text_color=displacementReady ? cGood : cMuted, bgcolor=cPanel)
-    table.cell(dash, 2, 12, bullFvg ? "BULL FVG" : bearFvg ? "BEAR FVG" : "—", text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 12, bullFvg ? "BULL FVG" : bearFvg ? "BEAR FVG" : dispLong ? "BULL BOS" : dispShort ? "BEAR BOS" : "—", text_color=cWhite, bgcolor=cPanel)
 
     table.cell(dash, 0, 13, "RETRACE / RUNWAY", text_color=cMuted, bgcolor=cPanel)
     table.cell(dash, 1, 13, retraceReady ? (phase == 2 ? "FILLED" : "PENDING") : "WAIT", text_color=retraceReady ? cWarn : cMuted, bgcolor=cPanel)
