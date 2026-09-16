@@ -1,0 +1,122 @@
+name: Import secondary OctaFX MT4 XAUUSD M5 data
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/import-secondary-octafx-data.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: casio-import-secondary-octafx-data
+  cancel-in-progress: false
+
+jobs:
+  import-secondary-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pandas
+        run: pip install 'pandas>=2.2.0'
+
+      - name: Download exact secondary M5 source
+        shell: bash
+        run: |
+          mkdir -p tmp data
+          curl --fail --location --retry 5 --retry-delay 5 \
+            'https://zenodo.org/records/21904190/files/XAU_5m_data.csv?download=1' \
+            --output tmp/XAU_5m_data.csv
+          echo '7ec4a38929b4d4e845a1713dec022c85  tmp/XAU_5m_data.csv' | md5sum -c -
+
+      - name: Normalize broker time to UTC and keep as a separate base
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          src = Path('tmp/XAU_5m_data.csv')
+          dst = Path('data/xauusd_m5_secondary_octafx_mt4.csv')
+
+          df = pd.read_csv(src, sep=';')
+          required = {'Date','Open','High','Low','Close','Volume'}
+          missing = required - set(df.columns)
+          if missing:
+              raise SystemExit(f'Missing columns: {sorted(missing)}')
+
+          # Source is Octa Markets / OctaFX MT4 History Center server time.
+          # Prior feed cross-check showed the expected EET/EEST schedule, so use
+          # Europe/Helsinki to convert UTC+2 winter / UTC+3 summer into UTC.
+          local = pd.to_datetime(df['Date'], format='%Y.%m.%d %H:%M', errors='raise')
+          aware = local.dt.tz_localize('Europe/Helsinki', ambiguous='infer', nonexistent='shift_forward')
+          utc = aware.dt.tz_convert('UTC')
+
+          out = pd.DataFrame({
+              'timestamp': utc.dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'open': pd.to_numeric(df['Open'], errors='raise'),
+              'high': pd.to_numeric(df['High'], errors='raise'),
+              'low': pd.to_numeric(df['Low'], errors='raise'),
+              'close': pd.to_numeric(df['Close'], errors='raise'),
+              'volume': pd.to_numeric(df['Volume'], errors='coerce').fillna(0),
+          })
+          out = out.sort_values('timestamp').drop_duplicates('timestamp', keep='last')
+          if len(out) != 1_443_451:
+              raise SystemExit(f'Unexpected row count: {len(out):,}')
+          if not ((out.high >= out[['open','close','low']].max(axis=1)) & (out.low <= out[['open','close','high']].min(axis=1))).all():
+              raise SystemExit('Invalid OHLC rows detected')
+
+          out.to_csv(dst, index=False)
+          size = dst.stat().st_size
+          if size >= 100_000_000:
+              raise SystemExit(f'Normalized CSV is too large for normal GitHub storage: {size:,} bytes')
+          print(f'Wrote {len(out):,} rows to {dst} ({size/1024/1024:.2f} MiB)')
+          print('Coverage:', out.timestamp.iloc[0], '->', out.timestamp.iloc[-1])
+          PY
+
+      - name: Write secondary-feed metadata
+        shell: bash
+        run: |
+          cat > data/xauusd_m5_secondary_octafx_mt4.README.md <<'EOF'
+          # Secondary XAUUSD M5 base — OctaFX / Octa Markets MT4
+
+          This file is intentionally **separate** from `data/xauusd_m5.csv` and must never be merged into the canonical Dukascopy BID feed.
+
+          - File: `data/xauusd_m5_secondary_octafx_mt4.csv`
+          - Original file: `XAU_5m_data.csv`
+          - Original MD5: `7ec4a38929b4d4e845a1713dec022c85`
+          - Source mirror: Zenodo record `21904190`
+          - Original source described by the dataset author: Octa Markets / OctaFX MetaTrader 4 History Center
+          - Rows: 1,443,451 M5 bars
+          - Original broker-time coverage: 2004-06-11 07:15 through 2026-01-30 23:55
+          - Normalization: broker EET/EEST server time converted to UTC using `Europe/Helsinki`
+          - Purpose: independent secondary-feed robustness research and historical regime testing
+          - Not used for canonical live/email execution
+
+          Research policy: current Dukascopy remains the canonical execution feed. This secondary feed is a separate base used to check whether structural edges survive a different broker/data source.
+          EOF
+
+      - name: Commit secondary CSV to data folder
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/xauusd_m5_secondary_octafx_mt4.csv data/xauusd_m5_secondary_octafx_mt4.README.md
+          if git diff --cached --quiet; then
+            echo 'Secondary dataset already matches repository copy.'
+            exit 0
+          fi
+          git commit -m 'Add separate OctaFX MT4 XAUUSD M5 secondary base'
+          git push origin HEAD:main
