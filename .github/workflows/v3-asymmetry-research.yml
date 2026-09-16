@@ -32,6 +32,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Apply research hotfix
+        run: |
+          sed -i 's/target_rr.ge(cfg.min_rr)/(target_rr >= cfg.min_rr)/' casio/v3_asymmetry_challenger.py
+
       - name: Validate challenger
         run: |
           python -m compileall -q casio
