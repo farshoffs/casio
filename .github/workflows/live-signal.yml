@@ -5,15 +5,17 @@ on:
     branches: [main]
     paths:
       - 'casio/live_signal.py'
+      - 'casio/v3_m5_engine.py'
       - 'casio/v3_core.py'
-      - 'casio/v3_strategy.py'
       - 'casio/sync_market_data.py'
       - 'scripts/fetch_dukascopy.mjs'
       - '.github/workflows/live-signal.yml'
   workflow_dispatch:
   schedule:
-    # Run just after each M15 close. GitHub Actions schedules can be delayed,
-    # so live_signal.py rejects stale setups older than 35 minutes.
+    # Canonical strategy evaluates native M5 entries. The execution policy has a
+    # 6-bar (30-minute) entry cooldown, so the existing 15-minute runner can
+    # replay every closed M5 bar since the prior run without missing two valid
+    # executable entries inside one cadence. GitHub scheduling can still delay.
     - cron: '2,17,32,47 * * * *'
 
 permissions:
@@ -102,7 +104,7 @@ jobs:
               --output tmp/live_xauusd_m5.csv
           fi
 
-      - name: Evaluate latest CASIO v3 setup
+      - name: Evaluate latest canonical CASIO v3 M5 entry
         run: |
           python -m casio.live_signal \
             --data tmp/live_xauusd_m5.csv \
@@ -113,13 +115,13 @@ jobs:
         shell: bash
         run: |
           if [ ! -f tmp/casio_live_signal.json ]; then
-            echo '## CASIO v3 live signal' >> "$GITHUB_STEP_SUMMARY"
-            echo 'No fresh valid LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
+            echo '## CASIO v3 canonical live signal' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No fresh executable LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
             echo "Persistent data current: ${{ steps.window.outputs.use_repo_data }}" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          echo '## CASIO v3 live signal' >> "$GITHUB_STEP_SUMMARY"
+          echo '## CASIO v3 canonical live signal' >> "$GITHUB_STEP_SUMMARY"
           cat tmp/casio_live_signal.json >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
 
