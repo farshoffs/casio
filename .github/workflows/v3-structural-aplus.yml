@@ -1,0 +1,44 @@
+name: CASIO v3 Structural A+ Research
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/v3_structural_aplus_research.py'
+      - 'casio/v3_core.py'
+      - 'casio/v3_m5_engine.py'
+      - 'data/xauusd_m5.csv'
+      - '.github/workflows/v3-structural-aplus.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate structural A+ module
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.v3_structural_aplus_research import StructuralAPlusConfig, TARGET, run
+          print('Structural A+ imports successfully')
+          print(TARGET)
+          PY
+      - name: Run structural A+ research
+        run: python -m casio.v3_structural_aplus_research --data data/xauusd_m5.csv --output reports/v3-structural-aplus
+      - name: Publish summary
+        run: cat reports/v3-structural-aplus/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: casio-v3-structural-aplus
+          path: reports/v3-structural-aplus/
+          retention-days: 30
