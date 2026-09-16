@@ -38,6 +38,8 @@ jobs:
           mkdir -p tmp data
           expected_md5='7ec4a38929b4d4e845a1713dec022c85'
           urls=(
+            'https://huggingface.co/datasets/emjeh/xauusddatam5/resolve/main/XAU_5m_data.csv?download=true'
+            'https://huggingface.co/datasets/cicka127/xauusddatam5/resolve/main/XAU_5m_data.csv?download=true'
             'https://zenodo.org/api/records/21904190/files/XAU_5m_data.csv/content'
             'https://zenodo.org/records/21904190/files/XAU_5m_data.csv?download=1'
             'https://zenodo.org/records/21904190/files/XAU_5m_data.csv'
@@ -54,6 +56,8 @@ jobs:
               if echo "$expected_md5  tmp/XAU_5m_data.csv" | md5sum -c -; then
                 ok=1
                 break
+              else
+                echo 'Mirror downloaded but MD5 does not match the user archive; rejecting it.'
               fi
             fi
           done
@@ -119,7 +123,7 @@ jobs:
           - File: `data/xauusd_m5_secondary_octafx_mt4.csv`
           - Original file: `XAU_5m_data.csv`
           - Original MD5: `7ec4a38929b4d4e845a1713dec022c85`
-          - Source mirror: Zenodo record `21904190`
+          - Exact user-upload archive was cross-checked against the published mirror by MD5
           - Original source described by the dataset author: Octa Markets / OctaFX MetaTrader 4 History Center
           - Rows: 1,443,451 M5 bars
           - Original broker-time coverage: 2004-06-11 07:15 through 2026-01-30 23:55
