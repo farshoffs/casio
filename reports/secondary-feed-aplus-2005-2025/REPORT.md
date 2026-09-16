@@ -55,17 +55,38 @@ Management changes alone do not solve the deterioration. A tuning sweep around p
 
 The problem is therefore primarily **setup selection / market regime**, not simply the 20%@2R + 80%@4R exit structure.
 
+### Daily regime clue
+
 A promising regime feature emerged from the secondary data: prior-day EMA20/EMA50 separation normalized by daily ATR. The A+ model behaved much better when this value was in a moderate trend zone around roughly `0.6–0.9 ATR`; extremely weak or excessively stretched daily regimes were materially less stable. This is a research hypothesis, not a production rule yet.
 
 A second observation is that the short side degraded badly during 2023–2025. This must not be solved by hard-coding `long only`; instead the next research phase should determine which higher-timeframe regime or liquidity condition reliably identifies when shorts are structurally poor.
+
+### Strong-trend continuation follow-up
+
+A focused 2023–2025 study widened the pullback continuation entry from the original `extension <= 1.1 ATR` to an extended continuation band of `1.1–1.8 ATR`.
+
+Results for extended pullbacks:
+
+- 2023: 66 candidates, 34.85% WR, +0.067R expectancy, PF 1.10.
+- 2024: 55 candidates, 32.73% WR, -0.063R expectancy, PF 0.91.
+- 2025: 56 candidates, 44.64% WR, -0.007R expectancy, PF 0.99.
+
+Adding a very-strong weekly-trend gate improved 2024/2025 somewhat but still did not create a robust standalone edge:
+
+- 2024 strong-trend extended pullback: 45 candidates, 35.56% WR, +0.030R expectancy, PF 1.04.
+- 2025 strong-trend extended pullback: 47 candidates, 46.81% WR, +0.096R expectancy, PF 1.17.
+
+Conclusion: there is evidence that strong-trend continuation deserves its own playbook, but simply loosening the extension cap is not enough.
 
 ## Next research phase
 
 Keep the current live model frozen. Treat the scale-out A+ model as one playbook inside a future regime router:
 
 1. **Moderate directional regime** → A+ London pullback/sweep scale-out.
-2. **Strong directional expansion** → separate momentum-continuation playbook; do not reuse the same extension and sweep rules.
+2. **Strong directional expansion** → separate momentum-continuation playbook with its own entry geometry and target logic; do not reuse the same sweep/extension rules.
 3. **Compression/range** → separate range-liquidity playbook.
 4. **No clean regime** → WAIT.
+
+The next strong-trend playbook should test pullback depth, displacement quality, daily/weekly expansion state, and liquidity runway together rather than one threshold at a time.
 
 Future promotion requires the same rule set to survive both the canonical Dukascopy backfill and this secondary broker feed. No secondary-feed parameter should be pushed directly into live/email without that cross-feed confirmation.
