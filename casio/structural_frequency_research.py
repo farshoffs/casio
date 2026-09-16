@@ -26,10 +26,10 @@ from .structural_portfolio_latest import (
 #
 # This is deliberately a tiny set of price-action hypotheses, not a parameter grid.
 MODES = (
-    "STRICT_FVG",                 # current assistant baseline
-    "DISPLACEMENT_RETRACE",       # BOS/displacement, retrace to 50% body even without a 3-candle FVG
-    "M15_LIQUIDITY_RETRACE",      # above + M15 internal-liquidity sweep qualifies a trend pullback
-    "FULL_STRUCTURAL_ROUTER",     # above + H1/H4 external break/retest can qualify session expansion
+    "STRICT_FVG",
+    "DISPLACEMENT_RETRACE",
+    "M15_LIQUIDITY_RETRACE",
+    "FULL_STRUCTURAL_ROUTER",
 )
 
 
@@ -41,7 +41,6 @@ def _window_metrics(trades: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp
 
 
 def _distance(m: dict) -> float:
-    """Distance to the portfolio objective. Research ranking only."""
     freq = float(m.get("trades_per_30d", 0) or 0)
     wr = float(m.get("win_rate", 0) or 0)
     aw = float(m.get("avg_win_r", 0) or 0)
@@ -71,7 +70,6 @@ def _meets(m: dict) -> bool:
 
 
 def _recent_level_retest(f: pd.DataFrame, levels: list[str], direction: int) -> pd.Series:
-    """Break an external level, retest it within 12 bars, then keep the retest fresh 4 bars."""
     out = pd.Series(False, index=f.index)
     for col in levels:
         level = f[col]
@@ -95,8 +93,6 @@ def _entry_for(row: pd.Series, direction: int, mode: str) -> tuple[float, str]:
         return (float(row.bear_fvg_low) + float(row.bear_fvg_high)) / 2.0, "FVG50"
     if mode == "STRICT_FVG":
         return np.nan, "NONE"
-    # A displacement candle is itself an imbalance event. If it does not leave a
-    # literal 3-candle FVG, research a 50% body retracement rather than chasing.
     return (float(row.open) + float(row.close)) / 2.0, "DISP_BODY50"
 
 
@@ -112,12 +108,9 @@ def setup_frame_mode(f: pd.DataFrame, cfg: StructuralPortfolioConfig, mode: str)
     trig_long = f.bull_fvg if strict_fvg else f.disp_long
     trig_short = f.bear_fvg if strict_fvg else f.disp_short
 
-    # Existing M5 internal sweep remains the baseline pullback event.
     pb_event_long = f.internal_sell_sweep_age.le(cfg.internal_sweep_fresh)
     pb_event_short = f.internal_buy_sweep_age.le(cfg.internal_sweep_fresh)
 
-    # Technique 2: treat a confirmed M15 swing as internal liquidity for a trend
-    # continuation. This is price structure, not an oscillator filter.
     if mode in ("M15_LIQUIDITY_RETRACE", "FULL_STRUCTURAL_ROUTER"):
         m15_sell = ((f.low < f.m15_last_pl) & (f.close > f.m15_last_pl) & f.m15_last_pl.notna()).fillna(False)
         m15_buy = ((f.high > f.m15_last_ph) & (f.close < f.m15_last_ph) & f.m15_last_ph.notna()).fillna(False)
@@ -220,7 +213,7 @@ def run(data_path: str | Path, output_dir: str | Path = "reports/structural-freq
         ascending=[False, True, False, False], na_position="last"
     )
     current.to_csv(out / "current_60d_modes.csv", index=False)
-    selected = str(current.iloc[0].mode)
+    selected = str(current.iloc[0]["mode"])
     setups, trades = cache[selected]
 
     backward_rows = []
