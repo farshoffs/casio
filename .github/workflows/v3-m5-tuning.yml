@@ -1,0 +1,74 @@
+name: CASIO v3 M5 Quality Tuning
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/v3_m5_engine.py'
+      - 'casio/v3_m5_tune.py'
+      - 'casio/v3_core.py'
+      - 'data/xauusd_m5.csv'
+      - 'requirements.txt'
+      - '.github/workflows/v3-m5-tuning.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-v3-m5-quality-tuning
+  cancel-in-progress: true
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate canonical M5 research modules
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.v3_m5_engine import V3M5Config, prepare_m5_features, replay_execution, signals_for_m5_features
+          from casio.v3_m5_tune import run_tuning
+          print('CASIO canonical M5 engine and research-only tuner import successfully')
+          PY
+
+      - name: Report data coverage
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          x = pd.to_datetime(pd.read_csv('data/xauusd_m5.csv', usecols=['timestamp'])['timestamp'], utc=True)
+          print(f'rows={len(x)}')
+          print(f'first={x.min()}')
+          print(f'latest={x.max()}')
+          print(f'span_days={(x.max()-x.min()).total_seconds()/86400:.1f}')
+          PY
+
+      - name: Run research-only M5 quality tuning
+        run: |
+          python -m casio.v3_m5_tune \
+            --data data/xauusd_m5.csv \
+            --output reports/v3-m5-tuning \
+            --holdout-fraction 0.25
+
+      - name: Publish tuning summary
+        run: cat reports/v3-m5-tuning/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload tuning artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-v3-m5-tuning
+          path: reports/v3-m5-tuning/
+          retention-days: 30
