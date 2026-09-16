@@ -6,8 +6,9 @@ import math
 import numpy as np
 import pandas as pd
 
-from .v3_core import load_m5_csv
+from .v3_core import load_m5_csv, _resample, _atr, _ema
 from .v3_edge_map import candidate_frame
+from .v3_m5_engine import _align_completed
 
 
 def _safe(x):
@@ -21,19 +22,41 @@ def _safe(x):
     return x
 
 
+def add_regime_features(m5: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
+    out=c.copy()
+    h4=_resample(m5,"4h")
+    hf=pd.DataFrame(index=h4.index)
+    hf["h4_ema20"]=_ema(h4.close,20); hf["h4_ema50"]=_ema(h4.close,50); hf["h4_atr"]=_atr(h4,14)
+    hf["h4_spread_atr"]=(hf.h4_ema20-hf.h4_ema50).abs()/hf.h4_atr.replace(0,np.nan)
+    hf["h4_slope20_atr"]=(hf.h4_ema20-hf.h4_ema20.shift(3)).abs()/hf.h4_atr.replace(0,np.nan)
+    aligned=_align_completed(hf,m5.index,pd.Timedelta(hours=4))
+    out["h4_spread_atr"]=aligned.h4_spread_atr
+    out["h4_slope20_atr"]=aligned.h4_slope20_atr
+    return out
+
+
 def profile_mask(c: pd.DataFrame, profile: str) -> pd.Series:
+    base_pb = c.candidate & c.playbook.eq("PULLBACK_CONTINUATION") & c.session.eq("LONDON") & c.extension_atr.le(1.10)
+    base_sw10 = c.candidate & c.playbook.eq("LIQUIDITY_SWEEP") & c.session.eq("LONDON") & c.body_fraction.ge(.55) & c.body_fraction.lt(.65) & c.efficiency.ge(.10)
+    base_sw20 = c.candidate & c.playbook.eq("LIQUIDITY_SWEEP") & c.session.eq("LONDON") & c.body_fraction.ge(.55) & c.body_fraction.lt(.65) & c.efficiency.ge(.20)
     if profile == "ROBUST":
-        pb = c.candidate & c.playbook.eq("PULLBACK_CONTINUATION") & c.session.eq("LONDON") & c.extension_atr.le(1.10)
-        sw = c.candidate & c.playbook.eq("LIQUIDITY_SWEEP") & c.session.eq("LONDON") & c.body_fraction.ge(.55) & c.body_fraction.lt(.65) & c.efficiency.ge(.10)
-    elif profile == "ROBUST_EFF20":
-        pb = c.candidate & c.playbook.eq("PULLBACK_CONTINUATION") & c.session.eq("LONDON") & c.extension_atr.le(1.10)
-        sw = c.candidate & c.playbook.eq("LIQUIDITY_SWEEP") & c.session.eq("LONDON") & c.body_fraction.ge(.55) & c.body_fraction.lt(.65) & c.efficiency.ge(.20)
-    elif profile == "FREQ16":
+        return base_pb | base_sw10
+    if profile == "ROBUST_EFF20":
+        return base_pb | base_sw20
+    if profile == "FREQ16":
         pb = c.candidate & c.playbook.eq("PULLBACK_CONTINUATION") & c.session.eq("LONDON") & c.htf_alignment.eq("BOTH_ALIGNED") & c.extension_atr.le(1.80)
-        sw = c.candidate & c.playbook.eq("LIQUIDITY_SWEEP") & c.session.eq("LONDON") & c.body_fraction.ge(.55) & c.body_fraction.lt(.65) & c.efficiency.ge(.10)
-    else:
-        raise ValueError(profile)
-    return pb | sw
+        return pb | base_sw10
+    if profile in {"ADAPTIVE03","ADAPTIVE05","ADAPTIVE07"}:
+        if profile == "ADAPTIVE03": spread, slope = .30, .10
+        elif profile == "ADAPTIVE05": spread, slope = .50, .15
+        else: spread, slope = .70, .15
+        momentum_pb = (
+            c.candidate & c.playbook.eq("PULLBACK_CONTINUATION") & c.session.eq("LONDON")
+            & c.htf_alignment.eq("BOTH_ALIGNED") & c.extension_atr.gt(1.10) & c.extension_atr.le(1.80)
+            & c.h4_spread_atr.ge(spread) & c.h4_slope20_atr.ge(slope)
+        )
+        return base_pb | base_sw20 | momentum_pb
+    raise ValueError(profile)
 
 
 def replay(m5: pd.DataFrame, c: pd.DataFrame, profile: str, target_r: float, cooldown: int=6, max_hold_bars: int=72, bps: float=1.0) -> pd.DataFrame:
@@ -61,7 +84,7 @@ def replay(m5: pd.DataFrame, c: pd.DataFrame, profile: str, target_r: float, coo
         active={"signal_time":t,"entry_time":t+pd.Timedelta(minutes=5),"entry_pos":i,"profile":profile,"target_r":target_r,
                 "playbook":row.playbook,"session":row.session,"htf_alignment":row.htf_alignment,"direction":d,"entry":ent,
                 "risk":risk,"stop":ent-d*risk,"efficiency":row.efficiency,"extension_atr":row.extension_atr,
-                "body_fraction":row.body_fraction,"runway_r":row.runway_r}
+                "body_fraction":row.body_fraction,"runway_r":row.runway_r,"h4_spread_atr":row.h4_spread_atr,"h4_slope20_atr":row.h4_slope20_atr}
         last_entry=i
     return pd.DataFrame(events)
 
@@ -82,11 +105,12 @@ def metrics(tr: pd.DataFrame, a: pd.Timestamp, b: pd.Timestamp) -> dict:
 
 def run(data_path: str|Path="data/xauusd_m5.csv", output_dir: str|Path="reports/v3-aplus-v2") -> dict:
     out=Path(output_dir); out.mkdir(parents=True,exist_ok=True)
-    m5=load_m5_csv(data_path); c=candidate_frame(m5)
+    m5=load_m5_csv(data_path); c=add_regime_features(m5,candidate_frame(m5))
     start=m5.index.min()+pd.Timedelta(days=30); finish=m5.index.max()+pd.Timedelta(minutes=5)
     cut=start+(finish-start)*.70
     rows=[]
-    for profile in ["ROBUST","ROBUST_EFF20","FREQ16"]:
+    profiles=["ROBUST","ROBUST_EFF20","FREQ16","ADAPTIVE03","ADAPTIVE05","ADAPTIVE07"]
+    for profile in profiles:
         for target in [3.0,3.5,4.0]:
             tr=replay(m5,c,profile,target)
             tr.to_csv(out/f"{profile.lower()}_{str(target).replace('.','_')}r_trades.csv",index=False)
@@ -95,7 +119,7 @@ def run(data_path: str|Path="data/xauusd_m5.csv", output_dir: str|Path="reports/
             rows.append({"profile":profile,"target_r":target,"sample":"FULL",**metrics(tr,start,finish)})
     frame=pd.DataFrame(rows); frame.to_csv(out/"metrics.csv",index=False)
     summary={"data":{"rows":len(m5),"start":m5.index.min(),"end":m5.index.max(),"cut":cut},"results":rows,"auto_deploy":False,
-             "note":"Research-only. Profile was informed by 2020 diagnostics and Sep 1-15 2026 user-supplied data, so neither period is untouched OOS. Live CASIO remains unchanged."}
+             "note":"Research-only. Profiles were informed by 2020 diagnostics and Sep 1-15 2026 user data. Neither is untouched OOS. Live CASIO remains unchanged."}
     (out/"summary.json").write_text(json.dumps(_safe(summary),indent=2),encoding="utf-8")
     (out/"REPORT.md").write_text("# CASIO A+ v2 Research\n\n```text\n"+frame.to_string(index=False)+"\n```\n\nLive strategy unchanged.\n",encoding="utf-8")
     return summary
