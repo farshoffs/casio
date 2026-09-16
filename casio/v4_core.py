@@ -14,6 +14,11 @@ class V4Config:
     Higher-timeframe context mostly scores a setup instead of vetoing it.
     """
 
+    # Playbook switches make clean ablations possible without changing logic.
+    enable_trend_pullback: bool = True
+    enable_range_rotation: bool = True
+    enable_breakout_retest: bool = True
+
     # Global execution / research
     min_score: int = 68
     round_trip_cost_bps: float = 1.0
