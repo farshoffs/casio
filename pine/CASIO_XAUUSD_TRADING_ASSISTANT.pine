@@ -1,0 +1,292 @@
+//@version=6
+indicator("CASIO XAUUSD — Structural Trading Assistant", overlay=true, max_labels_count=300, max_lines_count=100, max_bars_back=10000)
+
+// RESEARCH ASSISTANT — not the production v3 engine.
+// Native chart: XAUUSD 5m.
+// No ADX / RSI. The decision chain is structure -> liquidity -> displacement/FVG -> retracement -> risk/reward.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+groupDisplay = "Display"
+showDashboard = input.bool(true, "Show trading-assistant dashboard", group=groupDisplay)
+showLiquidity = input.bool(true, "Plot major liquidity", group=groupDisplay)
+showTradeLevels = input.bool(true, "Plot pending/active entry, stop and target", group=groupDisplay)
+showLabels = input.bool(true, "Show setup / fill / exit labels", group=groupDisplay)
+
+groupModel = "Structural portfolio research model"
+minExternalRunway = input.float(3.5, "Minimum external-liquidity runway (R)", minval=2.0, step=0.1, group=groupModel)
+targetR = input.float(3.5, "Baseline target (R)", minval=2.0, step=0.1, group=groupModel)
+bodyMin = input.float(0.52, "Minimum displacement body fraction", minval=0.35, maxval=0.90, step=0.01, group=groupModel)
+rangeAtrMin = input.float(0.65, "Minimum displacement range / ATR", minval=0.30, step=0.05, group=groupModel)
+internalSweepFresh = input.int(6, "Internal sweep fresh bars", minval=1, maxval=20, group=groupModel)
+externalSweepFresh = input.int(4, "External sweep fresh bars", minval=1, maxval=20, group=groupModel)
+retraceBars = input.int(8, "FVG retracement expiry bars", minval=1, maxval=24, group=groupModel)
+d1RangeRatioMax = input.float(1.50, "External-sweep max completed D1 range ratio", minval=0.5, step=0.05, group=groupModel)
+h4RangeRatioMin = input.float(0.80, "External-sweep min completed H4 range ratio", minval=0.3, step=0.05, group=groupModel)
+
+groupSession = "Sessions UTC"
+londonSession = input.session("0700-1100", "London", group=groupSession)
+newYorkSession = input.session("1230-1630", "New York", group=groupSession)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Confirmed structure helpers. Pivots are causal: a 5-bar pivot is confirmed
+// only after the two bars to its right exist. HTF values use the prior closed bar.
+// ─────────────────────────────────────────────────────────────────────────────
+f_structure_bundle() =>
+    ph = ta.pivothigh(high, 2, 2)
+    pl = ta.pivotlow(low, 2, 2)
+    lph = ta.valuewhen(not na(ph), ph, 0)
+    pph = ta.valuewhen(not na(ph), ph, 1)
+    lpl = ta.valuewhen(not na(pl), pl, 0)
+    ppl = ta.valuewhen(not na(pl), pl, 1)
+    bias = not na(lph) and not na(pph) and not na(lpl) and not na(ppl) ? (lph > pph and lpl > ppl ? 1 : lph < pph and lpl < ppl ? -1 : 0) : 0
+    [bias[1], lph[1], lpl[1]]
+
+f_range_ratio_confirmed(len) =>
+    r = high - low
+    med = ta.median(r, len)
+    rr = med > 0 ? r / med : na
+    rr[1]
+
+[d1Bias, d1SwingHigh, d1SwingLow] = request.security(syminfo.tickerid, "D", f_structure_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=500)
+[h4Bias, h4SwingHigh, h4SwingLow] = request.security(syminfo.tickerid, "240", f_structure_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=2000)
+[h1Bias, h1SwingHigh, h1SwingLow] = request.security(syminfo.tickerid, "60", f_structure_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=5000)
+[m15Bias, m15SwingHigh, m15SwingLow] = request.security(syminfo.tickerid, "15", f_structure_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=10000)
+d1RangeRatio = request.security(syminfo.tickerid, "D", f_range_ratio_confirmed(20), lookahead=barmerge.lookahead_on, calc_bars_count=500)
+h4RangeRatio = request.security(syminfo.tickerid, "240", f_range_ratio_confirmed(12), lookahead=barmerge.lookahead_on, calc_bars_count=2000)
+
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prevDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+dayOpen = request.security(syminfo.tickerid, "D", open, lookahead=barmerge.lookahead_on)
+prevWeekHigh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+prevWeekLow = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Current-day Asia liquidity, 00:00–06:00 UTC.
+// ─────────────────────────────────────────────────────────────────────────────
+newDay = ta.change(time("D")) != 0
+hourUtc = hour(time, "UTC")
+var float asiaHigh = na
+var float asiaLow = na
+if newDay
+    asiaHigh := na
+    asiaLow := na
+if hourUtc < 6
+    asiaHigh := na(asiaHigh) ? high : math.max(asiaHigh, high)
+    asiaLow := na(asiaLow) ? low : math.min(asiaLow, low)
+
+inLondon = not na(time(timeframe.period, londonSession, "UTC"))
+inNewYork = not na(time(timeframe.period, newYorkSession, "UTC"))
+inPrimary = inLondon or inNewYork
+sessionName = inLondon ? "LONDON" : inNewYork ? "NEW YORK" : hourUtc < 6 ? "ASIA" : "OTHER"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Native M5 structure / displacement / FVG.
+// ATR is used only to normalize candle size and structural risk buffers; it does
+// not decide market direction.
+// ─────────────────────────────────────────────────────────────────────────────
+chartIsM5 = timeframe.isminutes and timeframe.multiplier == 5
+atr14 = ta.atr(14)
+candleRange = high - low
+bodyFraction = candleRange > 0 ? math.abs(close - open) / candleRange : 0.0
+closeLocation = candleRange > 0 ? (close - low) / candleRange : 0.5
+rangeAtr = atr14 > 0 ? candleRange / atr14 : na
+priorHigh5 = ta.highest(high[1], 5)
+priorLow5 = ta.lowest(low[1], 5)
+recentLow8 = ta.lowest(low, 8)
+recentHigh8 = ta.highest(high, 8)
+
+dispLong = close > open and bodyFraction >= bodyMin and closeLocation >= 0.68 and rangeAtr >= rangeAtrMin and close > priorHigh5
+dispShort = close < open and bodyFraction >= bodyMin and closeLocation <= 0.32 and rangeAtr >= rangeAtrMin and close < priorLow5
+bullFvg = dispLong and low > high[2]
+bearFvg = dispShort and high < low[2]
+bullFvgEntry = bullFvg ? (high[2] + low) / 2.0 : na
+bearFvgEntry = bearFvg ? (high + low[2]) / 2.0 : na
+
+internalSellSweep = low < priorLow5 and close > priorLow5
+internalBuySweep = high > priorHigh5 and close < priorHigh5
+internalSellAge = ta.barssince(internalSellSweep)
+internalBuyAge = ta.barssince(internalBuySweep)
+
+f_swept_below(level) => not na(level) and low < level and close > level
+f_swept_above(level) => not na(level) and high > level and close < level
+externalSellSweep = f_swept_below(prevDayLow) or f_swept_below(asiaLow) or f_swept_below(h1SwingLow) or f_swept_below(h4SwingLow) or f_swept_below(prevWeekLow)
+externalBuySweep = f_swept_above(prevDayHigh) or f_swept_above(asiaHigh) or f_swept_above(h1SwingHigh) or f_swept_above(h4SwingHigh) or f_swept_above(prevWeekHigh)
+externalSellAge = ta.barssince(externalSellSweep)
+externalBuyAge = ta.barssince(externalBuySweep)
+
+trendVote = d1Bias + h4Bias + h1Bias
+trendLong = trendVote >= 2 and m15Bias >= 0
+trendShort = trendVote <= -2 and m15Bias <= 0
+regimeOk = not na(d1RangeRatio) and not na(h4RangeRatio) and d1RangeRatio <= d1RangeRatioMax and h4RangeRatio >= h4RangeRatioMin
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session expansion → retest memory.
+// ─────────────────────────────────────────────────────────────────────────────
+breakAsiaHigh = not na(asiaHigh) and close > asiaHigh and close[1] <= asiaHigh
+breakPdh = not na(prevDayHigh) and close > prevDayHigh and close[1] <= prevDayHigh
+breakAsiaLow = not na(asiaLow) and close < asiaLow and close[1] >= asiaLow
+breakPdl = not na(prevDayLow) and close < prevDayLow and close[1] >= prevDayLow
+ageBreakHigh = math.min(nz(ta.barssince(breakAsiaHigh), 10000), nz(ta.barssince(breakPdh), 10000))
+ageBreakLow = math.min(nz(ta.barssince(breakAsiaLow), 10000), nz(ta.barssince(breakPdl), 10000))
+retestHigh = ageBreakHigh >= 1 and ageBreakHigh <= 12 and ((not na(asiaHigh) and low <= asiaHigh + .15 * atr14 and close >= asiaHigh) or (not na(prevDayHigh) and low <= prevDayHigh + .15 * atr14 and close >= prevDayHigh))
+retestLow = ageBreakLow >= 1 and ageBreakLow <= 12 and ((not na(asiaLow) and high >= asiaLow - .15 * atr14 and close <= asiaLow) or (not na(prevDayLow) and high >= prevDayLow - .15 * atr14 and close <= prevDayLow))
+recentRetestHigh = nz(ta.barssince(retestHigh), 10000) <= 4
+recentRetestLow = nz(ta.barssince(retestLow), 10000) <= 4
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Three-playbook router.
+// ─────────────────────────────────────────────────────────────────────────────
+pbLong = inPrimary and trendLong and internalSellAge <= internalSweepFresh and bullFvg and bullFvgEntry > dayOpen
+pbShort = inPrimary and trendShort and internalBuyAge <= internalSweepFresh and bearFvg and bearFvgEntry < dayOpen
+swLong = inPrimary and regimeOk and externalSellAge <= externalSweepFresh and trendVote >= 0 and bullFvg
+swShort = inPrimary and regimeOk and externalBuyAge <= externalSweepFresh and trendVote <= 0 and bearFvg
+rtLong = inPrimary and trendLong and recentRetestHigh and bullFvg
+rtShort = inPrimary and trendShort and recentRetestLow and bearFvg
+
+candidateDirection = swLong ? 1 : swShort ? -1 : rtLong ? 1 : rtShort ? -1 : pbLong ? 1 : pbShort ? -1 : 0
+candidatePlaybook = swLong or swShort ? "EXTERNAL SWEEP" : rtLong or rtShort ? "SESSION RETEST" : pbLong or pbShort ? "TREND PULLBACK" : "WAIT"
+candidateEntry = candidateDirection == 1 ? bullFvgEntry : candidateDirection == -1 ? bearFvgEntry : na
+candidateStop = candidateDirection == 1 ? recentLow8 - .10 * atr14 : candidateDirection == -1 ? recentHigh8 + .10 * atr14 : na
+candidateRisk = candidateDirection == 1 ? candidateEntry - candidateStop : candidateDirection == -1 ? candidateStop - candidateEntry : na
+riskAtr = atr14 > 0 and not na(candidateRisk) ? candidateRisk / atr14 : na
+riskOk = not na(riskAtr) and riskAtr >= .35 and riskAtr <= 3.0
+
+// Find the nearest external objective that is at least minExternalRunway R away.
+f_qual_above(level, entry, risk, minR) =>
+    not na(level) and risk > 0 and level > entry and (level - entry) / risk >= minR ? level : na
+f_qual_below(level, entry, risk, minR) =>
+    not na(level) and risk > 0 and level < entry and (entry - level) / risk >= minR ? level : na
+
+qAH = f_qual_above(asiaHigh, candidateEntry, candidateRisk, minExternalRunway)
+qPDH = f_qual_above(prevDayHigh, candidateEntry, candidateRisk, minExternalRunway)
+qH1H = f_qual_above(h1SwingHigh, candidateEntry, candidateRisk, minExternalRunway)
+qH4H = f_qual_above(h4SwingHigh, candidateEntry, candidateRisk, minExternalRunway)
+qPWH = f_qual_above(prevWeekHigh, candidateEntry, candidateRisk, minExternalRunway)
+longExternal = na(qAH) ? qPDH : na(qPDH) ? qAH : math.min(qAH, qPDH)
+longExternal := na(longExternal) ? qH1H : na(qH1H) ? longExternal : math.min(longExternal, qH1H)
+longExternal := na(longExternal) ? qH4H : na(qH4H) ? longExternal : math.min(longExternal, qH4H)
+longExternal := na(longExternal) ? qPWH : na(qPWH) ? longExternal : math.min(longExternal, qPWH)
+
+qAL = f_qual_below(asiaLow, candidateEntry, candidateRisk, minExternalRunway)
+qPDL = f_qual_below(prevDayLow, candidateEntry, candidateRisk, minExternalRunway)
+qH1L = f_qual_below(h1SwingLow, candidateEntry, candidateRisk, minExternalRunway)
+qH4L = f_qual_below(h4SwingLow, candidateEntry, candidateRisk, minExternalRunway)
+qPWL = f_qual_below(prevWeekLow, candidateEntry, candidateRisk, minExternalRunway)
+shortExternal = na(qAL) ? qPDL : na(qPDL) ? qAL : math.max(qAL, qPDL)
+shortExternal := na(shortExternal) ? qH1L : na(qH1L) ? shortExternal : math.max(shortExternal, qH1L)
+shortExternal := na(shortExternal) ? qH4L : na(qH4L) ? shortExternal : math.max(shortExternal, qH4L)
+shortExternal := na(shortExternal) ? qPWL : na(qPWL) ? shortExternal : math.max(shortExternal, qPWL)
+
+candidateExternal = candidateDirection == 1 ? longExternal : candidateDirection == -1 ? shortExternal : na
+candidateRunway = candidateDirection == 1 and candidateRisk > 0 and not na(candidateExternal) ? (candidateExternal - candidateEntry) / candidateRisk : candidateDirection == -1 and candidateRisk > 0 and not na(candidateExternal) ? (candidateEntry - candidateExternal) / candidateRisk : na
+runwayOk = not na(candidateRunway) and candidateRunway >= minExternalRunway
+candidateTarget = candidateDirection != 0 and candidateRisk > 0 ? candidateEntry + candidateDirection * targetR * candidateRisk : na
+candidateReady = chartIsM5 and candidateDirection != 0 and riskOk and runwayOk
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Assistant state machine: signal -> retracement pending -> entry live -> exit.
+// ─────────────────────────────────────────────────────────────────────────────
+var int phase = 0 // 0 WAIT, 1 RETRACE PENDING, 2 TRADE ACTIVE
+var int pendingDirection = 0
+var int pendingBar = na
+var string pendingPlaybook = "WAIT"
+var float activeEntry = na
+var float activeStop = na
+var float activeTarget = na
+var float activeRunway = na
+
+if phase == 0 and candidateReady
+    phase := 1
+    pendingDirection := candidateDirection
+    pendingBar := bar_index
+    pendingPlaybook := candidatePlaybook
+    activeEntry := candidateEntry
+    activeStop := candidateStop
+    activeTarget := candidateTarget
+    activeRunway := candidateRunway
+    if showLabels
+        label.new(bar_index, pendingDirection == 1 ? low : high, "WATCH\n" + pendingPlaybook + "\nWAIT RETRACE", style=pendingDirection == 1 ? label.style_label_up : label.style_label_down)
+
+if phase == 1 and bar_index > pendingBar
+    invalid = pendingDirection == 1 ? low <= activeStop : high >= activeStop
+    filled = not invalid and low <= activeEntry and high >= activeEntry
+    expired = bar_index - pendingBar > retraceBars
+    if invalid or expired
+        if showLabels and invalid
+            label.new(bar_index, close, "CANCEL\nSTRUCTURE INVALID", style=label.style_label_left)
+        phase := 0
+        pendingDirection := 0
+    else if filled
+        phase := 2
+        if showLabels
+            label.new(bar_index, pendingDirection == 1 ? low : high, pendingDirection == 1 ? "BUY\nA+ RETRACE" : "SELL\nA+ RETRACE", style=pendingDirection == 1 ? label.style_label_up : label.style_label_down)
+
+if phase == 2
+    hitStop = pendingDirection == 1 ? low <= activeStop : high >= activeStop
+    hitTarget = pendingDirection == 1 ? high >= activeTarget : low <= activeTarget
+    if hitStop or hitTarget
+        if showLabels
+            label.new(bar_index, close, hitStop ? "STOP\n-1R" : "TARGET\n+" + str.tostring(targetR, "#.0") + "R", style=label.style_label_left)
+        phase := 0
+        pendingDirection := 0
+
+phaseName = phase == 2 ? "ENTRY LIVE" : phase == 1 ? "RETRACE PENDING" : candidateReady ? "SETUP READY" : candidateDirection != 0 ? "FILTERED" : "WAIT"
+decision = phase == 2 ? (pendingDirection == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : phase == 1 ? "WAIT FOR PRICE" : candidateReady ? "WATCH RETRACE" : "WAIT"
+marketState = trendVote >= 2 ? "BULL STRUCTURE" : trendVote <= -2 ? "BEAR STRUCTURE" : "MIXED / ROTATION"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visual liquidity and trade levels.
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showLiquidity ? prevDayHigh : na, "PDH", style=plot.style_linebr)
+plot(showLiquidity ? prevDayLow : na, "PDL", style=plot.style_linebr)
+plot(showLiquidity ? asiaHigh : na, "Asia High", style=plot.style_linebr)
+plot(showLiquidity ? asiaLow : na, "Asia Low", style=plot.style_linebr)
+plot(showLiquidity ? h1SwingHigh : na, "H1 Swing High", style=plot.style_linebr)
+plot(showLiquidity ? h1SwingLow : na, "H1 Swing Low", style=plot.style_linebr)
+plot(showTradeLevels and phase > 0 ? activeEntry : na, "Assistant Entry", linewidth=2, style=plot.style_linebr)
+plot(showTradeLevels and phase > 0 ? activeStop : na, "Assistant Stop", linewidth=2, style=plot.style_linebr)
+plot(showTradeLevels and phase > 0 ? activeTarget : na, "Assistant Target", linewidth=2, style=plot.style_linebr)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard: this is intended to behave as a decision assistant, not a signal lamp.
+// ─────────────────────────────────────────────────────────────────────────────
+f_bias_text(x) => x == 1 ? "BULL" : x == -1 ? "BEAR" : "NEUTRAL"
+f_price(x) => na(x) ? "—" : str.tostring(x, format.mintick)
+f_num(x) => na(x) ? "—" : str.tostring(x, "#.00")
+
+var table dash = table.new(position.top_right, 2, 16, border_width=1)
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "CASIO A+ ASSISTANT")
+    table.cell(dash, 1, 0, chartIsM5 ? "M5 READY" : "USE 5m")
+    table.cell(dash, 0, 1, "DECISION")
+    table.cell(dash, 1, 1, decision)
+    table.cell(dash, 0, 2, "PHASE")
+    table.cell(dash, 1, 2, phaseName)
+    table.cell(dash, 0, 3, "MARKET")
+    table.cell(dash, 1, 3, marketState)
+    table.cell(dash, 0, 4, "D1 / H4 / H1")
+    table.cell(dash, 1, 4, f_bias_text(d1Bias) + " / " + f_bias_text(h4Bias) + " / " + f_bias_text(h1Bias))
+    table.cell(dash, 0, 5, "M15 STRUCTURE")
+    table.cell(dash, 1, 5, f_bias_text(m15Bias))
+    table.cell(dash, 0, 6, "SESSION")
+    table.cell(dash, 1, 6, sessionName)
+    table.cell(dash, 0, 7, "PLAYBOOK")
+    table.cell(dash, 1, 7, phase > 0 ? pendingPlaybook : candidatePlaybook)
+    table.cell(dash, 0, 8, "ENTRY")
+    table.cell(dash, 1, 8, f_price(phase > 0 ? activeEntry : candidateEntry))
+    table.cell(dash, 0, 9, "STOP")
+    table.cell(dash, 1, 9, f_price(phase > 0 ? activeStop : candidateStop))
+    table.cell(dash, 0, 10, "TARGET")
+    table.cell(dash, 1, 10, f_price(phase > 0 ? activeTarget : candidateTarget))
+    table.cell(dash, 0, 11, "RUNWAY")
+    table.cell(dash, 1, 11, f_num(phase > 0 ? activeRunway : candidateRunway) + "R")
+    table.cell(dash, 0, 12, "PDH / PDL")
+    table.cell(dash, 1, 12, f_price(prevDayHigh) + " / " + f_price(prevDayLow))
+    table.cell(dash, 0, 13, "ASIA H / L")
+    table.cell(dash, 1, 13, f_price(asiaHigh) + " / " + f_price(asiaLow))
+    table.cell(dash, 0, 14, "PRICE REGIME")
+    table.cell(dash, 1, 14, "D1 " + f_num(d1RangeRatio) + " • H4 " + f_num(h4RangeRatio))
+    table.cell(dash, 0, 15, "ENGINE")
+    table.cell(dash, 1, 15, "STRUCTURE • LIQUIDITY • FVG")
