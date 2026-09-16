@@ -1,5 +1,6 @@
 name: CASIO Secondary Feed Structural Research
-# Re-trigger after the separate OctaFX M5 base was committed to data/.
+# Latest-first secondary robustness research. The full secondary CSV stays intact;
+# the workflow slices a 2023-10 warmup so the requested 2024-2026 study runs fast.
 
 on:
   push:
@@ -45,10 +46,25 @@ jobs:
           print(f'Secondary CSV: {p.stat().st_size/1024/1024:.2f} MiB')
           PY
 
+      - name: Slice 2024-2026 research horizon with structural warmup
+        shell: bash
+        run: |
+          mkdir -p tmp
+          awk -F, 'NR==1 || $1 >= "2023-10-01T00:00:00Z"' \
+            data/xauusd_m5_secondary_octafx_mt4.csv \
+            > tmp/xauusd_m5_secondary_2023warmup.csv
+          python - <<'PY'
+          import pandas as pd
+          p = 'tmp/xauusd_m5_secondary_2023warmup.csv'
+          df = pd.read_csv(p, usecols=['timestamp'])
+          print(f'Research slice rows: {len(df):,}')
+          print('Research slice:', df.timestamp.iloc[0], '->', df.timestamp.iloc[-1])
+          PY
+
       - name: Run latest-first secondary-feed research
         run: |
           python -m casio.secondary_feed_research \
-            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --data tmp/xauusd_m5_secondary_2023warmup.csv \
             --output reports/structural-secondary
 
       - name: Publish report
