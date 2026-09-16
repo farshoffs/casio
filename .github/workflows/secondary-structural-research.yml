@@ -1,0 +1,61 @@
+name: CASIO Secondary Feed Structural Research
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'data/xauusd_m5_secondary_octafx_mt4.csv'
+      - 'casio/secondary_feed_research.py'
+      - 'casio/structural_frequency_research.py'
+      - 'casio/structural_portfolio_latest.py'
+      - '.github/workflows/secondary-structural-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-secondary-structural-research
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate secondary data exists
+        run: |
+          test -f data/xauusd_m5_secondary_octafx_mt4.csv
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('data/xauusd_m5_secondary_octafx_mt4.csv')
+          print(f'Secondary CSV: {p.stat().st_size/1024/1024:.2f} MiB')
+          PY
+
+      - name: Run latest-first secondary-feed research
+        run: |
+          python -m casio.secondary_feed_research \
+            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/structural-secondary
+
+      - name: Publish report
+        run: cat reports/structural-secondary/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload research artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-structural-secondary
+          path: reports/structural-secondary/
+          retention-days: 60
