@@ -1,5 +1,5 @@
 //@version=6
-strategy("CASIO XAUUSD v3 BACKTEST — M15 Decision + M5 Context", overlay=true, pyramiding=0, process_orders_on_close=true, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1, max_labels_count=500, max_bars_back=5000)
+strategy("CASIO XAUUSD v3 BACKTEST — M15 Decision + M5 Context", overlay=true, pyramiding=0, process_orders_on_close=true, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
 
 // CASIO v3 BACKTEST
 // Purpose: inspect historical setups from the current v3 FAST logic directly on chart.
@@ -12,9 +12,10 @@ strategy("CASIO XAUUSD v3 BACKTEST — M15 Decision + M5 Context", overlay=true,
 // ─────────────────────────────────────────────────────────────────────────────
 groupDisplay = "Backtest Display"
 showAllSetups = input.bool(true, "Show every qualifying setup marker", group=groupDisplay)
+showExecutedMarkers = input.bool(true, "Show executed BUY / SELL markers", group=groupDisplay)
 showEntryLabels = input.bool(true, "Show detailed entry labels", group=groupDisplay)
 showExitLabels = input.bool(true, "Show WIN / LOSS labels", group=groupDisplay)
-showTradeLevels = input.bool(true, "Show active entry / stop / target", group=groupDisplay)
+showTradeLevels = input.bool(true, "Keep historical entry / stop / target lines", group=groupDisplay)
 showDashboard = input.bool(true, "Show backtest dashboard", group=groupDisplay)
 
 // Optional date filter
@@ -257,10 +258,9 @@ f_bias(v) => v == 1 ? "BULL" : v == -1 ? "BEAR" : "NEUTRAL"
 f_num(v) => na(v) ? "—" : str.tostring(v, format.mintick)
 f_rr(v) => na(v) ? "—" : "1:" + str.tostring(v, "#.##")
 
-// Show EVERY raw qualifying setup historically, including setups that occur while
-// another strategy trade is already open. Executed strategy trades remain one at a time.
-plotshape(showAllSetups and inDateRange and signalValid and signalDirection == 1, title="Historical qualifying LONG", text="SETUP\nLONG", style=shape.labelup, location=location.belowbar, size=size.tiny)
-plotshape(showAllSetups and inDateRange and signalValid and signalDirection == -1, title="Historical qualifying SHORT", text="SETUP\nSHORT", style=shape.labeldown, location=location.abovebar, size=size.tiny)
+// Small markers show every qualifying v3 signal, even if another trade is open.
+plotshape(showAllSetups and inDateRange and signalValid and signalDirection == 1, title="Historical qualifying LONG", text="L?", style=shape.labelup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 65), textcolor=color.white)
+plotshape(showAllSetups and inDateRange and signalValid and signalDirection == -1, title="Historical qualifying SHORT", text="S?", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.new(color.red, 65), textcolor=color.white)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Strategy execution + visible historical labels
@@ -277,9 +277,17 @@ var string activeM5AtEntry = ""
 var float activeM5RsiAtEntry = na
 var float cumulativeR = 0.0
 var int seenClosedTrades = 0
+var line activeEntryLine = na
+var line activeStopLine = na
+var line activeTargetLine = na
 
 cooldownReady = na(lastEntryBar) or bar_index - lastEntryBar >= signalCooldownBars
 canEnter = barstate.isconfirmed and chartIsM15 and inDateRange and signalValid and strategy.position_size == 0 and cooldownReady and not na(signalStop) and not na(signalTarget) and signalRR > 0
+
+// Large markers = actual strategy entries. These are the BUY / SELL points used by
+// Strategy Tester, not merely candidate/setup markers.
+plotshape(showExecutedMarkers and canEnter and signalDirection == 1, title="BACKTEST BUY", text="BUY", style=shape.labelup, location=location.belowbar, size=size.small, color=color.green, textcolor=color.white)
+plotshape(showExecutedMarkers and canEnter and signalDirection == -1, title="BACKTEST SELL", text="SELL", style=shape.labeldown, location=location.abovebar, size=size.small, color=color.red, textcolor=color.white)
 
 if canEnter
     lastEntryBar := bar_index
@@ -300,11 +308,16 @@ if canEnter
         strategy.entry("SHORT", strategy.short)
         strategy.exit("SHORT EXIT", "SHORT", stop=activeStop, limit=activeTarget)
 
+    if showTradeLevels
+        activeEntryLine := line.new(bar_index, activeEntry, bar_index + 1, activeEntry, extend=extend.right, color=color.new(color.aqua, 20), width=1)
+        activeStopLine := line.new(bar_index, activeStop, bar_index + 1, activeStop, extend=extend.right, color=color.new(color.red, 15), width=2)
+        activeTargetLine := line.new(bar_index, activeTarget, bar_index + 1, activeTarget, extend=extend.right, color=color.new(color.green, 15), width=2)
+
     if showEntryLabels
         label.new(
           bar_index,
           signalDirection == 1 ? low : high,
-          (signalDirection == 1 ? "LONG" : "SHORT") + " • " + activeMode + "\n" +
+          (signalDirection == 1 ? "BUY" : "SELL") + " • " + activeMode + "\n" +
           sessionName + " • Score " + str.tostring(signalScore) + "\n" +
           "H4/H1 " + f_bias(h4Bias) + "/" + f_bias(h1Bias) + "\n" +
           "M5 " + f_bias(m5Bias) + " • RSI " + str.tostring(m5Rsi, "#.0") + " • " + m5Trigger + "\n" +
@@ -331,6 +344,17 @@ if strategy.closedtrades > seenClosedTrades
     bool won = tradeProfit > 0
     cumulativeR += won ? activeRR : -1.0
 
+    if showTradeLevels
+        if not na(activeEntryLine)
+            line.set_x2(activeEntryLine, tradeExitBar)
+            line.set_extend(activeEntryLine, extend.none)
+        if not na(activeStopLine)
+            line.set_x2(activeStopLine, tradeExitBar)
+            line.set_extend(activeStopLine, extend.none)
+        if not na(activeTargetLine)
+            line.set_x2(activeTargetLine, tradeExitBar)
+            line.set_extend(activeTargetLine, extend.none)
+
     if showExitLabels
         label.new(
           tradeExitBar,
@@ -353,6 +377,9 @@ if strategy.closedtrades > seenClosedTrades
     activeSessionAtEntry := ""
     activeM5AtEntry := ""
     activeM5RsiAtEntry := na
+    activeEntryLine := na
+    activeStopLine := na
+    activeTargetLine := na
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chart visuals
@@ -361,9 +388,6 @@ plot(ema20, "M15 EMA20", linewidth=1)
 plot(ema50, "M15 EMA50", linewidth=1)
 plot(activeMode == "SCALPING" ? rangeHigh30 : na, "Range high", style=plot.style_linebr)
 plot(activeMode == "SCALPING" ? rangeLow30 : na, "Range low", style=plot.style_linebr)
-plot(showTradeLevels and not na(activeEntry) ? activeEntry : na, "Active entry", style=plot.style_linebr, linewidth=1)
-plot(showTradeLevels and not na(activeStop) ? activeStop : na, "Active stop", style=plot.style_linebr, linewidth=2)
-plot(showTradeLevels and not na(activeTarget) ? activeTarget : na, "Active target", style=plot.style_linebr, linewidth=2)
 
 panelBg = color.new(color.rgb(15, 18, 25), 5)
 labelBg = color.new(color.rgb(29, 34, 45), 2)
@@ -373,7 +397,8 @@ m5Bg = m5Bias == 1 ? color.new(color.green, 80) : m5Bias == -1 ? color.new(color
 
 f_cell(tbl, col, row, txt, bg) => table.cell(tbl, col, row, txt, text_color=color.white, bgcolor=bg, text_size=size.small)
 
-var table dash = table.new(position.top_right, 2, 11, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1)
+// Keep the BACKTEST dashboard away from v3 FAST's top-right dashboard.
+var table dash = table.new(position.bottom_left, 2, 11, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1)
 if barstate.islast
     if showDashboard
         float wr = strategy.closedtrades > 0 ? strategy.wintrades * 100.0 / strategy.closedtrades : na
@@ -398,6 +423,6 @@ if barstate.islast
         f_cell(dash, 0, 9, "NET R", labelBg)
         f_cell(dash, 1, 9, str.tostring(cumulativeR, "#.##") + "R", panelBg)
         f_cell(dash, 0, 10, "VIEW", labelBg)
-        f_cell(dash, 1, 10, "M15 DECISION • M5 CONTEXT", panelBg)
+        f_cell(dash, 1, 10, "BUY/SELL + WIN/LOSS", panelBg)
     else
         table.clear(dash, 0, 0, 1, 10)
