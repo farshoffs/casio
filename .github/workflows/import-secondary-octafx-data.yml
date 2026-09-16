@@ -36,10 +36,32 @@ jobs:
         shell: bash
         run: |
           mkdir -p tmp data
-          curl --fail --location --retry 5 --retry-delay 5 \
-            'https://zenodo.org/records/21904190/files/XAU_5m_data.csv?download=1' \
-            --output tmp/XAU_5m_data.csv
-          echo '7ec4a38929b4d4e845a1713dec022c85  tmp/XAU_5m_data.csv' | md5sum -c -
+          expected_md5='7ec4a38929b4d4e845a1713dec022c85'
+          urls=(
+            'https://zenodo.org/api/records/21904190/files/XAU_5m_data.csv/content'
+            'https://zenodo.org/records/21904190/files/XAU_5m_data.csv?download=1'
+            'https://zenodo.org/records/21904190/files/XAU_5m_data.csv'
+          )
+
+          ok=0
+          for url in "${urls[@]}"; do
+            echo "Trying: $url"
+            rm -f tmp/XAU_5m_data.csv
+            if curl --fail --location \
+              --connect-timeout 20 --max-time 600 \
+              --retry 2 --retry-all-errors --retry-delay 5 \
+              "$url" --output tmp/XAU_5m_data.csv; then
+              if echo "$expected_md5  tmp/XAU_5m_data.csv" | md5sum -c -; then
+                ok=1
+                break
+              fi
+            fi
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo 'Could not download an exact MD5-matching copy of XAU_5m_data.csv.' >&2
+            exit 1
+          fi
 
       - name: Normalize broker time to UTC and keep as a separate base
         shell: bash
