@@ -1,0 +1,46 @@
+name: CASIO v3 A+ Execution Research
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/v3_aplus_research.py'
+      - 'casio/v3_edge_map.py'
+      - 'casio/v3_asymmetry_challenger.py'
+      - 'casio/v3_m5_engine.py'
+      - 'casio/v3_core.py'
+      - 'data/xauusd_m5.csv'
+      - 'requirements.txt'
+      - '.github/workflows/v3-aplus-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.v3_aplus_research import profile_mask, replay_profile, run
+          print('CASIO A+ research imports successfully')
+          PY
+      - name: Run A+ research
+        run: python -m casio.v3_aplus_research --data data/xauusd_m5.csv --output reports/v3-aplus
+      - name: Publish summary
+        run: cat reports/v3-aplus/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: casio-v3-aplus
+          path: reports/v3-aplus/
+          retention-days: 30
