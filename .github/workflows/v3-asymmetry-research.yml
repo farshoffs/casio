@@ -1,0 +1,57 @@
+name: CASIO v3 Asymmetry Challenger
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/v3_asymmetry_challenger.py'
+      - 'casio/v3_m5_engine.py'
+      - 'casio/v3_core.py'
+      - 'data/xauusd_m5.csv'
+      - 'requirements.txt'
+      - '.github/workflows/v3-asymmetry-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate challenger
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.v3_asymmetry_challenger import AsymmetryConfig, prepare_asymmetry_features, asymmetry_signals, run_research
+          print('CASIO asymmetry challenger imports successfully')
+          PY
+
+      - name: Run asymmetry research
+        run: |
+          python -m casio.v3_asymmetry_challenger \
+            --data data/xauusd_m5.csv \
+            --output reports/v3-asymmetry
+
+      - name: Publish summary
+        run: cat reports/v3-asymmetry/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload research artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-v3-asymmetry
+          path: reports/v3-asymmetry/
+          retention-days: 30
