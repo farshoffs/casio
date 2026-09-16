@@ -4,6 +4,7 @@ indicator("CASIO XAUUSD v3 FAST — Live MTF", overlay=true, max_labels_count=20
 // CASIO v3 FAST
 // Purpose: fast day-to-day TradingView dashboard.
 // Core logic: v2 regime-first MTF rules + v3 adaptive 24h session overlay.
+// M15 remains the decision timeframe. M5 is an additional execution/context layer.
 // Automated free-plan signals/email run independently in Python/GitHub Actions.
 // Recommended chart: XAUUSD M15, Strategy mode AUTO.
 
@@ -14,13 +15,6 @@ groupMode = "Mode"
 modeInput = input.string("AUTO", "Strategy mode", options=["AUTO", "INTRADAY", "SCALPING"], group=groupMode)
 showDashboard = input.bool(true, "Show CASIO dashboard", group=groupMode)
 showLevels = input.bool(true, "Show setup levels", group=groupMode)
-
-// Historical setup outcomes. This is a lightweight chart-side evaluator, not the
-// deep Python research engine. Every emitted setup is tracked independently.
-groupOutcomes = "Historical Setup Outcomes"
-trackHistoricalOutcomes = input.bool(true, "Track historical WIN / LOSS", group=groupOutcomes)
-outcomeMaxBars = input.int(48, "Maximum M15 bars before timeout", minval=4, maxval=192, group=groupOutcomes)
-showOutcomeTimeouts = input.bool(false, "Show timeout markers", group=groupOutcomes)
 
 // Intraday
 groupIntraday = "Intraday MTF"
@@ -92,7 +86,7 @@ m15BosLong = close > priorHigh5 and close > open
 m15BosShort = close < priorLow5 and close < open
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bundled MTF requests — fewer datasets than v2.
+// Bundled MTF requests
 // ─────────────────────────────────────────────────────────────────────────────
 [h4Close, h4Ema20, h4Ema50] = request.security(
     syminfo.tickerid,
@@ -108,10 +102,12 @@ m15BosShort = close < priorLow5 and close < open
     lookahead=barmerge.lookahead_off,
     calc_bars_count=h1CalcBars)
 
-[m5Open, m5Close, m5Ema20] = request.security(
+// M5 is now visible context as well as the existing scalping confirmation layer.
+// EMA20/50 = short-term direction, RSI = short-term momentum.
+[m5Open, m5Close, m5Ema20, m5Ema50, m5Rsi] = request.security(
     syminfo.tickerid,
     "5",
-    [open, close, ta.ema(close, 20)],
+    [open, close, ta.ema(close, 20), ta.ema(close, 50), ta.rsi(close, 14)],
     lookahead=barmerge.lookahead_off,
     calc_bars_count=m5CalcBars)
 
@@ -136,6 +132,9 @@ h1RangeAtr = h1Atr > 0 ? h1RangeSize / h1Atr : na
 h1Compression = h1Atr > 0 ? math.abs(h1Ema20 - h1Ema50) / h1Atr : na
 h1RangeRegime = not na(h1Compression) and not na(h1RangeAtr) and h1Compression <= h1CompressionAtr and h1RangeAtr <= h1MaxRangeAtr
 
+m5Bull = m5Ema20 > m5Ema50 and m5Close > m5Ema20
+m5Bear = m5Ema20 < m5Ema50 and m5Close < m5Ema20
+m5Bias = m5Bull ? 1 : m5Bear ? -1 : 0
 m5BullConfirm = m5Close > m5Open and m5Close > m5Ema20
 m5BearConfirm = m5Close < m5Open and m5Close < m5Ema20
 
@@ -162,7 +161,7 @@ longSessionGate = sessionPolicy == "PRIMARY_ONLY" ? inPrimarySession : (inPrimar
 shortSessionGate = sessionPolicy == "PRIMARY_ONLY" ? inPrimarySession : (inPrimarySession or (inAsia and h1Bias == -1) or (inTransition and h1Bias == -1 and adx14 >= transitionMinAdx))
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Intraday engine — vetoes first, score second
+// Intraday engine — unchanged v3 logic. M5 is context only here.
 // ─────────────────────────────────────────────────────────────────────────────
 intradayLongStopDistance = math.max(close - (ll20 - atr14 * 0.20), atr14 * 1.00)
 intradayShortStopDistance = math.max((hh20 + atr14 * 0.20) - close, atr14 * 1.00)
@@ -205,7 +204,6 @@ intradayActualRR = intradayDirection == 1 ? (intradayTarget - close) / intradayS
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scalping engine — H1+M15 range, M15 edge sweep, M5 confirmation
-// Available across sessions whenever the range regime genuinely qualifies.
 // ─────────────────────────────────────────────────────────────────────────────
 scalpLongSweep = low < rangeLow30 and close > rangeLow30
 scalpShortSweep = high > rangeHigh30 and close < rangeHigh30
@@ -258,81 +256,10 @@ f_num(v) => na(v) ? "—" : str.tostring(v, format.mintick)
 f_rr(v) => na(v) ? "—" : "1:" + str.tostring(v, "#.##")
 f_mode(m) => m == "INTRADAY" ? "intraday" : "scalping"
 f_dir(d) => d == 1 ? "long" : "short"
-f_pct(v) => na(v) ? "—" : str.tostring(v, "#.0") + "%"
-f_net_r(v) => (v >= 0 ? "+" : "") + str.tostring(v, "#.##") + "R"
 
 var int lastSignalBar = na
 cooldownReady = na(lastSignalBar) or bar_index - lastSignalBar >= signalCooldownBars
 canAlert = chartIsM15 and barstate.isconfirmed and signalValid and cooldownReady
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Historical setup outcome tracker
-// Each emitted setup is evaluated from the NEXT bar onward because entry is at
-// the signal bar close. If both stop and target are touched inside one M15 bar,
-// stop wins the tie (conservative, because intrabar path is unknown).
-// ─────────────────────────────────────────────────────────────────────────────
-var outcomeDirections = array.new_int()
-var outcomeStops = array.new_float()
-var outcomeTargets = array.new_float()
-var outcomeRRs = array.new_float()
-var outcomeEntryBars = array.new_int()
-var int outcomeWins = 0
-var int outcomeLosses = 0
-var int outcomeTimeouts = 0
-var float outcomeNetR = 0.0
-
-bool outcomeWinThisBar = false
-bool outcomeLossThisBar = false
-bool outcomeTimeoutThisBar = false
-
-if trackHistoricalOutcomes and array.size(outcomeDirections) > 0
-    int i = 0
-    while i < array.size(outcomeDirections)
-        int trackedDirection = array.get(outcomeDirections, i)
-        float trackedStop = array.get(outcomeStops, i)
-        float trackedTarget = array.get(outcomeTargets, i)
-        float trackedRR = array.get(outcomeRRs, i)
-        int trackedEntryBar = array.get(outcomeEntryBars, i)
-        bool canResolve = barstate.isconfirmed and bar_index > trackedEntryBar
-        bool stopHit = canResolve and (trackedDirection == 1 ? low <= trackedStop : high >= trackedStop)
-        bool targetHit = canResolve and (trackedDirection == 1 ? high >= trackedTarget : low <= trackedTarget)
-        bool timedOut = canResolve and bar_index - trackedEntryBar >= outcomeMaxBars
-        bool resolved = false
-
-        if stopHit
-            outcomeLosses += 1
-            outcomeNetR -= 1.0
-            outcomeLossThisBar := true
-            resolved := true
-        else if targetHit
-            outcomeWins += 1
-            outcomeNetR += trackedRR
-            outcomeWinThisBar := true
-            resolved := true
-        else if timedOut
-            outcomeTimeouts += 1
-            outcomeTimeoutThisBar := true
-            resolved := true
-
-        if resolved
-            array.remove(outcomeDirections, i)
-            array.remove(outcomeStops, i)
-            array.remove(outcomeTargets, i)
-            array.remove(outcomeRRs, i)
-            array.remove(outcomeEntryBars, i)
-        else
-            i += 1
-
-if trackHistoricalOutcomes and canAlert and not na(signalStop) and not na(signalTarget) and not na(signalRR)
-    array.push(outcomeDirections, signalDirection)
-    array.push(outcomeStops, signalStop)
-    array.push(outcomeTargets, signalTarget)
-    array.push(outcomeRRs, signalRR)
-    array.push(outcomeEntryBars, bar_index)
-
-outcomeResolved = outcomeWins + outcomeLosses
-outcomeWinRate = outcomeResolved > 0 ? outcomeWins * 100.0 / outcomeResolved : na
-outcomeOpen = array.size(outcomeDirections)
 
 if canAlert
     lastSignalBar := bar_index
@@ -376,9 +303,6 @@ plot(showLevels and signalValid ? signalTarget : na, "Setup target", style=plot.
 
 plotshape(canAlert and signalDirection == 1, title="CASIO FAST Long", text="CASIO\nLONG", style=shape.labelup, location=location.belowbar, size=size.tiny)
 plotshape(canAlert and signalDirection == -1, title="CASIO FAST Short", text="CASIO\nSHORT", style=shape.labeldown, location=location.abovebar, size=size.tiny)
-plotshape(trackHistoricalOutcomes and outcomeWinThisBar, title="CASIO historical WIN", text="WIN", style=shape.labelup, location=location.belowbar, size=size.tiny, color=color.new(color.green, 0), textcolor=color.white)
-plotshape(trackHistoricalOutcomes and outcomeLossThisBar, title="CASIO historical LOSS", text="LOSS", style=shape.labeldown, location=location.abovebar, size=size.tiny, color=color.new(color.red, 0), textcolor=color.white)
-plotshape(trackHistoricalOutcomes and showOutcomeTimeouts and outcomeTimeoutThisBar, title="CASIO historical TIMEOUT", text="TIME", style=shape.square, location=location.abovebar, size=size.tiny, color=color.new(color.gray, 20), textcolor=color.white)
 
 panelBg = color.new(color.rgb(15, 18, 25), 5)
 labelBg = color.new(color.rgb(29, 34, 45), 2)
@@ -386,11 +310,13 @@ headerBg = color.new(color.rgb(8, 10, 14), 0)
 modeBg = activeMode == "SCALPING" ? color.new(color.orange, 72) : color.new(color.blue, 75)
 signalBg = signalValid ? (signalDirection == 1 ? color.new(color.green, 68) : color.new(color.red, 68)) : color.new(color.gray, 82)
 statusBg = chartIsM15 ? color.new(color.green, 78) : color.new(color.red, 68)
+m5BiasBg = m5Bias == 1 ? color.new(color.green, 78) : m5Bias == -1 ? color.new(color.red, 78) : color.new(color.gray, 82)
+m5TriggerBg = m5BullConfirm ? color.new(color.green, 82) : m5BearConfirm ? color.new(color.red, 82) : panelBg
 
 f_cell(tbl, col, row, txt, bg) =>
     table.cell(tbl, col, row, txt, text_color=color.white, bgcolor=bg, text_size=size.small)
 
-var table dash = table.new(position.top_right, 2, 19, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
+var table dash = table.new(position.top_right, 2, 17, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1, border_color=color.new(color.white, 82), border_width=1)
 if barstate.islast
     if showDashboard
         f_cell(dash, 0, 0, "CASIO v3 FAST", headerBg)
@@ -403,33 +329,29 @@ if barstate.islast
         f_cell(dash, 1, 3, scalpRegime ? "RANGE" : "DIRECTIONAL", panelBg)
         f_cell(dash, 0, 4, "H4 / H1", labelBg)
         f_cell(dash, 1, 4, f_bias(h4Bias) + " / " + f_bias(h1Bias), panelBg)
-        f_cell(dash, 0, 5, "SESSION", labelBg)
-        f_cell(dash, 1, 5, sessionName, panelBg)
-        f_cell(dash, 0, 6, "SESSION RULE", labelBg)
-        f_cell(dash, 1, 6, activeMode == "SCALPING" ? "RANGE PLAYBOOK" : str.tostring(requiredIntradayScore) + " • MIN 1:" + str.tostring(requiredIntradayRR, "#.##"), panelBg)
-        f_cell(dash, 0, 7, "ADX / SCORE", labelBg)
-        f_cell(dash, 1, 7, str.tostring(adx14, "#.##") + " / " + str.tostring(signalScore), panelBg)
-        f_cell(dash, 0, 8, "SIGNAL", labelBg)
-        f_cell(dash, 1, 8, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT", signalBg)
-        f_cell(dash, 0, 9, "ENTRY", labelBg)
-        f_cell(dash, 1, 9, f_num(signalEntry), panelBg)
-        f_cell(dash, 0, 10, "STOP", labelBg)
-        f_cell(dash, 1, 10, f_num(signalStop), panelBg)
-        f_cell(dash, 0, 11, "TARGET", labelBg)
-        f_cell(dash, 1, 11, f_num(signalTarget), panelBg)
-        f_cell(dash, 0, 12, "R:R", labelBg)
-        f_cell(dash, 1, 12, f_rr(signalRR), panelBg)
-        f_cell(dash, 0, 13, "H1 RANGE", labelBg)
-        f_cell(dash, 1, 13, f_num(h1Low20) + " — " + f_num(h1High20), panelBg)
-        f_cell(dash, 0, 14, "HIST W / L", labelBg)
-        f_cell(dash, 1, 14, trackHistoricalOutcomes ? str.tostring(outcomeWins) + " / " + str.tostring(outcomeLosses) : "OFF", panelBg)
-        f_cell(dash, 0, 15, "HIST WIN RATE", labelBg)
-        f_cell(dash, 1, 15, trackHistoricalOutcomes ? f_pct(outcomeWinRate) : "OFF", panelBg)
-        f_cell(dash, 0, 16, "HIST NET R", labelBg)
-        f_cell(dash, 1, 16, trackHistoricalOutcomes ? f_net_r(outcomeNetR) : "OFF", panelBg)
-        f_cell(dash, 0, 17, "OPEN / TIMEOUT", labelBg)
-        f_cell(dash, 1, 17, trackHistoricalOutcomes ? str.tostring(outcomeOpen) + " / " + str.tostring(outcomeTimeouts) : "OFF", panelBg)
-        f_cell(dash, 0, 18, "ENGINE", labelBg)
-        f_cell(dash, 1, 18, "TV VIEW • PY AUTO", panelBg)
+        f_cell(dash, 0, 5, "M5 BIAS", labelBg)
+        f_cell(dash, 1, 5, f_bias(m5Bias) + " • RSI " + str.tostring(m5Rsi, "#.0"), m5BiasBg)
+        f_cell(dash, 0, 6, "M5 TRIGGER", labelBg)
+        f_cell(dash, 1, 6, m5BullConfirm ? "BULL CONFIRM" : m5BearConfirm ? "BEAR CONFIRM" : "WAIT", m5TriggerBg)
+        f_cell(dash, 0, 7, "SESSION", labelBg)
+        f_cell(dash, 1, 7, sessionName, panelBg)
+        f_cell(dash, 0, 8, "SESSION RULE", labelBg)
+        f_cell(dash, 1, 8, activeMode == "SCALPING" ? "RANGE PLAYBOOK" : str.tostring(requiredIntradayScore) + " • MIN 1:" + str.tostring(requiredIntradayRR, "#.##"), panelBg)
+        f_cell(dash, 0, 9, "ADX / SCORE", labelBg)
+        f_cell(dash, 1, 9, str.tostring(adx14, "#.##") + " / " + str.tostring(signalScore), panelBg)
+        f_cell(dash, 0, 10, "SIGNAL", labelBg)
+        f_cell(dash, 1, 10, signalValid ? (signalDirection == 1 ? "LONG" : "SHORT") : "WAIT", signalBg)
+        f_cell(dash, 0, 11, "ENTRY", labelBg)
+        f_cell(dash, 1, 11, f_num(signalEntry), panelBg)
+        f_cell(dash, 0, 12, "STOP", labelBg)
+        f_cell(dash, 1, 12, f_num(signalStop), panelBg)
+        f_cell(dash, 0, 13, "TARGET", labelBg)
+        f_cell(dash, 1, 13, f_num(signalTarget), panelBg)
+        f_cell(dash, 0, 14, "R:R", labelBg)
+        f_cell(dash, 1, 14, f_rr(signalRR), panelBg)
+        f_cell(dash, 0, 15, "H1 RANGE", labelBg)
+        f_cell(dash, 1, 15, f_num(h1Low20) + " — " + f_num(h1High20), panelBg)
+        f_cell(dash, 0, 16, "ENGINE", labelBg)
+        f_cell(dash, 1, 16, "M15 DECISION • M5 CONTEXT", panelBg)
     else
-        table.clear(dash, 0, 0, 1, 18)
+        table.clear(dash, 0, 0, 1, 16)
