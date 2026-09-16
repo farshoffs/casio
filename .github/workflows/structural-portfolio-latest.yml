@@ -1,0 +1,113 @@
+name: CASIO Structural Portfolio — Latest First
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/structural_portfolio_latest.py'
+      - 'casio/v3_structural_aplus.py'
+      - 'casio/v3_core.py'
+      - 'casio/v3_m5_engine.py'
+      - 'data/xauusd_m5.csv'
+      - '.github/workflows/structural-portfolio-latest.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 22 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Validate structural model
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.structural_portfolio_latest import StructuralPortfolioConfig, PORTFOLIO_TARGET
+          print('Structural portfolio imports successfully')
+          print('Target:', PORTFOLIO_TARGET)
+          print('Config:', StructuralPortfolioConfig())
+          PY
+
+      - name: Require current data — never restart research from stale 2020
+        id: data
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
+          import pandas as pd
+
+          p = Path('data/xauusd_m5.csv')
+          if not p.exists() or p.stat().st_size == 0:
+              print('ready=false')
+              print('reason=missing')
+              raise SystemExit
+          ts = pd.to_datetime(pd.read_csv(p, usecols=['timestamp'])['timestamp'], utc=True, errors='coerce').dropna()
+          if ts.empty:
+              print('ready=false')
+              print('reason=invalid')
+              raise SystemExit
+          latest = ts.max(); first = ts.min(); now = pd.Timestamp.now(tz='UTC')
+          age = (now-latest).total_seconds()/86400
+          # User explicitly wants present-day research first, then walk backwards.
+          ready = age <= 30
+          print(f'ready={str(ready).lower()}')
+          print(f'reason={"current" if ready else "canonical_backfill_not_current"}')
+          print(f'first={first.isoformat()}')
+          print(f'latest={latest.isoformat()}')
+          print(f'age_days={age:.1f}')
+          print(f'latest_year={latest.year}')
+          PY
+
+      - name: Hold stale canonical data
+        if: steps.data.outputs.ready != 'true'
+        run: |
+          echo '## Structural portfolio research held' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The model intentionally does NOT start again from stale 2020 data.' >> "$GITHUB_STEP_SUMMARY"
+          echo "Canonical coverage: ${{ steps.data.outputs.first }} -> ${{ steps.data.outputs.latest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Latest bar age: ${{ steps.data.outputs.age_days }} days." >> "$GITHUB_STEP_SUMMARY"
+          echo 'Research order is current market first, then years walked backward chronologically.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run latest-first structural research
+        if: steps.data.outputs.ready == 'true'
+        run: |
+          MIN_YEAR=$(( ${{ steps.data.outputs.latest_year }} - 4 ))
+          python -m casio.structural_portfolio_latest \
+            --data data/xauusd_m5.csv \
+            --output reports/structural-portfolio-latest \
+            --min-year "$MIN_YEAR"
+
+      - name: Publish latest-first summary
+        if: steps.data.outputs.ready == 'true'
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('reports/structural-portfolio-latest/summary.json').read_text())
+          print('## CASIO structural portfolio — latest first')
+          print('')
+          print('| Year | Trades | /30d | WR | Avg W | Avg L | Exp | PF | DD |')
+          print('|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
+          for r in x['yearly_latest_first']:
+              print(f"| {r['year']} | {r.get('trades',0)} | {r.get('trades_per_30d',0):.2f} | {r.get('win_rate',0) or 0:.2f}% | {r.get('avg_win_r',0) or 0:.2f}R | {r.get('avg_loss_r',0) or 0:.2f}R | {r.get('expectancy_r',0) or 0:+.3f}R | {r.get('profit_factor',0) or 0:.2f} | {r.get('max_drawdown_r',0) or 0:.2f}R |")
+          PY
+
+      - name: Upload research artifact
+        if: steps.data.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-structural-portfolio-latest
+          path: reports/structural-portfolio-latest/
+          retention-days: 60
