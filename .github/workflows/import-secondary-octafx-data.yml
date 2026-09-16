@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: casio-import-secondary-octafx-data
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   import-secondary-data:
@@ -145,4 +145,5 @@ jobs:
             exit 0
           fi
           git commit -m 'Add separate OctaFX MT4 XAUUSD M5 secondary base'
+          git pull --rebase origin main
           git push origin HEAD:main
