@@ -1,5 +1,5 @@
 //@version=6
-indicator("CASIO XAUUSD — Structural Trading Assistant", overlay=true, max_labels_count=300, max_lines_count=100, max_bars_back=5000)
+indicator("CASIO XAUUSD — Structural Trading Assistant", overlay=true, max_labels_count=300, max_lines_count=100, max_boxes_count=20, max_bars_back=5000)
 
 // RESEARCH ASSISTANT — not the production v3 engine.
 // Native chart: XAUUSD 5m.
@@ -12,6 +12,7 @@ groupDisplay = "Display"
 showDashboard = input.bool(true, "Show trading-assistant dashboard", group=groupDisplay)
 showLiquidity = input.bool(true, "Plot major liquidity", group=groupDisplay)
 showTradeLevels = input.bool(true, "Plot pending/active entry, stop and target", group=groupDisplay)
+showTradeBox = input.bool(true, "Show risk / reward box", group=groupDisplay)
 showLabels = input.bool(true, "Show setup / fill / exit labels", group=groupDisplay)
 
 groupModel = "Structural portfolio research model"
@@ -196,6 +197,8 @@ var float activeEntry = na
 var float activeStop = na
 var float activeTarget = na
 var float activeRunway = na
+var box riskBox = na
+var box rewardBox = na
 
 if phase == 0 and candidateReady
     phase := 1
@@ -206,6 +209,13 @@ if phase == 0 and candidateReady
     activeStop := candidateStop
     activeTarget := candidateTarget
     activeRunway := candidateRunway
+    if not na(riskBox)
+        box.delete(riskBox)
+    if not na(rewardBox)
+        box.delete(rewardBox)
+    if showTradeBox
+        riskBox := box.new(left=bar_index, top=math.max(activeEntry, activeStop), right=bar_index + 1, bottom=math.min(activeEntry, activeStop), border_color=color.new(color.red, 25), bgcolor=color.new(color.red, 88), extend=extend.right)
+        rewardBox := box.new(left=bar_index, top=math.max(activeEntry, activeTarget), right=bar_index + 1, bottom=math.min(activeEntry, activeTarget), border_color=color.new(color.lime, 25), bgcolor=color.new(color.lime, 90), extend=extend.right)
     if showLabels
         label.new(bar_index, pendingDirection == 1 ? low : high, "WATCH\n" + pendingPlaybook + "\nWAIT RETRACE", style=pendingDirection == 1 ? label.style_label_up : label.style_label_down)
 
@@ -218,6 +228,12 @@ if phase == 1 and bar_index > pendingBar
             label.new(bar_index, close, "CANCEL\nSTRUCTURE INVALID", style=label.style_label_left)
         phase := 0
         pendingDirection := 0
+        if not na(riskBox)
+            box.delete(riskBox)
+            riskBox := na
+        if not na(rewardBox)
+            box.delete(rewardBox)
+            rewardBox := na
     else if filled
         phase := 2
         if showLabels
@@ -231,10 +247,23 @@ if phase == 2
             label.new(bar_index, close, hitStop ? "STOP\n-1R" : "TARGET\n+" + str.tostring(targetR, "#.0") + "R", style=label.style_label_left)
         phase := 0
         pendingDirection := 0
+        if not na(riskBox)
+            box.delete(riskBox)
+            riskBox := na
+        if not na(rewardBox)
+            box.delete(rewardBox)
+            rewardBox := na
 
 phaseName = phase == 2 ? "ENTRY LIVE" : phase == 1 ? "RETRACE PENDING" : candidateReady ? "SETUP READY" : candidateDirection != 0 ? "FILTERED" : "WAIT"
 decision = phase == 2 ? (pendingDirection == 1 ? "LONG ACTIVE" : "SHORT ACTIVE") : phase == 1 ? "WAIT FOR PRICE" : candidateReady ? "WATCH RETRACE" : "WAIT"
 marketState = trendVote >= 2 ? "BULL STRUCTURE" : trendVote <= -2 ? "BEAR STRUCTURE" : "MIXED / ROTATION"
+
+// Assistant checklist. These are descriptive states, not extra entry rules.
+structureReady = trendLong or trendShort
+liquidityReady = (not na(internalSellAge) and internalSellAge <= internalSweepFresh) or (not na(internalBuyAge) and internalBuyAge <= internalSweepFresh) or (not na(externalSellAge) and externalSellAge <= externalSweepFresh) or (not na(externalBuyAge) and externalBuyAge <= externalSweepFresh) or recentRetestHigh or recentRetestLow
+displacementReady = bullFvg or bearFvg
+retraceReady = phase == 1 or phase == 2
+rrReady = phase > 0 ? activeRunway >= minExternalRunway : runwayOk
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Visual liquidity and trade levels.
@@ -250,43 +279,97 @@ plot(showTradeLevels and phase > 0 ? activeStop : na, "Assistant Stop", linewidt
 plot(showTradeLevels and phase > 0 ? activeTarget : na, "Assistant Target", linewidth=2, style=plot.style_linebr)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dashboard: this is intended to behave as a decision assistant, not a signal lamp.
+// Professional assistant panel.
 // ─────────────────────────────────────────────────────────────────────────────
 f_bias_text(x) => x == 1 ? "BULL" : x == -1 ? "BEAR" : "NEUTRAL"
 f_price(x) => na(x) ? "—" : str.tostring(x, format.mintick)
 f_num(x) => na(x) ? "—" : str.tostring(x, "#.00")
+f_check(x) => x ? "READY" : "WAIT"
 
-var table dash = table.new(position.top_right, 2, 16, border_width=1)
+cBg = color.rgb(17, 19, 27)
+cPanel = color.rgb(27, 30, 40)
+cAccent = color.rgb(112, 93, 255)
+cGood = color.rgb(46, 204, 113)
+cWarn = color.rgb(241, 196, 15)
+cBad = color.rgb(231, 76, 60)
+cMuted = color.rgb(155, 162, 175)
+cWhite = color.white
+
+decisionColor = phase == 2 ? cGood : phase == 1 ? cWarn : candidateReady ? cAccent : cMuted
+marketColor = trendVote >= 2 ? cGood : trendVote <= -2 ? cBad : cWarn
+
+var table dash = table.new(position.top_right, 3, 19, bgcolor=cBg, frame_color=color.new(cAccent, 10), frame_width=2, border_color=color.new(color.white, 88), border_width=1)
+if barstate.isfirst
+    table.merge_cells(dash, 0, 0, 2, 0)
+    table.merge_cells(dash, 0, 4, 2, 4)
+    table.merge_cells(dash, 0, 9, 2, 9)
+    table.merge_cells(dash, 0, 14, 2, 14)
+
 if showDashboard and barstate.islast
-    table.cell(dash, 0, 0, "CASIO A+ ASSISTANT")
-    table.cell(dash, 1, 0, chartIsM5 ? "M5 READY" : "USE 5m")
-    table.cell(dash, 0, 1, "DECISION")
-    table.cell(dash, 1, 1, decision)
-    table.cell(dash, 0, 2, "PHASE")
-    table.cell(dash, 1, 2, phaseName)
-    table.cell(dash, 0, 3, "MARKET")
-    table.cell(dash, 1, 3, marketState)
-    table.cell(dash, 0, 4, "D1 / H4 / H1")
-    table.cell(dash, 1, 4, f_bias_text(d1Bias) + " / " + f_bias_text(h4Bias) + " / " + f_bias_text(h1Bias))
-    table.cell(dash, 0, 5, "M15 STRUCTURE")
-    table.cell(dash, 1, 5, f_bias_text(m15Bias))
-    table.cell(dash, 0, 6, "SESSION")
-    table.cell(dash, 1, 6, sessionName)
-    table.cell(dash, 0, 7, "PLAYBOOK")
-    table.cell(dash, 1, 7, phase > 0 ? pendingPlaybook : candidatePlaybook)
-    table.cell(dash, 0, 8, "ENTRY")
-    table.cell(dash, 1, 8, f_price(phase > 0 ? activeEntry : candidateEntry))
-    table.cell(dash, 0, 9, "STOP")
-    table.cell(dash, 1, 9, f_price(phase > 0 ? activeStop : candidateStop))
-    table.cell(dash, 0, 10, "TARGET")
-    table.cell(dash, 1, 10, f_price(phase > 0 ? activeTarget : candidateTarget))
-    table.cell(dash, 0, 11, "RUNWAY")
-    table.cell(dash, 1, 11, f_num(phase > 0 ? activeRunway : candidateRunway) + "R")
-    table.cell(dash, 0, 12, "PDH / PDL")
-    table.cell(dash, 1, 12, f_price(prevDayHigh) + " / " + f_price(prevDayLow))
-    table.cell(dash, 0, 13, "ASIA H / L")
-    table.cell(dash, 1, 13, f_price(asiaHigh) + " / " + f_price(asiaLow))
-    table.cell(dash, 0, 14, "PRICE REGIME")
-    table.cell(dash, 1, 14, "D1 " + f_num(d1RangeRatio) + " • H4 " + f_num(h4RangeRatio))
-    table.cell(dash, 0, 15, "ENGINE")
-    table.cell(dash, 1, 15, "STRUCTURE • LIQUIDITY • FVG")
+    table.cell(dash, 0, 0, "CASIO  •  XAUUSD STRUCTURAL ASSISTANT", text_color=cWhite, bgcolor=cAccent, text_size=size.small)
+
+    table.cell(dash, 0, 1, "DECISION", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 1, decision, text_color=decisionColor, bgcolor=cPanel)
+    table.cell(dash, 2, 1, chartIsM5 ? "M5 ✓" : "USE 5m", text_color=chartIsM5 ? cGood : cBad, bgcolor=cPanel)
+
+    table.cell(dash, 0, 2, "PHASE", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 2, phaseName, text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 2, sessionName, text_color=inPrimary ? cGood : cMuted, bgcolor=cPanel)
+
+    table.cell(dash, 0, 3, "PLAYBOOK", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 3, phase > 0 ? pendingPlaybook : candidatePlaybook, text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 3, "T " + str.tostring(targetR, "#.0") + "R", text_color=cAccent, bgcolor=cPanel)
+
+    table.cell(dash, 0, 4, "MARKET CONTEXT", text_color=cWhite, bgcolor=color.new(cAccent, 55))
+
+    table.cell(dash, 0, 5, "MARKET", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 5, marketState, text_color=marketColor, bgcolor=cPanel)
+    table.cell(dash, 2, 5, "VOTE " + str.tostring(trendVote), text_color=cWhite, bgcolor=cPanel)
+
+    table.cell(dash, 0, 6, "D1 / H4 / H1", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 6, f_bias_text(d1Bias) + " / " + f_bias_text(h4Bias) + " / " + f_bias_text(h1Bias), text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 6, structureReady ? "ALIGNED" : "MIXED", text_color=structureReady ? cGood : cWarn, bgcolor=cPanel)
+
+    table.cell(dash, 0, 7, "M15 STRUCTURE", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 7, f_bias_text(m15Bias), text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 7, "D1 " + f_num(d1RangeRatio), text_color=cMuted, bgcolor=cPanel)
+
+    table.cell(dash, 0, 8, "H4 RANGE", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 8, f_num(h4RangeRatio), text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 8, regimeOk ? "REGIME OK" : "FILTER", text_color=regimeOk ? cGood : cMuted, bgcolor=cPanel)
+
+    table.cell(dash, 0, 9, "SETUP CHECKLIST", text_color=cWhite, bgcolor=color.new(cAccent, 55))
+
+    table.cell(dash, 0, 10, "STRUCTURE", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 10, f_check(structureReady), text_color=structureReady ? cGood : cMuted, bgcolor=cPanel)
+    table.cell(dash, 2, 10, "HTF", text_color=cMuted, bgcolor=cPanel)
+
+    table.cell(dash, 0, 11, "LIQUIDITY EVENT", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 11, f_check(liquidityReady), text_color=liquidityReady ? cGood : cMuted, bgcolor=cPanel)
+    table.cell(dash, 2, 11, externalSellSweep or externalBuySweep ? "EXTERNAL" : internalSellSweep or internalBuySweep ? "INTERNAL" : recentRetestHigh or recentRetestLow ? "RETEST" : "—", text_color=cWhite, bgcolor=cPanel)
+
+    table.cell(dash, 0, 12, "DISPLACEMENT / FVG", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 12, f_check(displacementReady), text_color=displacementReady ? cGood : cMuted, bgcolor=cPanel)
+    table.cell(dash, 2, 12, bullFvg ? "BULL FVG" : bearFvg ? "BEAR FVG" : "—", text_color=cWhite, bgcolor=cPanel)
+
+    table.cell(dash, 0, 13, "RETRACE / RUNWAY", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 13, retraceReady ? (phase == 2 ? "FILLED" : "PENDING") : "WAIT", text_color=retraceReady ? cWarn : cMuted, bgcolor=cPanel)
+    table.cell(dash, 2, 13, rrReady ? "R ✓" : "R —", text_color=rrReady ? cGood : cMuted, bgcolor=cPanel)
+
+    table.cell(dash, 0, 14, "TRADE PLAN", text_color=cWhite, bgcolor=color.new(cAccent, 55))
+
+    table.cell(dash, 0, 15, "ENTRY", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 15, f_price(phase > 0 ? activeEntry : candidateEntry), text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 15, "RUN " + f_num(phase > 0 ? activeRunway : candidateRunway) + "R", text_color=rrReady ? cGood : cMuted, bgcolor=cPanel)
+
+    table.cell(dash, 0, 16, "STOP", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 16, f_price(phase > 0 ? activeStop : candidateStop), text_color=cBad, bgcolor=cPanel)
+    table.cell(dash, 2, 16, "RISK 1R", text_color=cBad, bgcolor=cPanel)
+
+    table.cell(dash, 0, 17, "TARGET", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 17, f_price(phase > 0 ? activeTarget : candidateTarget), text_color=cGood, bgcolor=cPanel)
+    table.cell(dash, 2, 17, "+" + str.tostring(targetR, "#.0") + "R", text_color=cGood, bgcolor=cPanel)
+
+    table.cell(dash, 0, 18, "LIQUIDITY", text_color=cMuted, bgcolor=cPanel)
+    table.cell(dash, 1, 18, "PD " + f_price(prevDayHigh) + " / " + f_price(prevDayLow), text_color=cWhite, bgcolor=cPanel)
+    table.cell(dash, 2, 18, "ASIA " + f_price(asiaHigh) + " / " + f_price(asiaLow), text_color=cWhite, bgcolor=cPanel)
