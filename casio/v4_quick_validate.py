@@ -22,6 +22,11 @@ def main() -> None:
         "QUALITY_70": Candidate(min_score=65, target_r=1.20, be_trigger_r=0.80, cooldown_bars=9),
         "BALANCED": Candidate(min_score=60, target_r=1.10, be_trigger_r=0.80, cooldown_bars=9),
         "FREQUENCY": Candidate(min_score=55, target_r=1.00, be_trigger_r=0.60, cooldown_bars=6),
+        "HITRATE_090": Candidate(min_score=55, target_r=0.90, be_trigger_r=0.55, cooldown_bars=6),
+        "HITRATE_080": Candidate(min_score=55, target_r=0.80, be_trigger_r=0.50, cooldown_bars=6),
+        "HITRATE_070": Candidate(min_score=55, target_r=0.70, be_trigger_r=0.45, cooldown_bars=6),
+        "SELECTIVE_080": Candidate(min_score=60, target_r=0.80, be_trigger_r=0.50, cooldown_bars=6),
+        "SELECTIVE_090": Candidate(min_score=60, target_r=0.90, be_trigger_r=0.55, cooldown_bars=6),
     }
 
     output = {}
