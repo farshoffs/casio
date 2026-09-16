@@ -1,4 +1,5 @@
 name: CASIO Secondary Feed Structural Research
+# Re-trigger after the separate OctaFX M5 base was committed to data/.
 
 on:
   push:
