@@ -1,27 +1,22 @@
 //@version=6
-strategy("CASIO XAUUSD v3 BACKTEST — M5 Execution Candidate", overlay=true, pyramiding=0, process_orders_on_close=true, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
+strategy("CASIO XAUUSD v3 BACKTEST — M5 Canonical 1:1", overlay=true, pyramiding=0, process_orders_on_close=true, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.005, max_labels_count=500, max_lines_count=500, max_bars_back=5000)
 
-// CASIO v3 research/backtest candidate.
-// Goal: solve the extreme low-frequency problem without simply lowering every filter.
-// H4/H1 = context, M15 = setup environment, M5 = execution trigger.
-// The original strict M15 setup remains available as CLASSIC_M15.
-// Recommended chart: XAUUSD 15m.
+// CASIO v3 canonical backtest engine.
+// ONE-TO-ONE design with FAST + Python/email:
+// H4/H1 = confirmed context, M15 = confirmed setup environment, M5 = native execution.
+// Use XAUUSD 5m.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Display
 // ─────────────────────────────────────────────────────────────────────────────
-groupDisplay = "Backtest Display"
-showBuySell = input.bool(true, "Show large BUY / SELL labels", group=groupDisplay)
+groupDisplay = "Display"
+showDashboard = input.bool(true, "Show dashboard", group=groupDisplay)
+showBuySell = input.bool(true, "Show BUY / SELL labels", group=groupDisplay)
 showExitLabels = input.bool(true, "Show WIN / LOSS labels", group=groupDisplay)
 showEntryDetails = input.bool(false, "Show detailed entry information", group=groupDisplay)
-showTradeLevels = input.bool(false, "Show Entry / SL / TP lines", group=groupDisplay)
-showMAs = input.bool(false, "Show M15 EMA20 / EMA50", group=groupDisplay)
-showRange = input.bool(false, "Show M15 range", group=groupDisplay)
-showDashboard = input.bool(true, "Show compact dashboard", group=groupDisplay)
+showM5MAs = input.bool(false, "Show M5 EMA20 / EMA50", group=groupDisplay)
+showLevels = input.bool(false, "Keep historical Entry / SL / TP lines", group=groupDisplay)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Backtest window
-// ─────────────────────────────────────────────────────────────────────────────
 groupDate = "Backtest Window"
 useDateFilter = input.bool(false, "Limit backtest to date range", group=groupDate)
 startTime = input.time(timestamp("01 Jul 2026 00:00 +0000"), "Start", group=groupDate)
@@ -29,10 +24,10 @@ endTime = input.time(timestamp("16 Sep 2026 23:59 +0000"), "End", group=groupDat
 inDateRange = not useDateFilter or (time >= startTime and time <= endTime)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Current v3 classic parameters
+// Classic v3 M15 branch
 // ─────────────────────────────────────────────────────────────────────────────
 groupClassic = "Classic v3 M15"
-enableClassic = input.bool(true, "Keep original strict M15 entries", group=groupClassic)
+enableClassic = input.bool(true, "Enable CLASSIC_M15", group=groupClassic)
 intradayMinScore = input.int(80, "Primary-session minimum score", minval=50, maxval=100, group=groupClassic)
 intradayTargetRR = input.float(3.0, "Preferred target R:R", minval=2.0, step=0.1, group=groupClassic)
 intradayMinRR = input.float(2.5, "Primary minimum R:R", minval=1.0, step=0.1, group=groupClassic)
@@ -40,22 +35,22 @@ h1ValueAtr = input.float(0.65, "H1 value distance ATR", minval=0.1, step=0.05, g
 sweepFreshBars = input.int(3, "Sweep remains fresh M15 bars", minval=0, maxval=8, group=groupClassic)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// New M5 execution branch
+// M5 execution branches
 // ─────────────────────────────────────────────────────────────────────────────
 groupM5 = "M5 Execution"
-enableM5Trend = input.bool(true, "Enable M5 trend execution", group=groupM5)
-enableM5Range = input.bool(true, "Enable M5 range rotation", group=groupM5)
+enableM5Trend = input.bool(true, "Enable M5_TREND", group=groupM5)
+enableM5Range = input.bool(true, "Enable M5_RANGE", group=groupM5)
 m5TrendTargetRR = input.float(2.2, "M5 trend target R:R", minval=1.2, step=0.1, group=groupM5)
 m5TrendMinScorePrimary = input.int(65, "M5 trend minimum score — London/NY", minval=40, maxval=100, group=groupM5)
 m5TrendMinScoreOther = input.int(75, "M5 trend minimum score — Asia/transition", minval=40, maxval=100, group=groupM5)
-m5TrendMinAdx = input.float(16.0, "Minimum M15 ADX for M5 trend", minval=5, step=0.5, group=groupM5)
+m5TrendMinAdx = input.float(16.0, "Minimum confirmed M15 ADX for M5 trend", minval=5, step=0.5, group=groupM5)
 m5RsiLong = input.float(52.0, "M5 long RSI minimum", minval=45, maxval=70, step=0.5, group=groupM5)
 m5RsiShort = input.float(48.0, "M5 short RSI maximum", minval=30, maxval=55, step=0.5, group=groupM5)
 m5RangeMinRR = input.float(1.2, "M5 range minimum R:R to mean", minval=0.8, step=0.1, group=groupM5)
 rangeEdgeFraction = input.float(0.30, "Range edge fraction", minval=0.15, maxval=0.40, step=0.05, group=groupM5)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sessions
+// Sessions / range context
 // ─────────────────────────────────────────────────────────────────────────────
 groupSession = "Sessions UTC"
 asiaSession = input.session("0000-0600", "Asia", group=groupSession)
@@ -65,11 +60,8 @@ asiaClassicScore = input.int(90, "Classic Asia minimum score", minval=70, maxval
 asiaClassicRR = input.float(3.0, "Classic Asia minimum R:R", minval=2.0, step=0.1, group=groupSession)
 transitionClassicScore = input.int(90, "Classic transition minimum score", minval=70, maxval=100, group=groupSession)
 transitionClassicRR = input.float(3.0, "Classic transition minimum R:R", minval=2.0, step=0.1, group=groupSession)
-transitionMinAdx = input.float(25.0, "Classic transition minimum ADX", minval=10, step=0.5, group=groupSession)
+transitionMinAdx = input.float(25.0, "Classic transition minimum M15 ADX", minval=10, step=0.5, group=groupSession)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Range classification
-// ─────────────────────────────────────────────────────────────────────────────
 groupRange = "Range Context"
 h1CompressionAtr = input.float(0.65, "H1 EMA compression / ATR", minval=0.1, step=0.05, group=groupRange)
 h1MaxRangeAtr = input.float(9.0, "Maximum H1 20-bar range / ATR", minval=2, step=0.5, group=groupRange)
@@ -77,51 +69,91 @@ m15MaxAdx = input.float(25.0, "Maximum M15 ADX", minval=5, step=0.5, group=group
 m15MaxRangeAtr = input.float(6.5, "Maximum M15 30-bar range / ATR", minval=2, step=0.1, group=groupRange)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// History / execution
+// Execution / data budgets
 // ─────────────────────────────────────────────────────────────────────────────
-groupPerf = "History"
-h4CalcBars = input.int(1500, "H4 bars requested", minval=100, maxval=5000, group=groupPerf)
-h1CalcBars = input.int(3000, "H1 bars requested", minval=100, maxval=10000, group=groupPerf)
-m5CalcBars = input.int(15000, "M5 bars requested", minval=500, maxval=50000, group=groupPerf)
-signalCooldownBars = input.int(2, "Minimum M15 bars between entries", minval=0, maxval=24, group=groupPerf)
+groupExec = "Execution"
+cooldownM5Bars = input.int(6, "Minimum M5 bars between accepted entries", minval=0, maxval=60, group=groupExec)
+h4CalcBars = input.int(500, "H4 bars requested", minval=100, maxval=3000, group=groupExec)
+h1CalcBars = input.int(1200, "H1 bars requested", minval=100, maxval=5000, group=groupExec)
+m15CalcBars = input.int(5000, "M15 bars requested", minval=500, maxval=20000, group=groupExec)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Native M15 features
+// Confirmed HTF bundles — previous CLOSED bar only, non-repainting.
 // ─────────────────────────────────────────────────────────────────────────────
-chartIsM15 = timeframe.isminutes and timeframe.multiplier == 15
-ema20 = ta.ema(close, 20)
-ema50 = ta.ema(close, 50)
-atr14 = ta.atr(14)
-[plusDI, minusDI, adx14] = ta.dmi(14, 14)
+f_adx14() =>
+    [p, m, a] = ta.dmi(14, 14)
+    a
 
-hh20 = ta.highest(high[1], 20)
-ll20 = ta.lowest(low[1], 20)
-priorHigh5 = ta.highest(high[1], 5)
-priorLow5 = ta.lowest(low[1], 5)
-rangeHigh30 = ta.highest(high[1], 30)
-rangeLow30 = ta.lowest(low[1], 30)
-rangeSize30 = rangeHigh30 - rangeLow30
-rangeMean30 = (rangeHigh30 + rangeLow30) / 2.0
-rangeAtr30 = atr14 > 0 ? rangeSize30 / atr14 : na
+f_sell_age() =>
+    ll = ta.lowest(low[1], 20)
+    ta.barssince(low < ll and close > ll)
 
-sellSweepRaw = low < ll20 and close > ll20
-buySweepRaw = high > hh20 and close < hh20
-sellSweepAgo = ta.barssince(sellSweepRaw)
-buySweepAgo = ta.barssince(buySweepRaw)
-recentSellSweep = not na(sellSweepAgo) and sellSweepAgo <= sweepFreshBars
-recentBuySweep = not na(buySweepAgo) and buySweepAgo <= sweepFreshBars
-m15BosLong = close > priorHigh5 and close > open
-m15BosShort = close < priorLow5 and close < open
-m15TrendLong = ema20 > ema50 and close > ema50
-m15TrendShort = ema20 < ema50 and close < ema50
-m15PullbackLong = m15TrendLong and low <= ema20 + atr14 * 0.25 and close >= ema50
-m15PullbackShort = m15TrendShort and high >= ema20 - atr14 * 0.25 and close <= ema50
+f_buy_age() =>
+    hh = ta.highest(high[1], 20)
+    ta.barssince(high > hh and close < hh)
+
+f_m15_bundle() =>
+    ema20_ = ta.ema(close, 20)
+    ema50_ = ta.ema(close, 50)
+    atr_ = ta.atr(14)
+    adx_ = f_adx14()
+    hh20_ = ta.highest(high[1], 20)
+    ll20_ = ta.lowest(low[1], 20)
+    ph5_ = ta.highest(high[1], 5)
+    pl5_ = ta.lowest(low[1], 5)
+    rh30_ = ta.highest(high[1], 30)
+    rl30_ = ta.lowest(low[1], 30)
+    sellAge_ = f_sell_age()
+    buyAge_ = f_buy_age()
+    [open[1], high[1], low[1], close[1], ema20_[1], ema50_[1], atr_[1], adx_[1], hh20_[1], ll20_[1], ph5_[1], pl5_[1], rh30_[1], rl30_[1], sellAge_[1], buyAge_[1]]
+
+f_h1_bundle() =>
+    ema20_ = ta.ema(close, 20)
+    ema50_ = ta.ema(close, 50)
+    atr_ = ta.atr(14)
+    hi20_ = ta.highest(high[1], 20)
+    lo20_ = ta.lowest(low[1], 20)
+    [close[1], ema20_[1], ema50_[1], atr_[1], hi20_[1], lo20_[1]]
+
+f_h4_bundle() =>
+    ema20_ = ta.ema(close, 20)
+    ema50_ = ta.ema(close, 50)
+    [close[1], ema20_[1], ema50_[1]]
+
+[m15Open, m15High, m15Low, m15Close, m15Ema20, m15Ema50, m15Atr, m15Adx, m15HH20, m15LL20, m15PriorHigh5, m15PriorLow5, m15RangeHigh30, m15RangeLow30, m15SellSweepAge, m15BuySweepAge] = request.security(
+    syminfo.tickerid, "15", f_m15_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=m15CalcBars)
+
+[h1Close, h1Ema20, h1Ema50, h1Atr, h1High20, h1Low20] = request.security(
+    syminfo.tickerid, "60", f_h1_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=h1CalcBars)
+
+[h4Close, h4Ema20, h4Ema50] = request.security(
+    syminfo.tickerid, "240", f_h4_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=h4CalcBars)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// H4 / H1 context
+// Native M5 execution state
 // ─────────────────────────────────────────────────────────────────────────────
-[h4Close, h4Ema20, h4Ema50] = request.security(syminfo.tickerid, "240", [close, ta.ema(close, 20), ta.ema(close, 50)], lookahead=barmerge.lookahead_off, calc_bars_count=h4CalcBars)
-[h1Close, h1Ema20, h1Ema50, h1Atr, h1High20, h1Low20] = request.security(syminfo.tickerid, "60", [close, ta.ema(close, 20), ta.ema(close, 50), ta.atr(14), ta.highest(high[1], 20), ta.lowest(low[1], 20)], lookahead=barmerge.lookahead_off, calc_bars_count=h1CalcBars)
+chartIsM5 = timeframe.isminutes and timeframe.multiplier == 5
+m5Ema20 = ta.ema(close, 20)
+m5Ema50 = ta.ema(close, 50)
+m5Rsi = ta.rsi(close, 14)
+m5PriorHigh3 = ta.highest(high[1], 3)
+m5PriorLow3 = ta.lowest(low[1], 3)
+m5LongTrigger = close > open and close > m5PriorHigh3 and close > m5Ema20 and m5Ema20 > m5Ema50 and m5Rsi >= m5RsiLong
+m5ShortTrigger = close < open and close < m5PriorLow3 and close < m5Ema20 and m5Ema20 < m5Ema50 and m5Rsi <= m5RsiShort
+m5Bias = m5Ema20 > m5Ema50 and close > m5Ema20 ? 1 : m5Ema20 < m5Ema50 and close < m5Ema20 ? -1 : 0
+
+m15RangeSize30 = m15RangeHigh30 - m15RangeLow30
+m15RangeMean30 = (m15RangeHigh30 + m15RangeLow30) / 2.0
+m15RangeAtr30 = m15Atr > 0 ? m15RangeSize30 / m15Atr : na
+m15BosLong = m15Close > m15PriorHigh5 and m15Close > m15Open
+m15BosShort = m15Close < m15PriorLow5 and m15Close < m15Open
+m15TrendLong = m15Ema20 > m15Ema50 and m15Close > m15Ema50
+m15TrendShort = m15Ema20 < m15Ema50 and m15Close < m15Ema50
+m15PullbackLong = m15TrendLong and m15Low <= m15Ema20 + m15Atr * 0.25 and m15Close >= m15Ema50
+m15PullbackShort = m15TrendShort and m15High >= m15Ema20 - m15Atr * 0.25 and m15Close <= m15Ema50
+newM15 = ta.change(time("15")) != 0
+recentSellSweep = not na(m15SellSweepAge) and m15SellSweepAge <= sweepFreshBars
+recentBuySweep = not na(m15BuySweepAge) and m15BuySweepAge <= sweepFreshBars
 
 h4Bull = h4Ema20 > h4Ema50 and h4Close > h4Ema20
 h4Bear = h4Ema20 < h4Ema50 and h4Close < h4Ema20
@@ -136,21 +168,7 @@ h1RangeAtr = h1Atr > 0 ? (h1High20 - h1Low20) / h1Atr : na
 h1Compression = h1Atr > 0 ? math.abs(h1Ema20 - h1Ema50) / h1Atr : na
 
 // ─────────────────────────────────────────────────────────────────────────────
-// True M5 execution context sampled from the last completed M5 bar in each M15
-// ─────────────────────────────────────────────────────────────────────────────
-[m5Open, m5High, m5Low, m5Close, m5Ema20, m5Ema50, m5Rsi, m5PriorHigh3, m5PriorLow3] = request.security(
-    syminfo.tickerid,
-    "5",
-    [open, high, low, close, ta.ema(close, 20), ta.ema(close, 50), ta.rsi(close, 14), ta.highest(high[1], 3), ta.lowest(low[1], 3)],
-    lookahead=barmerge.lookahead_off,
-    calc_bars_count=m5CalcBars)
-
-m5LongTrigger = m5Close > m5Open and m5Close > m5PriorHigh3 and m5Close > m5Ema20 and m5Ema20 > m5Ema50 and m5Rsi >= m5RsiLong
-m5ShortTrigger = m5Close < m5Open and m5Close < m5PriorLow3 and m5Close < m5Ema20 and m5Ema20 < m5Ema50 and m5Rsi <= m5RsiShort
-m5Bias = m5Ema20 > m5Ema50 and m5Close > m5Ema20 ? 1 : m5Ema20 < m5Ema50 and m5Close < m5Ema20 ? -1 : 0
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sessions
+// Session classification
 // ─────────────────────────────────────────────────────────────────────────────
 inAsia = not na(time(timeframe.period, asiaSession, "UTC"))
 inLondon = not na(time(timeframe.period, londonSession, "UTC"))
@@ -159,161 +177,132 @@ inPrimary = inLondon or inNewYork
 inTransition = not inAsia and not inPrimary
 sessionName = inAsia ? "ASIA" : inLondon ? "LONDON" : inNewYork ? "NEW YORK" : "TRANSITION"
 
-classicRequiredScore = inPrimary ? intradayMinScore : inAsia ? asiaClassicScore : transitionClassicScore
-classicRequiredRR = inPrimary ? intradayMinRR : inAsia ? asiaClassicRR : transitionClassicRR
-classicSessionBonus = inPrimary ? 10 : inAsia ? 5 : 0
-classicLongSessionGate = inPrimary or (inAsia and h1Bias == 1) or (inTransition and h1Bias == 1 and adx14 >= transitionMinAdx)
-classicShortSessionGate = inPrimary or (inAsia and h1Bias == -1) or (inTransition and h1Bias == -1 and adx14 >= transitionMinAdx)
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Range regime: 3-of-4 agreement instead of requiring every range metric
+// Range regime — same 3-of-4 classifier as canonical backtest/Python.
 // ─────────────────────────────────────────────────────────────────────────────
 rangePoints = 0
-rangePoints += h1Compression <= h1CompressionAtr ? 1 : 0
-rangePoints += h1RangeAtr <= h1MaxRangeAtr ? 1 : 0
-rangePoints += adx14 <= m15MaxAdx ? 1 : 0
-rangePoints += rangeAtr30 <= m15MaxRangeAtr ? 1 : 0
+rangePoints += not na(h1Compression) and h1Compression <= h1CompressionAtr ? 1 : 0
+rangePoints += not na(h1RangeAtr) and h1RangeAtr <= h1MaxRangeAtr ? 1 : 0
+rangePoints += not na(m15Adx) and m15Adx <= m15MaxAdx ? 1 : 0
+rangePoints += not na(m15RangeAtr30) and m15RangeAtr30 <= m15MaxRangeAtr ? 1 : 0
 rangeRegime = rangePoints >= 3
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Branch A — original strict M15 setup
+// A) CLASSIC_M15
 // ─────────────────────────────────────────────────────────────────────────────
-classicLongStopDist = math.max(close - (ll20 - atr14 * 0.20), atr14)
-classicShortStopDist = math.max((hh20 + atr14 * 0.20) - close, atr14)
+classicRequiredScore = inPrimary ? intradayMinScore : inAsia ? asiaClassicScore : transitionClassicScore
+classicRequiredRR = inPrimary ? intradayMinRR : inAsia ? asiaClassicRR : transitionClassicRR
+classicSessionBonus = inPrimary ? 10 : inAsia ? 5 : 0
+classicLongSessionGate = inPrimary or (inAsia and h1Bias == 1) or (inTransition and h1Bias == 1 and m15Adx >= transitionMinAdx)
+classicShortSessionGate = inPrimary or (inAsia and h1Bias == -1) or (inTransition and h1Bias == -1 and m15Adx >= transitionMinAdx)
+classicLongStopDist = math.max(close - (m15LL20 - m15Atr * 0.20), m15Atr)
+classicShortStopDist = math.max((m15HH20 + m15Atr * 0.20) - close, m15Atr)
 classicLongLiquidityRR = classicLongStopDist > 0 ? (h1High20 - close) / classicLongStopDist : na
 classicShortLiquidityRR = classicShortStopDist > 0 ? (close - h1Low20) / classicShortStopDist : na
 classicLongRROK = not na(classicLongLiquidityRR) and classicLongLiquidityRR >= classicRequiredRR
 classicShortRROK = not na(classicShortLiquidityRR) and classicShortLiquidityRR >= classicRequiredRR
-
 classicLongScore = (h4Bias == 1 ? 20 : 0) + (h1Bias == 1 ? 15 : h1Bias == 0 ? 8 : 0) + (h1LongValue ? 15 : 0) + (recentSellSweep ? 20 : 0) + (m15BosLong ? 15 : 0) + classicSessionBonus + (classicLongRROK ? 5 : 0)
 classicShortScore = (h4Bias == -1 ? 20 : 0) + (h1Bias == -1 ? 15 : h1Bias == 0 ? 8 : 0) + (h1ShortValue ? 15 : 0) + (recentBuySweep ? 20 : 0) + (m15BosShort ? 15 : 0) + classicSessionBonus + (classicShortRROK ? 5 : 0)
-
-classicLong = enableClassic and not rangeRegime and h4Bias == 1 and h1Bias != -1 and h1LongValue and recentSellSweep and m15BosLong and classicLongSessionGate and classicLongRROK and classicLongScore >= classicRequiredScore
-classicShort = enableClassic and not rangeRegime and h4Bias == -1 and h1Bias != 1 and h1ShortValue and recentBuySweep and m15BosShort and classicShortSessionGate and classicShortRROK and classicShortScore >= classicRequiredScore
-
+classicLong = enableClassic and newM15 and not rangeRegime and h4Bias == 1 and h1Bias != -1 and h1LongValue and recentSellSweep and m15BosLong and classicLongSessionGate and classicLongRROK and classicLongScore >= classicRequiredScore
+classicShort = enableClassic and newM15 and not rangeRegime and h4Bias == -1 and h1Bias != 1 and h1ShortValue and recentBuySweep and m15BosShort and classicShortSessionGate and classicShortRROK and classicShortScore >= classicRequiredScore
 classicLongTarget = math.min(close + classicLongStopDist * intradayTargetRR, h1High20)
 classicShortTarget = math.max(close - classicShortStopDist * intradayTargetRR, h1Low20)
-classicLongRR = classicLongStopDist > 0 ? (classicLongTarget - close) / classicLongStopDist : na
-classicShortRR = classicShortStopDist > 0 ? (close - classicShortTarget) / classicShortStopDist : na
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Branch B — M5 trend execution under M15/H1/H4 context
+// B) M5_TREND
 // ─────────────────────────────────────────────────────────────────────────────
 strongLongConflict = h4Bias == -1 and h1Bias == -1
 strongShortConflict = h4Bias == 1 and h1Bias == 1
 longHTFSupport = h4Bias == 1 or h1Bias == 1
 shortHTFSupport = h4Bias == -1 or h1Bias == -1
 m5TrendRequiredScore = inPrimary ? m5TrendMinScorePrimary : m5TrendMinScoreOther
-
 m5TrendLongScore = 25 + (h4Bias == 1 ? 15 : h4Bias == 0 ? 5 : 0) + (h1Bias == 1 ? 15 : h1Bias == 0 ? 5 : 0) + (m15TrendLong ? 10 : 0) + (h1LongValue ? 10 : 0) + (m15PullbackLong ? 10 : 0) + (recentSellSweep ? 5 : 0) + (inPrimary ? 5 : inAsia ? 2 : 0)
 m5TrendShortScore = 25 + (h4Bias == -1 ? 15 : h4Bias == 0 ? 5 : 0) + (h1Bias == -1 ? 15 : h1Bias == 0 ? 5 : 0) + (m15TrendShort ? 10 : 0) + (h1ShortValue ? 10 : 0) + (m15PullbackShort ? 10 : 0) + (recentBuySweep ? 5 : 0) + (inPrimary ? 5 : inAsia ? 2 : 0)
-
-m5TrendLongContext = not rangeRegime and longHTFSupport and not strongLongConflict and m15TrendLong and adx14 >= m5TrendMinAdx and (h1LongValue or m15PullbackLong or recentSellSweep)
-m5TrendShortContext = not rangeRegime and shortHTFSupport and not strongShortConflict and m15TrendShort and adx14 >= m5TrendMinAdx and (h1ShortValue or m15PullbackShort or recentBuySweep)
-
+m5TrendLongContext = not rangeRegime and longHTFSupport and not strongLongConflict and m15TrendLong and m15Adx >= m5TrendMinAdx and (h1LongValue or m15PullbackLong or recentSellSweep)
+m5TrendShortContext = not rangeRegime and shortHTFSupport and not strongShortConflict and m15TrendShort and m15Adx >= m5TrendMinAdx and (h1ShortValue or m15PullbackShort or recentBuySweep)
 m5TrendLong = enableM5Trend and m5TrendLongContext and m5LongTrigger and m5TrendLongScore >= m5TrendRequiredScore
 m5TrendShort = enableM5Trend and m5TrendShortContext and m5ShortTrigger and m5TrendShortScore >= m5TrendRequiredScore
-
-m5TrendLongStopDist = math.max(close - (priorLow5 - atr14 * 0.10), atr14 * 0.75)
-m5TrendShortStopDist = math.max((priorHigh5 + atr14 * 0.10) - close, atr14 * 0.75)
+m5TrendLongStopDist = math.max(close - (m15PriorLow5 - m15Atr * 0.10), m15Atr * 0.75)
+m5TrendShortStopDist = math.max((m15PriorHigh5 + m15Atr * 0.10) - close, m15Atr * 0.75)
 m5TrendLongTarget = close + m5TrendLongStopDist * m5TrendTargetRR
 m5TrendShortTarget = close - m5TrendShortStopDist * m5TrendTargetRR
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Branch C — M5 range rotation from a meaningful M15 range edge
+// C) M5_RANGE
 // ─────────────────────────────────────────────────────────────────────────────
-lowerEdge = rangeLow30 + rangeSize30 * rangeEdgeFraction
-upperEdge = rangeHigh30 - rangeSize30 * rangeEdgeFraction
-m5RangeLongStopDist = math.max(close - (math.min(low, rangeLow30) - atr14 * 0.10), atr14 * 0.55)
-m5RangeShortStopDist = math.max((math.max(high, rangeHigh30) + atr14 * 0.10) - close, atr14 * 0.55)
-m5RangeLongRR = m5RangeLongStopDist > 0 ? (rangeMean30 - close) / m5RangeLongStopDist : na
-m5RangeShortRR = m5RangeShortStopDist > 0 ? (close - rangeMean30) / m5RangeShortStopDist : na
-
-m5RangeLong = enableM5Range and rangeRegime and low <= lowerEdge and close < rangeMean30 and m5LongTrigger and not na(m5RangeLongRR) and m5RangeLongRR >= m5RangeMinRR
-m5RangeShort = enableM5Range and rangeRegime and high >= upperEdge and close > rangeMean30 and m5ShortTrigger and not na(m5RangeShortRR) and m5RangeShortRR >= m5RangeMinRR
+lowerEdge = m15RangeLow30 + m15RangeSize30 * rangeEdgeFraction
+upperEdge = m15RangeHigh30 - m15RangeSize30 * rangeEdgeFraction
+m5RangeLongStopDist = math.max(close - (math.min(low, m15RangeLow30) - m15Atr * 0.10), m15Atr * 0.55)
+m5RangeShortStopDist = math.max((math.max(high, m15RangeHigh30) + m15Atr * 0.10) - close, m15Atr * 0.55)
+m5RangeLongRR = m5RangeLongStopDist > 0 ? (m15RangeMean30 - close) / m5RangeLongStopDist : na
+m5RangeShortRR = m5RangeShortStopDist > 0 ? (close - m15RangeMean30) / m5RangeShortStopDist : na
+m5RangeLong = enableM5Range and rangeRegime and low <= lowerEdge and close < m15RangeMean30 and m5LongTrigger and not na(m5RangeLongRR) and m5RangeLongRR >= m5RangeMinRR
+m5RangeShort = enableM5Range and rangeRegime and high >= upperEdge and close > m15RangeMean30 and m5ShortTrigger and not na(m5RangeShortRR) and m5RangeShortRR >= m5RangeMinRR
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Candidate selection: classic first, then M5 trend, then M5 range
+// Canonical candidate selection
 // ─────────────────────────────────────────────────────────────────────────────
 signalDirection = classicLong ? 1 : classicShort ? -1 : m5TrendLong ? 1 : m5TrendShort ? -1 : m5RangeLong ? 1 : m5RangeShort ? -1 : 0
 signalSource = classicLong or classicShort ? "CLASSIC_M15" : m5TrendLong or m5TrendShort ? "M5_TREND" : m5RangeLong or m5RangeShort ? "M5_RANGE" : "NONE"
 signalScore = classicLong ? classicLongScore : classicShort ? classicShortScore : m5TrendLong ? m5TrendLongScore : m5TrendShort ? m5TrendShortScore : m5RangeLong or m5RangeShort ? rangePoints * 20 : 0
 signalEntry = signalDirection != 0 ? close : na
 signalStopDist = classicLong ? classicLongStopDist : classicShort ? classicShortStopDist : m5TrendLong ? m5TrendLongStopDist : m5TrendShort ? m5TrendShortStopDist : m5RangeLong ? m5RangeLongStopDist : m5RangeShort ? m5RangeShortStopDist : na
-signalTarget = classicLong ? classicLongTarget : classicShort ? classicShortTarget : m5TrendLong ? m5TrendLongTarget : m5TrendShort ? m5TrendShortTarget : m5RangeLong or m5RangeShort ? rangeMean30 : na
+signalTarget = classicLong ? classicLongTarget : classicShort ? classicShortTarget : m5TrendLong ? m5TrendLongTarget : m5TrendShort ? m5TrendShortTarget : m5RangeLong or m5RangeShort ? m15RangeMean30 : na
 signalStop = signalDirection == 1 ? signalEntry - signalStopDist : signalDirection == -1 ? signalEntry + signalStopDist : na
 signalRR = signalDirection == 1 ? (signalTarget - signalEntry) / signalStopDist : signalDirection == -1 ? (signalEntry - signalTarget) / signalStopDist : na
-signalValid = chartIsM15 and inDateRange and signalDirection != 0 and not na(signalRR) and signalRR > 0
+signalValid = chartIsM5 and inDateRange and signalDirection != 0 and not na(signalRR) and signalRR > 0
+requiredScore = classicLong or classicShort ? classicRequiredScore : m5TrendLong or m5TrendShort ? m5TrendRequiredScore : 0
 
-f_bias(v) => v == 1 ? "BULL" : v == -1 ? "BEAR" : "NEUTRAL"
+f_bias(v) => v == 1 ? "BULLISH" : v == -1 ? "BEARISH" : "NEUTRAL"
 f_num(v) => na(v) ? "—" : str.tostring(v, format.mintick)
+f_rr(v) => na(v) ? "—" : "1:" + str.tostring(v, "#.##")
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Strategy execution / visible trade history
+// One-position execution policy — mirrored by FAST + Python replay.
+// No same-bar re-entry after an exit. Cooldown is measured from accepted entry.
 // ─────────────────────────────────────────────────────────────────────────────
-var int lastEntryBar = na
+var int virtualDirection = 0
+var float virtualEntry = na
+var float virtualStop = na
+var float virtualTarget = na
+var int virtualEntryBar = na
+var int lastAcceptedBar = na
 var int rawSignals = 0
 var int executed = 0
 var int seenClosed = 0
-var float activeEntry = na
-var float activeStop = na
-var float activeTarget = na
 var float activeRR = na
 var string activeSource = ""
-var string activeM5 = ""
+var string activeSession = ""
+var float activeM5Rsi = na
 var float cumulativeR = 0.0
 var line entryLine = na
 var line stopLine = na
 var line targetLine = na
 
+exitedThisBar = false
+if virtualDirection != 0 and bar_index > virtualEntryBar
+    hitStop = virtualDirection == 1 ? low <= virtualStop : high >= virtualStop
+    hitTarget = virtualDirection == 1 ? high >= virtualTarget : low <= virtualTarget
+    if hitStop or hitTarget
+        virtualDirection := 0
+        virtualEntry := na
+        virtualStop := na
+        virtualTarget := na
+        virtualEntryBar := na
+        exitedThisBar := true
+
 if signalValid
     rawSignals += 1
 
-cooldownReady = na(lastEntryBar) or bar_index - lastEntryBar >= signalCooldownBars
-canEnter = barstate.isconfirmed and signalValid and strategy.position_size == 0 and cooldownReady
-
-if canEnter
-    lastEntryBar := bar_index
-    executed += 1
-    activeEntry := signalEntry
-    activeStop := signalStop
-    activeTarget := signalTarget
-    activeRR := signalRR
-    activeSource := signalSource
-    activeM5 := f_bias(m5Bias) + " RSI " + str.tostring(m5Rsi, "#.0")
-
-    if signalDirection == 1
-        strategy.entry("LONG", strategy.long)
-        strategy.exit("LONG EXIT", "LONG", stop=activeStop, limit=activeTarget)
-    else
-        strategy.entry("SHORT", strategy.short)
-        strategy.exit("SHORT EXIT", "SHORT", stop=activeStop, limit=activeTarget)
-
-    if showBuySell
-        label.new(bar_index, signalDirection == 1 ? low : high, (signalDirection == 1 ? "BUY" : "SELL") + "\n" + signalSource, style=signalDirection == 1 ? label.style_label_up : label.style_label_down, color=signalDirection == 1 ? color.green : color.red, textcolor=color.white, size=size.normal)
-
-    if showEntryDetails
-        label.new(bar_index, signalDirection == 1 ? low - atr14 * 0.5 : high + atr14 * 0.5, "Score " + str.tostring(signalScore) + " • " + sessionName + "\nH4/H1 " + f_bias(h4Bias) + "/" + f_bias(h1Bias) + "\nM5 " + activeM5 + "\nEntry " + f_num(activeEntry) + " SL " + f_num(activeStop) + " TP " + f_num(activeTarget) + "\nRR 1:" + str.tostring(activeRR, "#.##"), style=signalDirection == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.black, 10), textcolor=color.white, size=size.tiny)
-
-    if showTradeLevels
-        entryLine := line.new(bar_index, activeEntry, bar_index + 1, activeEntry, extend=extend.right, color=color.aqua)
-        stopLine := line.new(bar_index, activeStop, bar_index + 1, activeStop, extend=extend.right, color=color.red)
-        targetLine := line.new(bar_index, activeTarget, bar_index + 1, activeTarget, extend=extend.right, color=color.green)
-
-if strategy.position_size > 0 and not na(activeStop)
-    strategy.exit("LONG EXIT", "LONG", stop=activeStop, limit=activeTarget)
-if strategy.position_size < 0 and not na(activeStop)
-    strategy.exit("SHORT EXIT", "SHORT", stop=activeStop, limit=activeTarget)
-
 if strategy.closedtrades > seenClosed
-    int i = strategy.closedtrades - 1
-    float p = strategy.closedtrades.profit(i)
-    float exitPrice = strategy.closedtrades.exit_price(i)
-    int exitBar = strategy.closedtrades.exit_bar_index(i)
-    bool won = p > 0
+    i = strategy.closedtrades - 1
+    p = strategy.closedtrades.profit(i)
+    exitPrice = strategy.closedtrades.exit_price(i)
+    exitBar = strategy.closedtrades.exit_bar_index(i)
+    won = p > 0
     cumulativeR += won ? activeRR : -1.0
 
-    if showTradeLevels
+    if showLevels
         if not na(entryLine)
             line.set_x2(entryLine, exitBar)
             line.set_extend(entryLine, extend.none)
@@ -328,55 +317,94 @@ if strategy.closedtrades > seenClosed
         label.new(exitBar, exitPrice, (won ? "WIN" : "LOSS") + "\n" + (won ? "+" + str.tostring(activeRR, "#.##") + "R" : "-1R") + "\n" + activeSource, style=won ? label.style_label_up : label.style_label_down, color=won ? color.green : color.red, textcolor=color.white, size=size.normal)
 
     seenClosed := strategy.closedtrades
-    activeEntry := na
-    activeStop := na
-    activeTarget := na
     activeRR := na
     activeSource := ""
-    activeM5 := ""
+    activeSession := ""
+    activeM5Rsi := na
     entryLine := na
     stopLine := na
     targetLine := na
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Optional chart context
-// ─────────────────────────────────────────────────────────────────────────────
-plot(showMAs ? ema20 : na, "M15 EMA20")
-plot(showMAs ? ema50 : na, "M15 EMA50")
-plot(showRange ? rangeHigh30 : na, "Range high", style=plot.style_linebr)
-plot(showRange ? rangeLow30 : na, "Range low", style=plot.style_linebr)
-plot(showRange ? rangeMean30 : na, "Range mean", style=plot.style_linebr)
+cooldownReady = na(lastAcceptedBar) or bar_index - lastAcceptedBar >= cooldownM5Bars
+canEnter = chartIsM5 and barstate.isconfirmed and signalValid and virtualDirection == 0 and not exitedThisBar and cooldownReady and strategy.position_size == 0
+
+if canEnter
+    lastAcceptedBar := bar_index
+    executed += 1
+    virtualDirection := signalDirection
+    virtualEntry := signalEntry
+    virtualStop := signalStop
+    virtualTarget := signalTarget
+    virtualEntryBar := bar_index
+    activeRR := signalRR
+    activeSource := signalSource
+    activeSession := sessionName
+    activeM5Rsi := m5Rsi
+
+    if signalDirection == 1
+        strategy.entry("LONG", strategy.long)
+        strategy.exit("LONG EXIT", "LONG", stop=signalStop, limit=signalTarget)
+    else
+        strategy.entry("SHORT", strategy.short)
+        strategy.exit("SHORT EXIT", "SHORT", stop=signalStop, limit=signalTarget)
+
+    if showBuySell
+        label.new(bar_index, signalDirection == 1 ? low : high, (signalDirection == 1 ? "BUY" : "SELL") + "\n" + signalSource, style=signalDirection == 1 ? label.style_label_up : label.style_label_down, color=signalDirection == 1 ? color.green : color.red, textcolor=color.white, size=size.normal)
+
+    if showEntryDetails
+        label.new(bar_index, signalDirection == 1 ? low : high, "Score " + str.tostring(signalScore) + " / " + str.tostring(requiredScore) + "\n" + sessionName + " • H4/H1 " + f_bias(h4Bias) + "/" + f_bias(h1Bias) + "\nM15 ADX " + str.tostring(m15Adx, "#.0") + " • M5 RSI " + str.tostring(m5Rsi, "#.0") + "\nEntry " + f_num(signalEntry) + " SL " + f_num(signalStop) + " TP " + f_num(signalTarget) + "\nRR " + f_rr(signalRR), style=signalDirection == 1 ? label.style_label_up : label.style_label_down, color=color.new(color.black, 10), textcolor=color.white, size=size.tiny)
+
+    if showLevels
+        entryLine := line.new(bar_index, signalEntry, bar_index + 1, signalEntry, extend=extend.right, color=color.aqua)
+        stopLine := line.new(bar_index, signalStop, bar_index + 1, signalStop, extend=extend.right, color=color.red)
+        targetLine := line.new(bar_index, signalTarget, bar_index + 1, signalTarget, extend=extend.right, color=color.green)
+
+if strategy.position_size > 0 and not na(virtualStop)
+    strategy.exit("LONG EXIT", "LONG", stop=virtualStop, limit=virtualTarget)
+if strategy.position_size < 0 and not na(virtualStop)
+    strategy.exit("SHORT EXIT", "SHORT", stop=virtualStop, limit=virtualTarget)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compact diagnostics
+// Visuals
 // ─────────────────────────────────────────────────────────────────────────────
+plot(showM5MAs ? m5Ema20 : na, "M5 EMA20", linewidth=1)
+plot(showM5MAs ? m5Ema50 : na, "M5 EMA50", linewidth=1)
+
 panelBg = color.new(color.rgb(15, 18, 25), 5)
 labelBg = color.new(color.rgb(29, 34, 45), 2)
+headerBg = color.new(color.rgb(8, 10, 14), 0)
+statusBg = chartIsM5 ? color.new(color.green, 78) : color.new(color.red, 68)
 f_cell(tbl, c, r, txt, bg) => table.cell(tbl, c, r, txt, text_color=color.white, bgcolor=bg, text_size=size.small)
-var table dash = table.new(position.bottom_left, 2, 10, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1)
 
+var table dash = table.new(position.bottom_left, 2, 13, bgcolor=panelBg, frame_color=color.new(color.white, 55), frame_width=1)
 if barstate.islast
     if showDashboard
-        float wr = strategy.closedtrades > 0 ? strategy.wintrades * 100.0 / strategy.closedtrades : na
-        f_cell(dash, 0, 0, "CASIO v3 M5 BT", color.new(color.black, 0))
-        f_cell(dash, 1, 0, chartIsM15 ? "M15 READY" : "USE M15", panelBg)
+        wr = strategy.closedtrades > 0 ? strategy.wintrades * 100.0 / strategy.closedtrades : na
+        f_cell(dash, 0, 0, "CASIO v3 M5 1:1", headerBg)
+        f_cell(dash, 1, 0, chartIsM5 ? "M5 READY" : "USE M5", statusBg)
         f_cell(dash, 0, 1, "REGIME", labelBg)
         f_cell(dash, 1, 1, rangeRegime ? "RANGE" : "DIRECTIONAL", panelBg)
-        f_cell(dash, 0, 2, "M5", labelBg)
-        f_cell(dash, 1, 2, f_bias(m5Bias) + " • RSI " + str.tostring(m5Rsi, "#.0"), panelBg)
-        f_cell(dash, 0, 3, "RAW SIGNALS", labelBg)
-        f_cell(dash, 1, 3, str.tostring(rawSignals), panelBg)
-        f_cell(dash, 0, 4, "EXECUTED", labelBg)
-        f_cell(dash, 1, 4, str.tostring(executed), panelBg)
-        f_cell(dash, 0, 5, "CLOSED", labelBg)
-        f_cell(dash, 1, 5, str.tostring(strategy.closedtrades), panelBg)
-        f_cell(dash, 0, 6, "W / L", labelBg)
-        f_cell(dash, 1, 6, str.tostring(strategy.wintrades) + " / " + str.tostring(strategy.losstrades), panelBg)
-        f_cell(dash, 0, 7, "WIN RATE", labelBg)
-        f_cell(dash, 1, 7, na(wr) ? "—" : str.tostring(wr, "#.1") + "%", panelBg)
-        f_cell(dash, 0, 8, "NET R", labelBg)
-        f_cell(dash, 1, 8, str.tostring(cumulativeR, "#.##") + "R", panelBg)
-        f_cell(dash, 0, 9, "NOW", labelBg)
-        f_cell(dash, 1, 9, signalValid ? signalSource : "WAIT", panelBg)
+        f_cell(dash, 0, 2, "H4 / H1", labelBg)
+        f_cell(dash, 1, 2, f_bias(h4Bias) + " / " + f_bias(h1Bias), panelBg)
+        f_cell(dash, 0, 3, "M15 ADX", labelBg)
+        f_cell(dash, 1, 3, str.tostring(m15Adx, "#.1"), panelBg)
+        f_cell(dash, 0, 4, "M5", labelBg)
+        f_cell(dash, 1, 4, f_bias(m5Bias) + " • RSI " + str.tostring(m5Rsi, "#.0"), panelBg)
+        f_cell(dash, 0, 5, "RAW SIGNALS", labelBg)
+        f_cell(dash, 1, 5, str.tostring(rawSignals), panelBg)
+        f_cell(dash, 0, 6, "EXECUTED", labelBg)
+        f_cell(dash, 1, 6, str.tostring(executed), panelBg)
+        f_cell(dash, 0, 7, "CLOSED", labelBg)
+        f_cell(dash, 1, 7, str.tostring(strategy.closedtrades), panelBg)
+        f_cell(dash, 0, 8, "W / L", labelBg)
+        f_cell(dash, 1, 8, str.tostring(strategy.wintrades) + " / " + str.tostring(strategy.losstrades), panelBg)
+        f_cell(dash, 0, 9, "WIN RATE", labelBg)
+        f_cell(dash, 1, 9, na(wr) ? "—" : str.tostring(wr, "#.1") + "%", panelBg)
+        f_cell(dash, 0, 10, "NET R", labelBg)
+        f_cell(dash, 1, 10, str.tostring(cumulativeR, "#.##") + "R", panelBg)
+        f_cell(dash, 0, 11, "RAW NOW", labelBg)
+        f_cell(dash, 1, 11, signalValid ? signalSource : "WAIT", panelBg)
+        f_cell(dash, 0, 12, "ENGINE", labelBg)
+        f_cell(dash, 1, 12, "M5 NATIVE • 1:1", panelBg)
     else
-        table.clear(dash, 0, 0, 1, 9)
+        table.clear(dash, 0, 0, 1, 12)
