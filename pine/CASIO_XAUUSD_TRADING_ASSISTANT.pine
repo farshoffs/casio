@@ -1,5 +1,5 @@
 //@version=6
-indicator("CASIO XAUUSD — Structural Trading Assistant", overlay=true, max_labels_count=300, max_lines_count=100, max_bars_back=10000)
+indicator("CASIO XAUUSD — Structural Trading Assistant", overlay=true, max_labels_count=300, max_lines_count=100, max_bars_back=5000)
 
 // RESEARCH ASSISTANT — not the production v3 engine.
 // Native chart: XAUUSD 5m.
