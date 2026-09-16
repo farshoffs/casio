@@ -11,19 +11,19 @@ strategy("CASIO XAUUSD v4 — Confluence Signal Engine", overlay=true, pyramidin
 // Inputs
 // ─────────────────────────────────────────────────────────────────────────────
 groupProfile = "CASIO v4 profile"
-profile = input.string("QUALITY_70", "Profile", options=["QUALITY_70", "BALANCED", "FREQUENCY"], group=groupProfile)
-targetR = input.float(1.20, "Take-profit R", minval=0.70, maxval=3.00, step=0.05, group=groupProfile)
+profile = input.string("FREQUENCY", "Profile", options=["QUALITY_70", "BALANCED", "FREQUENCY"], group=groupProfile)
+targetR = input.float(0.60, "Take-profit R", minval=0.50, maxval=3.00, step=0.05, group=groupProfile)
 minRiskAtr = input.float(0.35, "Minimum stop distance / ATR", minval=0.10, step=0.05, group=groupProfile)
 maxRiskAtr = input.float(1.80, "Maximum stop distance / ATR", minval=0.50, step=0.10, group=groupProfile)
 stopBufferAtr = input.float(0.15, "Structural stop buffer / ATR", minval=0.00, step=0.05, group=groupProfile)
 maxTradesPerDay = input.int(3, "Maximum accepted trades / day", minval=1, maxval=8, group=groupProfile)
-cooldownBars = input.int(9, "Cooldown M5 bars", minval=0, maxval=60, group=groupProfile)
+cooldownBars = input.int(6, "Cooldown M5 bars", minval=0, maxval=60, group=groupProfile)
 weeklyTarget = input.int(8, "Weekly trade target", minval=1, maxval=25, group=groupProfile)
 winRateTarget = input.float(70.0, "Win-rate target %", minval=40, maxval=90, step=1, group=groupProfile)
 
 groupManagement = "Trade management"
 useBreakeven = input.bool(true, "Protect at breakeven", group=groupManagement)
-beTriggerR = input.float(0.80, "Breakeven trigger R", minval=0.30, maxval=2.00, step=0.05, group=groupManagement)
+beTriggerR = input.float(0.35, "Breakeven trigger R", minval=0.30, maxval=2.00, step=0.05, group=groupManagement)
 beLockR = input.float(0.05, "Breakeven locked R", minval=0.00, maxval=0.50, step=0.01, group=groupManagement)
 
 groupModel = "Confluence model"
@@ -35,6 +35,10 @@ breakoutRetestBars = input.int(8, "Breakout retest expiry", minval=2, maxval=20,
 zoneAtr = input.float(0.35, "Supply/demand touch distance ATR", minval=0.10, maxval=1.00, step=0.05, group=groupModel)
 bodyMin = input.float(0.52, "Displacement body fraction", minval=0.30, maxval=0.90, step=0.01, group=groupModel)
 rangeAtrMin = input.float(0.70, "Displacement range / ATR", minval=0.30, maxval=2.00, step=0.05, group=groupModel)
+useLiqFvgEntries = input.bool(false, "Use liquidity/FVG as standalone entry", group=groupModel)
+useBreakoutEntries = input.bool(false, "Use breakout/retest as standalone entry", group=groupModel)
+useBbmaEntries = input.bool(true, "Use BBMA re-entry", group=groupModel)
+useSdEntries = input.bool(true, "Use supply/demand rejection", group=groupModel)
 
 groupSession = "Sessions UTC"
 asiaSession = input.session("0000-0600", "Asia", group=groupSession)
@@ -179,14 +183,14 @@ bbmaShort = bbShortAge <= 4 and close < ma5Low and close < bbUpper and close < o
 // ─────────────────────────────────────────────────────────────────────────────
 // Four-playbook router.
 // ─────────────────────────────────────────────────────────────────────────────
-liqFvgLong = sellSweepAge <= 3 and dispLong and (bullFvg or close > ema20)
-liqFvgShort = buySweepAge <= 3 and dispShort and (bearFvg or close < ema20)
-breakRetestLong = retestLong and (m15Bias >= 0 or h1Bias == 1)
-breakRetestShort = retestShort and (m15Bias <= 0 or h1Bias == -1)
-bbmaReentryLong = bbmaLong and h1Bias >= 0 and m15Bias >= 0
-bbmaReentryShort = bbmaShort and h1Bias <= 0 and m15Bias <= 0
-sdBounceLong = demandReject and (sellSweepAge <= 5 or bbLongAge <= 4) and h1Bias >= 0
-sdBounceShort = supplyReject and (buySweepAge <= 5 or bbShortAge <= 4) and h1Bias <= 0
+liqFvgLong = useLiqFvgEntries and sellSweepAge <= 3 and dispLong and (bullFvg or close > ema20)
+liqFvgShort = useLiqFvgEntries and buySweepAge <= 3 and dispShort and (bearFvg or close < ema20)
+breakRetestLong = useBreakoutEntries and retestLong and (m15Bias >= 0 or h1Bias == 1)
+breakRetestShort = useBreakoutEntries and retestShort and (m15Bias <= 0 or h1Bias == -1)
+bbmaReentryLong = useBbmaEntries and bbmaLong and h1Bias >= 0 and m15Bias >= 0
+bbmaReentryShort = useBbmaEntries and bbmaShort and h1Bias <= 0 and m15Bias <= 0
+sdBounceLong = useSdEntries and demandReject and (sellSweepAge <= 5 or bbLongAge <= 4) and h1Bias >= 0
+sdBounceShort = useSdEntries and supplyReject and (buySweepAge <= 5 or bbShortAge <= 4) and h1Bias <= 0
 
 longPlaybook = liqFvgLong ? "LIQ_FVG" : breakRetestLong ? "BREAK_RETEST" : bbmaReentryLong ? "BBMA_REENTRY" : sdBounceLong ? "DEMAND_REJECT" : "WAIT"
 shortPlaybook = liqFvgShort ? "LIQ_FVG" : breakRetestShort ? "BREAK_RETEST" : bbmaReentryShort ? "BBMA_REENTRY" : sdBounceShort ? "SUPPLY_REJECT" : "WAIT"
