@@ -15,35 +15,41 @@ class V4Config:
     """
 
     # Global execution / research
-    min_score: int = 65
+    min_score: int = 68
     round_trip_cost_bps: float = 1.0
     abnormal_candle_atr: float = 2.5
 
     # Trend pullback
     trend_target_rr: float = 2.2
     trend_min_rr: float = 1.6
-    trend_pullback_atr: float = 0.35
-    trend_min_score: int = 65
+    trend_pullback_atr: float = 0.30
+    trend_min_score: int = 70
+    trend_min_adx: float = 18.0
+    trend_require_m5: bool = True
 
     # Range rotation
     range_target: str = "mean"
-    range_edge_fraction: float = 0.30
-    range_min_rr: float = 1.15
-    range_min_score: int = 60
-    range_h1_compression_atr: float = 0.70
-    range_h1_max_range_atr: float = 10.0
-    range_m15_max_adx: float = 26.0
-    range_m15_max_range_atr: float = 7.0
-    range_require_m5: bool = False
+    range_edge_fraction: float = 0.25
+    range_min_rr: float = 1.30
+    range_min_score: int = 68
+    range_h1_compression_atr: float = 0.65
+    range_h1_max_range_atr: float = 9.0
+    range_m15_max_adx: float = 24.0
+    range_m15_max_range_atr: float = 6.5
+    range_require_m5: bool = True
+    range_require_edge_reclaim: bool = True
 
     # Breakout -> retest continuation
     breakout_target_rr: float = 2.4
     breakout_min_rr: float = 1.7
-    breakout_min_score: int = 68
-    breakout_expansion_atr: float = 1.10
-    breakout_retest_atr: float = 0.30
+    breakout_min_score: int = 72
+    breakout_expansion_atr: float = 1.20
+    breakout_retest_atr: float = 0.20
     breakout_retest_min_bars: int = 1
-    breakout_retest_max_bars: int = 6
+    breakout_retest_max_bars: int = 5
+    breakout_pre_max_adx: float = 24.0
+    breakout_pre_max_range_atr: float = 5.5
+    breakout_require_m5: bool = True
 
     # Context / quality
     session_bonus_primary: int = 5
