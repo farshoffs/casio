@@ -97,7 +97,7 @@ def run(data_path: str|Path="data/xauusd_m5.csv", output_dir: str|Path="reports/
     summary={"data":{"rows":len(m5),"start":m5.index.min(),"end":m5.index.max(),"cut":cut},"results":rows,"auto_deploy":False,
              "note":"Research-only. Profile was informed by 2020 diagnostics and Sep 1-15 2026 user-supplied data, so neither period is untouched OOS. Live CASIO remains unchanged."}
     (out/"summary.json").write_text(json.dumps(_safe(summary),indent=2),encoding="utf-8")
-    (out/"REPORT.md").write_text("# CASIO A+ v2 Research\n\n"+frame.to_markdown(index=False)+"\n\nLive strategy unchanged.\n",encoding="utf-8")
+    (out/"REPORT.md").write_text("# CASIO A+ v2 Research\n\n```text\n"+frame.to_string(index=False)+"\n```\n\nLive strategy unchanged.\n",encoding="utf-8")
     return summary
 
 
