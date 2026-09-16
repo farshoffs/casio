@@ -1,0 +1,65 @@
+name: CASIO Outcome-First Structural Research
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/outcome_first_structural_research.py'
+      - 'casio/structural_portfolio_latest.py'
+      - 'data/xauusd_m5_dukascopy_research.csv'
+      - 'data/xauusd_m5_secondary_octafx_mt4.csv'
+      - '.github/workflows/outcome-first-structural-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-outcome-first-structural-research
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate research bases
+        run: |
+          test -f data/xauusd_m5_dukascopy_research.csv
+          test -f data/xauusd_m5_secondary_octafx_mt4.csv
+          python - <<'PY'
+          import pandas as pd
+          for p in ['data/xauusd_m5_dukascopy_research.csv','data/xauusd_m5_secondary_octafx_mt4.csv']:
+              x = pd.read_csv(p, usecols=['timestamp'])
+              t = pd.to_datetime(x.timestamp, utc=True, errors='raise')
+              print(f'{p}: {len(x):,} bars | {t.min()} -> {t.max()}')
+          PY
+
+      - name: Run outcome-first structural research
+        run: |
+          python -m casio.outcome_first_structural_research \
+            --primary data/xauusd_m5_dukascopy_research.csv \
+            --secondary data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/outcome-first-structural
+
+      - name: Publish report
+        run: cat reports/outcome-first-structural/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload research artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-outcome-first-structural
+          path: reports/outcome-first-structural/
+          retention-days: 60
