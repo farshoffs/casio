@@ -286,7 +286,7 @@ def load_features(path: Path) -> pd.DataFrame:
         + np.where(df["bbma_long"], 10, 0)
         + np.where(df["retest_long"], 5, 0)
         + np.where(df["demand_reject"], 5, 0)
-    ).clip(upper=100)
+    )
     df["short_score"] = (
         np.where(df["h4_bias"] == -1, 15, np.where(df["h4_bias"] == 0, 5, 0))
         + np.where(df["h1_bias"] == -1, 15, np.where(df["h1_bias"] == 0, 5, 0))
@@ -298,7 +298,7 @@ def load_features(path: Path) -> pd.DataFrame:
         + np.where(df["bbma_short"], 10, 0)
         + np.where(df["retest_short"], 5, 0)
         + np.where(df["supply_reject"], 5, 0)
-    ).clip(upper=100)
+    )
     df["recent_low"] = df["low"].rolling(7).min()
     df["recent_high"] = df["high"].rolling(7).max()
     return df.dropna(subset=["atr", "h4_ema50", "h1_ema50", "m15_ema50"])
