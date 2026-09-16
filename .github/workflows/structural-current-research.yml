@@ -46,32 +46,72 @@ jobs:
           pip install -r requirements.txt
           npm install --no-save dukascopy-node@1.50.0
 
-      - name: Determine current research window
-        id: window
+      - name: Choose current research source
+        id: source
         shell: bash
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
           import pandas as pd
+
           now = pd.Timestamp.now(tz='UTC').floor('5min')
-          # 210d = 30d structural warm-up + three consecutive 60d evaluation windows.
           start = now - pd.Timedelta(days=210)
+          path = Path('data/xauusd_m5_dukascopy_research.csv')
+          use_cache = False
+          first = latest = None
+
+          if path.exists() and path.stat().st_size > 0:
+              ts = pd.to_datetime(pd.read_csv(path, usecols=['timestamp']).timestamp, utc=True, errors='coerce').dropna()
+              if not ts.empty:
+                  first, latest = ts.min(), ts.max()
+                  use_cache = first <= start and latest >= now - pd.Timedelta(days=2)
+
+          print(f'use_cache={str(use_cache).lower()}')
           print(f'start={start.isoformat()}')
           print(f'end={now.isoformat()}')
+          print(f'cache_first={first.isoformat() if first is not None else ""}')
+          print(f'cache_latest={latest.isoformat() if latest is not None else ""}')
           PY
 
-      - name: Fetch current Dukascopy XAUUSD M5 BID
+          echo "Persistent research cache usable: ${{ steps.source.outputs.use_cache }}"
+
+      - name: Slice persistent latest-first Dukascopy research base
+        if: steps.source.outputs.use_cache == 'true'
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          from pathlib import Path
+
+          src = Path('data/xauusd_m5_dukascopy_research.csv')
+          out = Path('tmp/current_structural_m5.csv')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          x = pd.read_csv(src)
+          ts = pd.to_datetime(x.timestamp, utc=True, errors='raise')
+          start = pd.Timestamp('${{ steps.source.outputs.start }}')
+          end = pd.Timestamp('${{ steps.source.outputs.end }}')
+          keep = (ts >= start) & (ts <= end)
+          x.loc[keep].to_csv(out, index=False)
+          print(f'Used persistent Dukascopy research base: {int(keep.sum()):,} bars')
+          PY
+
+      - name: Fetch current Dukascopy XAUUSD M5 BID when cache is not ready
+        if: steps.source.outputs.use_cache != 'true'
         run: |
           node scripts/fetch_dukascopy.mjs \
-            --from '${{ steps.window.outputs.start }}' \
-            --to '${{ steps.window.outputs.end }}' \
+            --from '${{ steps.source.outputs.start }}' \
+            --to '${{ steps.source.outputs.end }}' \
             --output tmp/current_dukascopy_xauusd_m5.csv \
             --price-type bid
 
-      - name: Normalize current dataset
+      - name: Normalize downloaded current dataset
+        if: steps.source.outputs.use_cache != 'true'
         run: |
           python -m casio.sync_market_data \
             --file tmp/current_dukascopy_xauusd_m5.csv \
             --output tmp/current_structural_m5.csv
+
+      - name: Validate current research dataset
+        run: |
           python - <<'PY'
           import pandas as pd
           x = pd.read_csv('tmp/current_structural_m5.csv')
@@ -96,7 +136,8 @@ jobs:
           x = json.loads(Path('reports/structural-current/summary.json').read_text())
           print('\n## Portfolio target')
           print('8 trades/30d · WR >=42% · avg winner ~3.5R · avg loss ~1R · expectancy >=+0.70R · PF >=2')
-          print('\nSelected candidate is research-only; no production auto-deploy.')
+          print('\nData source: persistent latest-first Dukascopy research CSV when current/complete enough; provider download is fallback only.')
+          print('Selected candidate is research-only; no production auto-deploy.')
           PY
 
       - name: Upload research artifact
