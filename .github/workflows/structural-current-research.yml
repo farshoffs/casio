@@ -1,0 +1,107 @@
+name: CASIO Structural Portfolio — Current Market
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'casio/structural_portfolio_latest.py'
+      - 'casio/structural_current_research.py'
+      - 'casio/v3_structural_aplus.py'
+      - 'casio/v3_core.py'
+      - 'casio/v3_m5_engine.py'
+      - 'scripts/fetch_dukascopy.mjs'
+      - '.github/workflows/structural-current-research.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '5 22 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-structural-current-research
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Determine current research window
+        id: window
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import pandas as pd
+          now = pd.Timestamp.now(tz='UTC').floor('5min')
+          # 210d = 30d structural warm-up + three consecutive 60d evaluation windows.
+          start = now - pd.Timedelta(days=210)
+          print(f'start={start.isoformat()}')
+          print(f'end={now.isoformat()}')
+          PY
+
+      - name: Fetch current Dukascopy XAUUSD M5 BID
+        run: |
+          node scripts/fetch_dukascopy.mjs \
+            --from '${{ steps.window.outputs.start }}' \
+            --to '${{ steps.window.outputs.end }}' \
+            --output tmp/current_dukascopy_xauusd_m5.csv \
+            --price-type bid
+
+      - name: Normalize current dataset
+        run: |
+          python -m casio.sync_market_data \
+            --file tmp/current_dukascopy_xauusd_m5.csv \
+            --output tmp/current_structural_m5.csv
+          python - <<'PY'
+          import pandas as pd
+          x = pd.read_csv('tmp/current_structural_m5.csv')
+          ts = pd.to_datetime(x.timestamp, utc=True)
+          print(f'Current structural dataset: {len(x):,} bars, {ts.min()} -> {ts.max()}')
+          if (ts.max() - ts.min()).total_seconds() < 190 * 86400:
+              raise SystemExit('Current Dukascopy window is too short for 30d warm-up + three 60d slices')
+          PY
+
+      - name: Run latest-first structural portfolio research
+        run: |
+          python -m casio.structural_current_research \
+            --data tmp/current_structural_m5.csv \
+            --output reports/structural-current
+
+      - name: Publish decision-relevant summary
+        run: |
+          cat reports/structural-current/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          x = json.loads(Path('reports/structural-current/summary.json').read_text())
+          print('\n## Portfolio target')
+          print('8 trades/30d · WR >=42% · avg winner ~3.5R · avg loss ~1R · expectancy >=+0.70R · PF >=2')
+          print('\nSelected candidate is research-only; no production auto-deploy.')
+          PY
+
+      - name: Upload research artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-structural-current
+          path: reports/structural-current/
+          retention-days: 60
