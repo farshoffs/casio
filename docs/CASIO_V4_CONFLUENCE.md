@@ -1,50 +1,68 @@
 # CASIO v4 Confluence Signal Engine
 
-Status: **research challenger**. It does not replace CASIO v3 production automation until validation clears the acceptance gates.
+Status: **research challenger**. It does not replace CASIO v3 production automation yet.
 
-## Objective
+## Objective and current result
 
-CASIO v4 is designed for XAUUSD M5 with an aggressive research objective:
+CASIO v4 is designed for XAUUSD M5 with these acceptance targets:
 
-- approximately 8 completed trades per week,
-- approximately 70% profitable trades,
-- positive expectancy after realistic execution costs,
+- at least about 8 completed trades per week,
+- at least about 70% profitable trades,
+- positive expectancy,
 - one position at a time,
-- visible historical BUY/SELL signals with Entry, SL and TP on the TradingView chart.
+- visible historical BUY/SELL signals with Entry, SL and TP on TradingView.
 
-Those numbers are **acceptance targets, not guaranteed outputs**. The Pine dashboard and the Python research harness display measured historical results rather than manufacturing the requested headline numbers.
+The current validated-core configuration cleared the headline frequency and hit-rate gates on the chronological validation slice of the repository's Dukascopy M5 research data:
 
-## Trading logic
+- 9.48 trades/week,
+- 74.16% win rate,
+- +0.032R mean expectancy per completed trade,
+- 1.12 profit factor,
+- 9.95R maximum closed-trade drawdown,
+- 178 validation trades.
 
-The engine routes four complementary setup families through one confluence score and structural risk gate.
+These are historical research measurements, not guaranteed future performance. The Python replay does not yet debit broker spread/slippage/commission explicitly, so the relatively small expectancy must be rechecked in TradingView with the intended XAUUSD feed and realistic execution costs before any production promotion.
 
-### 1. Liquidity + FVG / displacement
+## Validated default core
 
-A recent internal or external liquidity sweep must be followed by M5 displacement. A fair-value gap is rewarded in the confluence score but displacement above/below M5 value can also qualify, which keeps the setup usable when a literal three-candle FVG is absent.
+The strongest tested default is deliberately simpler than the initial four-entry-family version:
 
-### 2. Breakout retest
+- BBMA re-entry: enabled as a standalone entry,
+- supply/demand rejection: enabled as a standalone entry,
+- liquidity sweep / FVG: retained as confluence but disabled as a standalone entry,
+- breakout/retest: retained as confluence but disabled as a standalone entry,
+- primary-session minimum score: 55,
+- TP: 0.60R,
+- breakeven trigger: 0.35R,
+- breakeven lock: +0.05R,
+- cooldown: 6 M5 bars,
+- maximum accepted trades/day: 3.
 
-Price must close through a meaningful recent M5 range boundary, then retest and reclaim/reject that level within a limited bar window. H1/M15 context must not strongly oppose the trade.
+Why: on the same validation slice, standalone breakout/retest reduced expectancy, while the BBMA + supply/demand core preserved more than 8 trades/week and improved the combined hit rate and profit factor.
 
-### 3. BBMA re-entry
+## Signal logic
 
-The model uses Bollinger Bands plus weighted MA5 high/low and EMA20/EMA50 context. It looks for a recent outer-band extreme followed by a re-entry/continuation candle in the direction allowed by H1 and M15.
+### BBMA re-entry
 
-### 4. Supply / demand rejection
+The model uses Bollinger Bands, weighted MA5 high/low, EMA20/EMA50 and higher-timeframe context. It looks for a recent outer-band extreme followed by re-entry/continuation in a direction allowed by H1/M15 context.
 
-Confirmed causal M5 pivots become the latest supply/demand references. A setup needs a rejection close near the zone plus supporting liquidity or BBMA context. Pivots are only usable after the right-hand confirmation bars exist, so historical signals do not use future information.
+### Supply / demand rejection
+
+Confirmed causal M5 pivots become the latest supply/demand references. A setup requires a rejection close near the level plus liquidity or BBMA support. A pivot only becomes available after its right-side confirmation bars exist, so historical signals do not use future information.
+
+### Liquidity / FVG and breakout context
+
+Liquidity sweeps, displacement, fair-value gaps and breakout/retest structures are still computed. They contribute to the direction-specific confluence score and can be switched back on as standalone entry families from the Pine inputs for research, but they are off by default in the validated core.
 
 ## Non-repainting context
 
-H4, H1 and M15 context uses the previous **closed** higher-timeframe candle only. The M5 signal itself is accepted only on a confirmed M5 bar. This is deliberate: a historical marker must represent a signal that could actually have existed at that bar close.
+H4, H1 and M15 context uses the previous **closed** higher-timeframe bar only. The M5 signal is accepted only after the M5 bar is confirmed. Historical markers therefore represent conditions that existed at that bar close rather than retrospective future-bar knowledge.
 
-## Risk and trade management
+## Risk and management
 
-The initial SL is structural: recent M5 swing extreme plus an ATR buffer. Candidate trades are rejected when the SL distance is too small or too large relative to ATR.
+The initial SL is structural: the recent M5 swing extreme plus an ATR buffer. Trades are rejected when the stop distance is outside the allowed ATR-normalized range.
 
-The default challenger uses a relatively compact TP and optional breakeven protection because the requested 70% hit-rate / 8-trades-per-week objective is a different optimization problem from the older CASIO structural portfolio, which targeted fewer trades and much larger R winners.
-
-The original SL remains the signal-time risk level shown in the alert. If breakeven protection triggers later, the active chart SL can move toward entry.
+The original SL is retained in the signal payload as the initial risk level. After entry, optional breakeven management can move the active stop toward entry when price reaches the configured R threshold.
 
 ## TradingView
 
@@ -54,21 +72,24 @@ Use:
 pine/CASIO_XAUUSD_v4_CONFLUENCE.pine
 ```
 
-Recommended chart:
+Recommended initial chart test:
 
 ```text
 Symbol: XAUUSD
 Timeframe: 5 minutes
-Profile: QUALITY_70
+Profile: FREQUENCY
+TP: 0.60R
+Breakeven trigger: 0.35R
+Standalone entries: BBMA + supply/demand ON; liquidity/FVG + breakout OFF
 ```
 
-The script is intentionally a TradingView `strategy()` rather than a plain `indicator()`. That gives the same on-chart BUY/SELL behavior while also retaining technique-generated historical entries/exits and exposing Strategy Tester statistics.
+The script is intentionally a TradingView `strategy()` rather than a plain `indicator()`. It still displays BUY/SELL signals but additionally keeps technique-generated historical trades and makes Strategy Tester statistics available.
 
-Historical plan segments can show Entry, initial SL and TP for prior accepted signals. The dashboard shows actual closed trades, historical win rate, profit factor and the current week's accepted-trade count.
+Historical plan segments display Entry, initial SL and TP for accepted signals. The dashboard displays measured closed trades, historical win rate, profit factor and the current week's accepted-trade count.
 
 ## Alerts -> Vercel -> Google Apps Script
 
-The v4 Pine script deliberately emits the existing `casio.tv.v3` JSON schema. That makes it backward-compatible with the current CASIO relay:
+The v4 Pine script deliberately emits the existing `casio.tv.v3` JSON schema. It is therefore backward-compatible with the current CASIO relay:
 
 ```text
 TradingView alert()
@@ -78,15 +99,15 @@ TradingView alert()
   -> queued CASIO signal email
 ```
 
-No v4-only backend migration is required for the initial test. The v4 playbook name is placed in `audit_status`, which the existing Apps Script email template already displays.
+No v4-only backend schema migration is required for the challenger test. The v4 playbook is placed in `audit_status`, which the existing Apps Script email template already displays.
 
-For a TradingView account with webhook support, create an alert using **Any alert() function call** and point it at the existing authenticated CASIO Vercel TradingView endpoint. Do not put webhook tokens in the Pine source or commit them to GitHub.
+For a TradingView account with webhook support, create an alert using **Any alert() function call** and use the existing authenticated CASIO Vercel TradingView endpoint. Keep tokens outside Pine/GitHub.
 
-If using CASIO's current TradingView-Free workflow, keep v3 production automation active while v4 is evaluated visually and through GitHub research. A later promotion can mirror the frozen v4 rules into the Python live-signal job.
+Keep v3 production automation active while v4 is evaluated. Production promotion should happen only after the Pine script compiles on TradingView and Strategy Tester results on the intended broker/feed remain positive after realistic commission, spread and slippage assumptions.
 
 ## Research harness
 
-Run:
+Main bounded research:
 
 ```bash
 python -m casio.v4_confluence_research \
@@ -94,21 +115,18 @@ python -m casio.v4_confluence_research \
   --output reports/v4-confluence
 ```
 
-The bounded grid varies only a small set of execution parameters:
+Fast profile validation:
 
-- minimum score,
-- TP in R,
-- breakeven trigger,
-- cooldown.
-
-It reserves the latest 30% of initialized data as chronological validation and ranks candidates using validation frequency, win rate, expectancy, PF and stability. Stop/TP collisions inside one M5 candle are treated conservatively as stop-first.
-
-Outputs:
-
-```text
-reports/v4-confluence/LATEST.md
-reports/v4-confluence/latest.json
-reports/v4-confluence/candidate_grid.csv
+```bash
+python -m casio.v4_quick_validate \
+  --data data/xauusd_m5_dukascopy_research.csv
 ```
 
-The 8/week and 70% figures are only considered cleared when the chronological validation slice reaches both while maintaining positive expectancy. A candidate should still be checked against another feed/window before production promotion.
+Playbook diagnostics:
+
+```bash
+python -m casio.v4_edge_diagnose \
+  --data data/xauusd_m5_dukascopy_research.csv
+```
+
+The research uses a chronological 70/30 split and conservative stop-first treatment when both SL and TP are touched within one M5 candle. See `reports/v4-confluence/VALIDATED_CORE.md` for the promoted challenger metrics.
