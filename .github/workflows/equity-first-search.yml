@@ -1,0 +1,50 @@
+name: CASIO Equity-First Search
+
+on:
+  push:
+    branches:
+      - feature/equity-first-search
+    paths:
+      - casio/equity_first_search.py
+      - .github/workflows/equity-first-search.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/equity-first-search
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run equity-first find and test
+        run: python -m casio.equity_first_search
+
+      - name: Commit report and audit files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/equity-first-search-2026
+          if git diff --cached --quiet; then
+            echo "No report changes to commit"
+            exit 0
+          fi
+          git commit -m "research: equity-first 2025 find 2026 test"
+          git pull --rebase origin feature/equity-first-search
+          git push origin HEAD:feature/equity-first-search
