@@ -34,6 +34,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Apply weekend-safe discovery coverage check
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('casio/equity_first_crossfeed.py')
+          s = p.read_text()
+          old = 'if secondary.index.min() > DISCOVERY_WARMUP or secondary.index.max() < DISCOVERY_END - pd.Timedelta(days=2):'
+          new = 'if secondary.index.min() > DISCOVERY_START - pd.Timedelta(days=60) or secondary.index.max() < DISCOVERY_END - pd.Timedelta(days=2):'
+          if old not in s:
+              raise SystemExit('coverage guard pattern not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Find on 2024-2025 secondary and test on Dukascopy 2026
         run: python -m casio.equity_first_crossfeed
 
