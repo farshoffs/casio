@@ -1,0 +1,56 @@
+name: CASIO Patch Regime Router Pine
+
+on:
+  push:
+    branches: [feature/regime-router-dashboard-research]
+    paths:
+      - '.github/workflows/patch-regime-router-pine.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/regime-router-dashboard-research
+          fetch-depth: 0
+
+      - name: Apply Pine corrections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tradingview/casio_regime_router_dashboard_v1.pine')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('currency=currency.MYR,', 'currency="MYR",')
+          s = s.replace('commission_value=0.01,', 'commission_value=0.005,')
+          s = s.replace(
+              'riskCash = strategy.equity * riskPct\nqty = riskDistance > 0 ? riskCash / (riskDistance * pointValue) : na',
+              'riskCashAccount = strategy.equity * riskPct\nriskCashSymbol = strategy.convert_to_symbol(riskCashAccount)\nqty = riskDistance > 0 ? riskCashSymbol / (riskDistance * pointValue) : na',
+          )
+          # Repair an accidental physical newline inside the label string.
+          s = s.replace('+ "\\\n" + selected +', '+ "\\n" + selected +')
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Basic source audit
+        run: |
+          grep -F 'currency="MYR"' tradingview/casio_regime_router_dashboard_v1.pine
+          grep -F 'commission_value=0.005' tradingview/casio_regime_router_dashboard_v1.pine
+          grep -F 'strategy.convert_to_symbol' tradingview/casio_regime_router_dashboard_v1.pine
+          grep -F '+ "\n" + selected +' tradingview/casio_regime_router_dashboard_v1.pine
+
+      - name: Commit corrected Pine
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tradingview/casio_regime_router_dashboard_v1.pine
+          if git diff --cached --quiet; then
+            echo "No Pine changes"
+          else
+            git commit -m "fix: correct Regime Router Pine risk and formatting"
+            git push origin HEAD:feature/regime-router-dashboard-research
+          fi
