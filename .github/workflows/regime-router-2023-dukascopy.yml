@@ -1,0 +1,72 @@
+name: CASIO Frozen Regime Router — Dukascopy 2023
+
+on:
+  push:
+    branches: [feature/regime-router-dashboard-research]
+    paths:
+      - 'casio/regime_router_validation.py'
+      - '.github/workflows/regime-router-2023-dukascopy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: casio-regime-router-2023-dukascopy
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/regime-router-dashboard-research
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Fetch separate Dukascopy 2023 validation slice
+        run: |
+          mkdir -p tmp
+          node scripts/fetch_dukascopy.mjs \
+            --from 2022-10-01T00:00:00Z \
+            --to 2024-01-01T00:00:00Z \
+            --price-type bid \
+            --output tmp/xauusd_m5_dukascopy_2023_validation.csv
+
+      - name: Run frozen Regime Router on 2023
+        run: |
+          python -m casio.regime_router_validation \
+            --data tmp/xauusd_m5_dukascopy_2023_validation.csv \
+            --start 2023-01-01T00:00:00Z \
+            --end 2024-01-01T00:00:00Z \
+            --out reports/regime-router-2023-dukascopy
+
+      - name: Commit report and audit files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/regime-router-2023-dukascopy
+          if git diff --cached --quiet; then
+            echo "No report changes"
+          else
+            git commit -m "research: frozen Regime Router Dukascopy 2023"
+            git push origin HEAD:feature/regime-router-dashboard-research
+          fi
