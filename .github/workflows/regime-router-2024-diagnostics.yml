@@ -1,0 +1,51 @@
+name: CASIO Regime Router — 2024 Diagnostics
+
+on:
+  push:
+    branches: [feature/regime-router-dashboard-research]
+    paths:
+      - 'casio/regime_router_diagnostics.py'
+      - '.github/workflows/regime-router-2024-diagnostics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: casio-regime-router-2024-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/regime-router-dashboard-research
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run diagnostics
+        run: python -m casio.regime_router_diagnostics
+
+      - name: Commit diagnostic report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/regime-router-2024-diagnostics
+          if git diff --cached --quiet; then
+            echo "No report changes"
+          else
+            git commit -m "research: diagnose Regime Router 2024 failure"
+            git push origin HEAD:feature/regime-router-dashboard-research
+          fi
