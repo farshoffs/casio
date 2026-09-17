@@ -53,18 +53,22 @@ const fromArg = arg('--from');
 const output = arg('--output', 'tmp/dukascopy_xauusd_m5.csv');
 const priceType = arg('--price-type', 'bid');
 const to = isoFloorToClosedM5(arg('--to'));
+const chunkDays = Number(arg('--chunk-days', '31'));
+const pauseMs = Number(arg('--pause-ms', '1000'));
 
 if (!fromArg) throw new Error('--from is required');
 const from = new Date(fromArg);
 if (Number.isNaN(from.getTime())) throw new Error(`Invalid --from date: ${fromArg}`);
 if (from >= to) throw new Error(`Nothing to fetch: from=${from.toISOString()} to=${to.toISOString()}`);
 if (!['bid', 'ask'].includes(priceType)) throw new Error('--price-type must be bid or ask');
+if (!Number.isFinite(chunkDays) || chunkDays <= 0 || chunkDays > 31) throw new Error('--chunk-days must be >0 and <=31');
+if (!Number.isFinite(pauseMs) || pauseMs < 0) throw new Error('--pause-ms must be >=0');
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
 const stream = fs.createWriteStream(output, { encoding: 'utf8' });
 stream.write('timestamp,open,high,low,close,volume\n');
 
-const chunkMs = 31 * 24 * 60 * 60 * 1000;
+const chunkMs = chunkDays * 24 * 60 * 60 * 1000;
 let cursor = new Date(from);
 let rows = 0;
 let chunks = 0;
@@ -86,8 +90,10 @@ while (cursor < to) {
 
   cursor = chunkEnd;
   chunks += 1;
-  // Deliberately pace long backfills; daily incremental runs only fetch a few days.
-  if (cursor < to) await sleep(1000);
+  if (cursor < to && pauseMs > 0) {
+    console.log(`Pausing ${Math.round(pauseMs / 1000)}s before next Dukascopy chunk.`);
+    await sleep(pauseMs);
+  }
 }
 
 await new Promise((resolve, reject) => {
