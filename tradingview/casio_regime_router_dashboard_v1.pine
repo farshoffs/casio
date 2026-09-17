@@ -2,13 +2,13 @@
 strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1",
      overlay=true,
      initial_capital=100,
-     currency=currency.MYR,
+     currency="MYR",
      pyramiding=0,
      calc_on_order_fills=true,
      calc_on_every_tick=false,
      process_orders_on_close=false,
      commission_type=strategy.commission.percent,
-     commission_value=0.01,
+     commission_value=0.005,
      max_labels_count=500,
      max_lines_count=500)
 
@@ -390,8 +390,9 @@ entryEstimate = close
 riskDistance = math.abs(entryEstimate - selectedStop)
 riskAtr = atr > 0 ? riskDistance / atr : na
 pointValue = pointValueOverride > 0 ? pointValueOverride : math.max(syminfo.pointvalue, 0.0000001)
-riskCash = strategy.equity * riskPct
-qty = riskDistance > 0 ? riskCash / (riskDistance * pointValue) : na
+riskCashAccount = strategy.equity * riskPct
+riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
+qty = riskDistance > 0 ? riskCashSymbol / (riskDistance * pointValue) : na
 validRisk = not na(riskAtr) and riskAtr >= minRiskAtr and riskAtr <= maxRiskAtr and not na(qty) and qty > 0
 newSignal = finalDir != 0 and strategy.position_size == 0 and validRisk
 
