@@ -1,0 +1,4 @@
+year,feed,trades,trades_per_30d,min_completed_month_trades,ending_balance_rm,lowest_balance_rm,max_drawdown_pct,passes_frequency,passes_growth,requested_fit
+2024,secondary,433,35.49180327868852,31,6.8596109434215435,4.411332148154292,96.11861450757515,True,False,False
+2025,secondary,365,30.0,19,1056.1783571449484,97.42476311389939,58.04756171376949,True,True,True
+2026,dukascopy,284,32.951414068165334,22,842.284569884744,75.44963127711245,48.24777000764659,True,True,True
