@@ -49,3 +49,5 @@ jobs:
           git commit -m "research: v6 new strategy 2026 equity-first report"
           git pull --rebase origin feature/v6-session-trap
           git push origin HEAD:feature/v6-session-trap
+
+# Separate branch/run so prior CASIO strategy research cannot influence this test.
