@@ -5,6 +5,7 @@ on:
     branches: [feature/regime-router-dashboard-research]
     paths:
       - 'casio/regime_router_validation.py'
+      - 'scripts/fetch_dukascopy.mjs'
       - '.github/workflows/regime-router-2023-dukascopy.yml'
   workflow_dispatch:
 
@@ -43,13 +44,15 @@ jobs:
           pip install tabulate
           npm install --no-save dukascopy-node@1.50.0
 
-      - name: Fetch separate Dukascopy 2023 validation slice
+      - name: Fetch separate Dukascopy 2023 validation slice slowly
         run: |
           mkdir -p tmp
           node scripts/fetch_dukascopy.mjs \
             --from 2022-10-01T00:00:00Z \
             --to 2024-01-01T00:00:00Z \
             --price-type bid \
+            --chunk-days 31 \
+            --pause-ms 12000 \
             --output tmp/xauusd_m5_dukascopy_2023_validation.csv
 
       - name: Run frozen Regime Router on 2023
