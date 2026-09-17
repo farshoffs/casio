@@ -1,5 +1,5 @@
 //@version=6
-strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1",
+strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1.1",
      overlay=true,
      initial_capital=100,
      currency="MYR",
@@ -12,14 +12,23 @@ strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1",
      max_labels_count=500,
      max_lines_count=500)
 
-// Research implementation of the frozen CASIO Regime Router.
-// Designed for XAUUSD on 15-minute charts.
-// H1/H4 context uses completed candles only.
-// TradingView results will differ from the Python/Dukascopy research replay because
-// broker feeds, fills and independent source-technique shadow positions are not identical.
+// CASIO Regime Router — backtest-first TradingView implementation.
+// Designed for XAUUSD on a 15-minute chart. H1/H4 context uses completed candles only.
+// TradingView broker feeds/fills can differ from the Python/Dukascopy research replay.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Inputs
+// 00 · Mode / Backtest
+// ─────────────────────────────────────────────────────────────────────────────
+groupMode = "00 · Mode / Backtest"
+mode = input.string("BACKTEST", "Mode", options=["BACKTEST", "LIVE SIGNALS"], group=groupMode,
+     tooltip="BACKTEST automatically places simulated strategy orders inside the date range. LIVE SIGNALS does not place TradingView strategy orders; it keeps the dashboard and alerts active.")
+backtestStart = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Backtest start", group=groupMode)
+backtestEnd = input.time(timestamp("31 Dec 2026 23:59 +0000"), "Backtest end", group=groupMode)
+backtestMode = mode == "BACKTEST"
+inBacktestWindow = time >= backtestStart and time <= backtestEnd
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 01 · Risk & execution
 // ─────────────────────────────────────────────────────────────────────────────
 groupRisk = "01 · Risk & Execution"
 riskPct = input.float(5.0, "Risk % of current equity", minval=0.1, step=0.1, group=groupRisk) / 100.0
@@ -29,18 +38,29 @@ maxRiskAtr = input.float(3.0, "Maximum stop distance (ATR)", minval=0.5, step=0.
 tradeLongs = input.bool(true, "Allow longs", group=groupRisk)
 tradeShorts = input.bool(true, "Allow shorts", group=groupRisk)
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 02 · Router
+// ─────────────────────────────────────────────────────────────────────────────
 groupRouter = "02 · Router"
 trendAdxThreshold = input.float(18.0, "Strong H4 trend ADX", minval=5, step=0.5, group=groupRouter)
 supportBars = input.int(2, "Recent agreement window (M15 bars)", minval=1, maxval=4, group=groupRouter)
 requireM15 = input.bool(true, "Require chart timeframe = 15m", group=groupRouter)
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 03 · Alerts / webhook
+// ─────────────────────────────────────────────────────────────────────────────
 groupAlert = "03 · Alerts / Webhook"
 enableAlerts = input.bool(true, "Emit JSON alert() on new portfolio signal", group=groupAlert)
-webhookSecret = input.string("", "Webhook shared secret", group=groupAlert, tooltip="Optional. Must match SIGNAL_SECRET on the Vercel endpoint. Keep this script private if you use a secret here.")
+webhookSecret = input.string("", "Webhook shared secret", group=groupAlert,
+     tooltip="Optional. Must match SIGNAL_SECRET on the Vercel endpoint. Keep this script private if you use a secret here.")
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 04 · Dashboard / chart
+// ─────────────────────────────────────────────────────────────────────────────
 groupVisual = "04 · Dashboard"
 showDashboard = input.bool(true, "Show dashboard", group=groupVisual)
-showTradeLevels = input.bool(true, "Plot active entry / stop / target", group=groupVisual)
+showTradeLevels = input.bool(true, "Show Entry / SL / TP lines", group=groupVisual)
+keepLastLevels = input.bool(true, "Keep last trade levels after exit", group=groupVisual)
 showSignalLabels = input.bool(true, "Show portfolio signal labels", group=groupVisual)
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,9 +90,7 @@ f_mtf_target(_base, _dir, _h1, _h4, _h4adx) =>
     [not blocked, target]
 
 f_recent(_lastBar) => not na(_lastBar) and bar_index - _lastBar <= supportBars
-
 f_fmt(_x) => na(_x) ? "—" : str.tostring(_x, "#.##")
-f_money(_x) => na(_x) ? "—" : "RM " + str.tostring(_x, "#.##")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // M15 features
@@ -99,7 +117,6 @@ ll20 = ta.lowest(low[1], 20)
 
 bullFvg = low > high[2]
 bearFvg = high < low[2]
-
 dispLong = bull and bodyFrac >= 0.55 and closeLoc >= 0.68 and rangeAtr >= 0.80 and close > hh5
 dispShort = bear and bodyFrac >= 0.55 and closeLoc <= 0.32 and rangeAtr >= 0.80 and close < ll5
 
@@ -114,8 +131,7 @@ primary = (minsUtc >= 420 and minsUtc < 720) or (minsUtc >= 750 and minsUtc < 10
 prevDayHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 prevDayLow = request.security(syminfo.tickerid, "D", low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
-// Completed HTF candles only: one-bar offset + lookahead_on is the standard
-// non-repainting historical/real-time alignment pattern.
+// Completed higher-timeframe candles only.
 h1Close = request.security(syminfo.tickerid, "60", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 h1Ema20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 h1Ema50 = request.security(syminfo.tickerid, "60", ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
@@ -181,11 +197,9 @@ spDir = f_bool_dir(spLongRaw, spShortRaw)
 spR = spDir == 1 ? spLongR : spDir == -1 ? spShortR : spBaseR
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Technique 5 — frozen M15-0591 MTF
-// 20-bar breakout, >=1.20 ATR expansion, >=55% body, <=50% pullback,
-// confirmation within four M15 bars. Base target 3R, graded by H1/H4 context.
+// Technique 5 — M15-0591 MTF
 // ─────────────────────────────────────────────────────────────────────────────
-var int m0591State = 0       // +1 waiting long pullback, -1 short, 0 idle
+var int m0591State = 0
 var int m0591ImpulseBar = na
 var float m0591ImpOpen = na
 var float m0591ImpClose = na
@@ -265,7 +279,7 @@ if m0591State != 0 and bar_index > m0591ImpulseBar
 
 m0591Dir = f_bool_dir(m0591LongConfirm, m0591ShortConfirm)
 
-// Track last raw signal bar for the 30-minute mixed-regime support rule.
+// Recent source-signal memory for mixed-regime support.
 var int last0591Long = na
 var int last0591Short = na
 var int lastV1Long = na
@@ -308,10 +322,10 @@ f_support_count(_dir) =>
     c
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Frozen Regime Router selection
+// Frozen Regime Router
 // Trend priority: 0591 -> V1 -> Outcome -> Structural Portfolio -> Structural Freq
 // Mixed priority: Structural Portfolio -> Outcome -> Structural Freq -> 0591 -> V1
-// Momentum techniques in mixed regime require a second agreeing technique.
+// Momentum techniques in mixed mode need a second agreeing technique.
 // ─────────────────────────────────────────────────────────────────────────────
 int finalDir = 0
 string selected = "WAIT"
@@ -384,7 +398,7 @@ if requireM15 and not isM15
     finalDir := 0
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Portfolio strategy execution
+// Portfolio signal + risk sizing
 // ─────────────────────────────────────────────────────────────────────────────
 entryEstimate = close
 riskDistance = math.abs(entryEstimate - selectedStop)
@@ -394,28 +408,32 @@ riskCashAccount = strategy.equity * riskPct
 riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
 qty = riskDistance > 0 ? riskCashSymbol / (riskDistance * pointValue) : na
 validRisk = not na(riskAtr) and riskAtr >= minRiskAtr and riskAtr <= maxRiskAtr and not na(qty) and qty > 0
-newSignal = finalDir != 0 and strategy.position_size == 0 and validRisk
+portfolioSignal = finalDir != 0 and validRisk
+signalTarget = portfolioSignal ? entryEstimate + finalDir * selectedR * riskDistance : na
+
+// In BACKTEST mode, TradingView creates simulated orders automatically.
+// In LIVE SIGNALS mode, the dashboard/alerts remain active without simulated entries.
+backtestEntry = backtestMode and inBacktestWindow and portfolioSignal and strategy.position_size == 0
+liveEntrySignal = not backtestMode and portfolioSignal and not portfolioSignal[1]
+visualSignal = backtestEntry or liveEntrySignal
 
 var float pendingStop = na
 var float pendingR = na
 var string pendingTechnique = ""
-var int pendingDir = 0
 var float activeStop = na
 var float activeTarget = na
 var float activeR = na
 var string activeTechnique = ""
 
-if newSignal
+if backtestEntry
     pendingStop := selectedStop
     pendingR := selectedR
     pendingTechnique := selected
-    pendingDir := finalDir
     if finalDir == 1
         strategy.entry("RR-L", strategy.long, qty=qty, comment=selected)
     else
         strategy.entry("RR-S", strategy.short, qty=qty, comment=selected)
 
-// calc_on_order_fills lets this block execute immediately after a historical fill.
 openedLong = strategy.position_size > 0 and strategy.position_size[1] <= 0
 openedShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
 if openedLong or openedShort
@@ -430,6 +448,9 @@ if strategy.position_size > 0 and not na(activeStop) and not na(activeTarget)
 if strategy.position_size < 0 and not na(activeStop) and not na(activeTarget)
     strategy.exit("RR-S-X", "RR-S", stop=activeStop, limit=activeTarget)
 
+if backtestMode and time > backtestEnd and strategy.position_size != 0
+    strategy.close_all(comment="Backtest end")
+
 closedNow = strategy.position_size == 0 and strategy.position_size[1] != 0
 if closedNow
     activeStop := na
@@ -438,9 +459,76 @@ if closedNow
     activeTechnique := ""
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Persistent chart levels: Entry / SL / TP
+// ─────────────────────────────────────────────────────────────────────────────
+var line entryLine = na
+var line stopLine = na
+var line targetLine = na
+var label entryTag = na
+var label stopTag = na
+var label targetTag = na
+
+f_clear_levels() =>
+    if not na(entryLine)
+        line.delete(entryLine)
+    if not na(stopLine)
+        line.delete(stopLine)
+    if not na(targetLine)
+        line.delete(targetLine)
+    if not na(entryTag)
+        label.delete(entryTag)
+    if not na(stopTag)
+        label.delete(stopTag)
+    if not na(targetTag)
+        label.delete(targetTag)
+
+if visualSignal and showTradeLevels
+    f_clear_levels()
+    entryLine := line.new(bar_index, entryEstimate, bar_index + 1, entryEstimate, extend=extend.right,
+         color=color.new(color.white, 20), width=1, style=line.style_dashed)
+    stopLine := line.new(bar_index, selectedStop, bar_index + 1, selectedStop, extend=extend.right,
+         color=color.rgb(255, 91, 111), width=2)
+    targetLine := line.new(bar_index, signalTarget, bar_index + 1, signalTarget, extend=extend.right,
+         color=color.rgb(38, 208, 124), width=2)
+    entryTag := label.new(bar_index + 1, entryEstimate, "ENTRY  " + f_fmt(entryEstimate), style=label.style_label_left,
+         textcolor=color.white, color=color.new(color.rgb(70, 80, 96), 15), size=size.small)
+    stopTag := label.new(bar_index + 1, selectedStop, "SL  " + f_fmt(selectedStop), style=label.style_label_left,
+         textcolor=color.white, color=color.new(color.rgb(180, 45, 62), 5), size=size.small)
+    targetTag := label.new(bar_index + 1, signalTarget, "TP  " + f_fmt(signalTarget) + " · " + f_fmt(selectedR) + "R",
+         style=label.style_label_left, textcolor=color.white, color=color.new(color.rgb(19, 120, 78), 5), size=size.small)
+
+// After a simulated fill, move the visible entry/TP levels to the actual Strategy Tester fill.
+if (openedLong or openedShort) and showTradeLevels
+    if not na(entryLine)
+        line.set_y1(entryLine, strategy.position_avg_price)
+        line.set_y2(entryLine, strategy.position_avg_price)
+    if not na(entryTag)
+        label.set_y(entryTag, strategy.position_avg_price)
+        label.set_text(entryTag, "ENTRY  " + f_fmt(strategy.position_avg_price))
+    if not na(targetLine)
+        line.set_y1(targetLine, activeTarget)
+        line.set_y2(targetLine, activeTarget)
+    if not na(targetTag)
+        label.set_y(targetTag, activeTarget)
+        label.set_text(targetTag, "TP  " + f_fmt(activeTarget) + " · " + f_fmt(activeR) + "R")
+
+// Keep level tags close to the right edge while the chart advances.
+if showTradeLevels
+    if not na(entryTag)
+        label.set_x(entryTag, bar_index + 2)
+    if not na(stopTag)
+        label.set_x(stopTag, bar_index + 2)
+    if not na(targetTag)
+        label.set_x(targetTag, bar_index + 2)
+
+if closedNow and showTradeLevels and not keepLastLevels
+    f_clear_levels()
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Alerts
 // ─────────────────────────────────────────────────────────────────────────────
-if newSignal and enableAlerts
+alertSignal = (backtestMode ? backtestEntry : liveEntrySignal)
+if alertSignal and enableAlerts
     targetEstimate = entryEstimate + finalDir * selectedR * riskDistance
     payload = "{" +
       "\"source\":\"CASIO_REGIME_ROUTER_V1\"," +
@@ -461,32 +549,22 @@ if newSignal and enableAlerts
       "\"bar_time\":" + str.tostring(time) + "}"
     alert(payload, alert.freq_once_per_bar_close)
 
-alertcondition(newSignal and finalDir == 1, "CASIO Regime Router LONG", "CASIO Regime Router LONG — create an alert using 'Any alert() function call' for full JSON.")
-alertcondition(newSignal and finalDir == -1, "CASIO Regime Router SHORT", "CASIO Regime Router SHORT — create an alert using 'Any alert() function call' for full JSON.")
+alertcondition(alertSignal and finalDir == 1, "CASIO Regime Router LONG", "CASIO Regime Router LONG — use Any alert() function call for full JSON.")
+alertcondition(alertSignal and finalDir == -1, "CASIO Regime Router SHORT", "CASIO Regime Router SHORT — use Any alert() function call for full JSON.")
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Visuals
-// ─────────────────────────────────────────────────────────────────────────────
-plot(showTradeLevels and strategy.position_size != 0 ? strategy.position_avg_price : na, "Active Entry", color=color.new(color.white, 15), linewidth=2, style=plot.style_linebr)
-plot(showTradeLevels and strategy.position_size != 0 ? activeStop : na, "Active Stop", color=color.new(color.rgb(255, 91, 111), 5), linewidth=2, style=plot.style_linebr)
-plot(showTradeLevels and strategy.position_size != 0 ? activeTarget : na, "Active Target", color=color.new(color.rgb(38, 208, 124), 5), linewidth=2, style=plot.style_linebr)
-
-if newSignal and showSignalLabels
+if visualSignal and showSignalLabels
     label.new(bar_index, finalDir == 1 ? low : high,
       (finalDir == 1 ? "▲ LONG" : "▼ SHORT") + "\n" + selected + " · " + str.tostring(selectedR, "#") + "R",
       style=finalDir == 1 ? label.style_label_up : label.style_label_down,
-      textcolor=color.white,
-      color=color.new(f_dir_color(finalDir), 10),
-      size=size.small)
+      textcolor=color.white, color=color.new(f_dir_color(finalDir), 10), size=size.small)
 
-// Styled four-column dashboard. Pine tables are limited primitives, so the panel
-// uses section bars, compact status chips and strong contrast rather than a plain grid.
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
 var table dash = table.new(position.top_right, 4, 13,
      bgcolor=color.new(color.rgb(12, 17, 25), 4),
-     frame_color=color.new(color.rgb(58, 70, 88), 30),
-     frame_width=1,
-     border_color=color.new(color.rgb(58, 70, 88), 65),
-     border_width=1)
+     frame_color=color.new(color.rgb(58, 70, 88), 30), frame_width=1,
+     border_color=color.new(color.rgb(58, 70, 88), 65), border_width=1)
 
 f_cell(_c, _r, _txt, _bg, _tc, _sz) =>
     table.cell(dash, _c, _r, _txt, bgcolor=_bg, text_color=_tc, text_size=_sz)
@@ -500,11 +578,13 @@ if barstate.islast and showDashboard
     green = color.rgb(38, 208, 124)
     red = color.rgb(255, 91, 111)
     amber = color.rgb(247, 186, 72)
+    modeText = backtestMode ? "BACKTEST" : "LIVE"
+    modeBg = backtestMode ? color.rgb(62, 72, 145) : color.rgb(22, 104, 75)
 
     f_cell(0, 0, "CASIO", color.rgb(28, 66, 129), color.white, size.large)
     f_cell(1, 0, "REGIME ROUTER", color.rgb(28, 66, 129), color.white, size.normal)
     f_cell(2, 0, syminfo.ticker, color.rgb(28, 66, 129), color.white, size.normal)
-    f_cell(3, 0, isM15 ? "M15 · LIVE" : "USE M15", isM15 ? color.rgb(22, 104, 75) : color.rgb(130, 55, 58), color.white, size.normal)
+    f_cell(3, 0, isM15 ? "M15 · " + modeText : "USE M15", isM15 ? modeBg : color.rgb(130, 55, 58), color.white, size.normal)
 
     f_cell(0, 1, "MARKET STATE", panel2, muted, size.small)
     f_cell(1, 1, "H1", panel2, muted, size.small)
@@ -561,15 +641,17 @@ if barstate.islast and showDashboard
     f_cell(2, 10, displayTechnique, signalBg, color.white, size.small)
     f_cell(3, 10, not na(displayR) ? f_fmt(displayR) + "R" : "—", signalBg, color.white, size.normal)
 
-    entryShow = strategy.position_size != 0 ? strategy.position_avg_price : entryEstimate
-    stopShow = strategy.position_size != 0 ? activeStop : selectedStop
-    targetShow = strategy.position_size != 0 ? activeTarget : (finalDir != 0 and not na(selectedStop) ? entryEstimate + finalDir * selectedR * math.abs(entryEstimate - selectedStop) : na)
-    f_cell(0, 11, "ENTRY", panel2, muted, size.small)
-    f_cell(1, 11, f_fmt(entryShow), panel2, ink, size.small)
+    entryShow = strategy.position_size != 0 ? strategy.position_avg_price : finalDir != 0 ? entryEstimate : na
+    stopShow = strategy.position_size != 0 ? activeStop : finalDir != 0 ? selectedStop : na
+    targetShow = strategy.position_size != 0 ? activeTarget : finalDir != 0 ? signalTarget : na
+    f_cell(0, 11, "LEVELS", panel2, muted, size.small)
+    f_cell(1, 11, "ENTRY " + f_fmt(entryShow), panel2, ink, size.small)
     f_cell(2, 11, "SL " + f_fmt(stopShow), panel2, red, size.small)
     f_cell(3, 11, "TP " + f_fmt(targetShow), panel2, green, size.small)
 
-    f_cell(0, 12, "EQUITY", panel, muted, size.small)
-    f_cell(1, 12, f_money(strategy.equity), panel, ink, size.small)
+    windowText = backtestMode ? (inBacktestWindow ? "IN RANGE" : "OUTSIDE") : "ALERT MODE"
+    windowBg = backtestMode and not inBacktestWindow ? color.new(amber, 75) : color.new(green, 82)
+    f_cell(0, 12, "MODE", panel, muted, size.small)
+    f_cell(1, 12, modeText, modeBg, color.white, size.small)
     f_cell(2, 12, "Risk " + str.tostring(riskPct * 100, "#.##") + "%", panel, muted, size.small)
-    f_cell(3, 12, validRisk or finalDir == 0 ? "READY" : "RISK FILTER", validRisk or finalDir == 0 ? color.new(green, 82) : color.new(amber, 78), ink, size.small)
+    f_cell(3, 12, windowText, windowBg, ink, size.small)
