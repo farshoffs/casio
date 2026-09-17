@@ -19,7 +19,7 @@ weeklyTarget = input.int(8, "Weekly target", minval=1, maxval=20, group=groupCor
 cooldownBars = input.int(9, "Cooldown M5 bars", minval=0, maxval=60, group=groupCore)
 setupLifetimeBars = input.int(12, "M15 setup lifetime (M5 bars)", minval=3, maxval=36, group=groupCore)
 
- groupRisk = "Risk / execution"
+groupRisk = "Risk / execution"
 backtestQty = input.float(1.0, "Order size (contracts)", minval=0.01, step=0.01, group=groupRisk)
 minRiskAtr = input.float(0.40, "Minimum stop / M5 ATR", minval=0.10, maxval=2.00, step=0.05, group=groupRisk)
 maxRiskAtr = input.float(1.60, "Maximum stop / M5 ATR", minval=0.50, maxval=4.00, step=0.10, group=groupRisk)
