@@ -1,0 +1,4 @@
+window,trades,trades_per_30d,min_completed_month_trades,ending_balance_rm,lowest_balance_rm,passes_frequency,passes_growth,requested_fit
+2024,433,35.49180327868852,31,6.859610943421534,4.411332148154285,True,False,False
+2025,365,30.0,19,975.673102533197,97.4247631138994,True,True,True
+2024-2025 continuous,798,32.74965800273598,19,66.92737891338751,4.411332148154285,True,False,False
