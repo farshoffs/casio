@@ -1,9 +1,11 @@
 using System;
 using System.Globalization;
-using System.IO;
 using System.Text;
 using cAlgo.API;
 using cAlgo.API.Internals;
+using IOFile = System.IO.File;
+using IOFileInfo = System.IO.FileInfo;
+using IOPath = System.IO.Path;
 
 namespace cAlgo.Robots
 {
@@ -60,42 +62,50 @@ namespace cAlgo.Robots
                 return;
             }
 
-            _m15Bars = MarketData.GetBars(TimeFrame.Minute15, SymbolName);
-
-            if (RebuildCsvOnStart && File.Exists(_fileName))
+            try
             {
-                File.Delete(_fileName);
-                Print("CASIO CSV exporter: existing file deleted for full rebuild.");
+                _m15Bars = MarketData.GetBars(TimeFrame.Minute15, SymbolName);
+
+                if (RebuildCsvOnStart && IOFile.Exists(_fileName))
+                {
+                    IOFile.Delete(_fileName);
+                    Print("CASIO CSV exporter: existing file deleted for full rebuild.");
+                }
+
+                EnsureCsvHeader();
+                _lastWrittenOpenTime = ReadLastWrittenOpenTime();
+
+                var historyTarget = _lastWrittenOpenTime.HasValue && !RebuildCsvOnStart
+                    ? _lastWrittenOpenTime.Value
+                    : _startUtc;
+
+                LoadHistoryTo(historyTarget);
+                SyncClosedBarsToCsv();
+
+                if (AppendNewBars)
+                {
+                    _m15Bars.BarClosed += OnM15BarClosed;
+                    Print("CASIO CSV exporter: live M15 append enabled.");
+                }
+                else
+                {
+                    Print("CASIO CSV exporter: historical export complete; live append disabled.");
+                }
+
+                Print("CASIO CSV exporter ready.");
+                Print("Symbol: {0} | Timeframe: M15 | Start UTC: {1:yyyy-MM-dd}", SymbolName, _startUtc);
+                Print("CSV: {0}", _fileName);
+                Print("Last written M15 bar: {0}",
+                    _lastWrittenOpenTime.HasValue
+                        ? _lastWrittenOpenTime.Value.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", _invariant)
+                        : "none");
+                Print("Local file folder: Documents/cAlgo/Data/cBots/CasioFxProM15CsvExporter/");
             }
-
-            EnsureCsvHeader();
-            _lastWrittenOpenTime = ReadLastWrittenOpenTime();
-
-            var historyTarget = _lastWrittenOpenTime.HasValue && !RebuildCsvOnStart
-                ? _lastWrittenOpenTime.Value
-                : _startUtc;
-
-            LoadHistoryTo(historyTarget);
-            SyncClosedBarsToCsv();
-
-            if (AppendNewBars)
+            catch (Exception ex)
             {
-                _m15Bars.BarClosed += OnM15BarClosed;
-                Print("CASIO CSV exporter: live M15 append enabled.");
+                Print("CASIO CSV exporter stopped with error: {0}", ex.Message);
+                Stop();
             }
-            else
-            {
-                Print("CASIO CSV exporter: historical export complete; live append disabled.");
-            }
-
-            Print("CASIO CSV exporter ready.");
-            Print("Symbol: {0} | Timeframe: M15 | Start UTC: {1:yyyy-MM-dd}", SymbolName, _startUtc);
-            Print("CSV: {0}", _fileName);
-            Print("Last written M15 bar: {0}",
-                _lastWrittenOpenTime.HasValue
-                    ? _lastWrittenOpenTime.Value.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", _invariant)
-                    : "none");
-            Print("Local file folder: Documents/cAlgo/Data/cBots/CasioFxProM15CsvExporter/");
         }
 
         protected override void OnStop()
@@ -109,10 +119,19 @@ namespace cAlgo.Robots
             if (!AppendNewBars || args == null || args.Bars == null || args.Bars.Count == 0)
                 return;
 
-            // During BarClosed the just-opened bar is omitted, so LastBar is the bar
-            // that has just completed.
+            // In BarClosed, the newly opened bar is omitted from the collection.
+            // LastBar is therefore the M15 bar that has just completed.
             var closedBar = args.Bars.LastBar;
-            AppendBarIfNew(closedBar);
+
+            try
+            {
+                AppendBarIfNew(closedBar);
+            }
+            catch (Exception ex)
+            {
+                Print("CASIO CSV live append failed for {0:yyyy-MM-dd HH:mm:ss} UTC: {1}",
+                    closedBar.OpenTime, ex.Message);
+            }
         }
 
         private void LoadHistoryTo(DateTime targetUtc)
@@ -195,13 +214,13 @@ namespace cAlgo.Robots
 
                 if (appended % 5000 == 0)
                 {
-                    File.AppendAllText(_fileName, buffer.ToString(), new UTF8Encoding(false));
+                    IOFile.AppendAllText(_fileName, buffer.ToString(), new UTF8Encoding(false));
                     buffer.Clear();
                 }
             }
 
             if (buffer.Length > 0)
-                File.AppendAllText(_fileName, buffer.ToString(), new UTF8Encoding(false));
+                IOFile.AppendAllText(_fileName, buffer.ToString(), new UTF8Encoding(false));
 
             Print("CASIO CSV exporter sync: appended {0} closed M15 bar(s).", appended);
         }
@@ -214,7 +233,7 @@ namespace cAlgo.Robots
             if (_lastWrittenOpenTime.HasValue && bar.OpenTime <= _lastWrittenOpenTime.Value)
                 return;
 
-            File.AppendAllText(_fileName, ToCsvRow(bar) + Environment.NewLine, new UTF8Encoding(false));
+            IOFile.AppendAllText(_fileName, ToCsvRow(bar) + Environment.NewLine, new UTF8Encoding(false));
             _lastWrittenOpenTime = bar.OpenTime;
 
             Print("CSV appended: {0:yyyy-MM-dd HH:mm:ss} UTC | O {1} H {2} L {3} C {4} | ticks {5}",
@@ -228,27 +247,27 @@ namespace cAlgo.Robots
 
         private bool IsClosed(Bar bar)
         {
-            // M15 candle is complete 15 minutes after its open time.
+            // A M15 candle is complete 15 minutes after its open time.
             return bar.OpenTime.AddMinutes(15) <= Server.Time;
         }
 
         private void EnsureCsvHeader()
         {
-            if (!File.Exists(_fileName))
+            if (!IOFile.Exists(_fileName))
             {
-                File.WriteAllText(_fileName, Header + Environment.NewLine, new UTF8Encoding(false));
+                IOFile.WriteAllText(_fileName, Header + Environment.NewLine, new UTF8Encoding(false));
                 return;
             }
 
-            var info = new FileInfo(_fileName);
+            var info = new IOFileInfo(_fileName);
             if (info.Length == 0)
             {
-                File.WriteAllText(_fileName, Header + Environment.NewLine, new UTF8Encoding(false));
+                IOFile.WriteAllText(_fileName, Header + Environment.NewLine, new UTF8Encoding(false));
                 return;
             }
 
             string firstLine = null;
-            foreach (var line in File.ReadLines(_fileName))
+            foreach (var line in IOFile.ReadLines(_fileName))
             {
                 firstLine = line;
                 break;
@@ -264,11 +283,11 @@ namespace cAlgo.Robots
 
         private DateTime? ReadLastWrittenOpenTime()
         {
-            if (!File.Exists(_fileName))
+            if (!IOFile.Exists(_fileName))
                 return null;
 
             string lastDataLine = null;
-            foreach (var line in File.ReadLines(_fileName))
+            foreach (var line in IOFile.ReadLines(_fileName))
             {
                 if (!string.IsNullOrWhiteSpace(line) && !line.StartsWith("time_utc,", StringComparison.Ordinal))
                     lastDataLine = line;
@@ -319,10 +338,10 @@ namespace cAlgo.Robots
             if (string.IsNullOrEmpty(value))
                 return string.Empty;
 
-            if (!value.Contains(",") && !value.Contains(""") && !value.Contains("\n") && !value.Contains("\r"))
+            if (!value.Contains(",") && !value.Contains("\"") && !value.Contains("\n") && !value.Contains("\r"))
                 return value;
 
-            return """ + value.Replace(""", """") + """;
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
         }
 
         private static string NormalizeFileName(string raw)
@@ -330,7 +349,7 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(raw))
                 return null;
 
-            var safe = Path.GetFileName(raw.Trim());
+            var safe = IOPath.GetFileName(raw.Trim());
             if (string.IsNullOrWhiteSpace(safe))
                 return null;
 
