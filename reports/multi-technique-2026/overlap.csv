@@ -1,0 +1,21 @@
+technique_a,technique_b,same_direction_overlap,opposite_direction_overlap
+M15-0591 MTF,Structural Portfolio MTF,4,3
+M15-0591 MTF,Outcome First M15,3,3
+M15-0591 MTF,V1 Legacy M15,28,0
+M15-0591 MTF,Structural Frequency M15,2,1
+Structural Portfolio MTF,M15-0591 MTF,4,3
+Structural Portfolio MTF,Outcome First M15,40,0
+Structural Portfolio MTF,V1 Legacy M15,7,2
+Structural Portfolio MTF,Structural Frequency M15,54,0
+Outcome First M15,M15-0591 MTF,3,3
+Outcome First M15,Structural Portfolio MTF,40,0
+Outcome First M15,V1 Legacy M15,15,2
+Outcome First M15,Structural Frequency M15,48,0
+V1 Legacy M15,M15-0591 MTF,28,0
+V1 Legacy M15,Structural Portfolio MTF,7,2
+V1 Legacy M15,Outcome First M15,15,2
+V1 Legacy M15,Structural Frequency M15,13,2
+Structural Frequency M15,M15-0591 MTF,2,1
+Structural Frequency M15,Structural Portfolio MTF,54,0
+Structural Frequency M15,Outcome First M15,48,0
+Structural Frequency M15,V1 Legacy M15,13,2
