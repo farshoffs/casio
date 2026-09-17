@@ -1,5 +1,5 @@
 //@version=6
-strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1.1",
+strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1.2",
      overlay=true,
      initial_capital=100,
      currency="MYR",
@@ -128,19 +128,15 @@ buySweepAge = ta.barssince(buySweep)
 minsUtc = hour(time, "UTC") * 60 + minute(time, "UTC")
 primary = (minsUtc >= 420 and minsUtc < 720) or (minsUtc >= 750 and minsUtc < 1020)
 
-prevDayHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-prevDayLow = request.security(syminfo.tickerid, "D", low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+// Group same-timeframe values into one request.security() call.
+// Expressions and completed-candle offsets are unchanged from v1.1.
+[prevDayHigh, prevDayLow] = request.security(syminfo.tickerid, "D", [high[1], low[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 // Completed higher-timeframe candles only.
-h1Close = request.security(syminfo.tickerid, "60", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h1Ema20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h1Ema50 = request.security(syminfo.tickerid, "60", ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[h1Close, h1Ema20, h1Ema50] = request.security(syminfo.tickerid, "60", [close[1], ta.ema(close, 20)[1], ta.ema(close, 50)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 h1Bias = f_bias(h1Close, h1Ema20, h1Ema50)
 
-h4Close = request.security(syminfo.tickerid, "240", close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h4Ema20 = request.security(syminfo.tickerid, "240", ta.ema(close, 20)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h4Ema50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h4Adx = request.security(syminfo.tickerid, "240", f_adx()[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[h4Close, h4Ema20, h4Ema50, h4Adx] = request.security(syminfo.tickerid, "240", [close[1], ta.ema(close, 20)[1], ta.ema(close, 50)[1], f_adx()[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 h4Bias = f_bias(h4Close, h4Ema20, h4Ema50)
 
 htfLong = h1Bias >= 0 and h4Bias >= 0
@@ -321,6 +317,10 @@ f_support_count(_dir) =>
     c += _dir == 1 and f_recent(lastSfLong) ? 1 : _dir == -1 and f_recent(lastSfShort) ? 1 : 0
     c
 
+// Compute agreement once per M15 bar and reuse it in router + dashboard.
+supportLong = f_support_count(1)
+supportShort = f_support_count(-1)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Frozen Regime Router
 // Trend priority: 0591 -> V1 -> Outcome -> Structural Portfolio -> Structural Freq
@@ -379,12 +379,12 @@ else
         selected := "Structural Frequency M15"
         selectedR := sfR
         selectedStop := sfDir == 1 ? stdLongStop : stdShortStop
-    else if m0591Dir != 0 and f_support_count(m0591Dir) >= 2
+    else if m0591Dir != 0 and (m0591Dir == 1 ? supportLong : supportShort) >= 2
         finalDir := m0591Dir
         selected := "M15-0591 MTF"
         selectedR := m0591SignalR
         selectedStop := m0591SignalStop
-    else if v1Dir != 0 and f_support_count(v1Dir) >= 2
+    else if v1Dir != 0 and (v1Dir == 1 ? supportLong : supportShort) >= 2
         finalDir := v1Dir
         selected := "V1 Legacy M15"
         selectedR := v1R
@@ -625,8 +625,6 @@ if barstate.islast and showDashboard
     f_cell(2, 8, sfDir != 0 ? f_fmt(sfR) + "R" : "—", panel, ink, size.small)
     f_cell(3, 8, "Structure", panel, muted, size.small)
 
-    supportLong = f_support_count(1)
-    supportShort = f_support_count(-1)
     f_cell(0, 9, "AGREEMENT", panel2, muted, size.small)
     f_cell(1, 9, "▲ " + str.tostring(supportLong), color.new(green, 84), ink, size.small)
     f_cell(2, 9, "▼ " + str.tostring(supportShort), color.new(red, 84), ink, size.small)
