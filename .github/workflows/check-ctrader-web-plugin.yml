@@ -1,0 +1,54 @@
+name: Check cTrader web plugin
+
+on:
+  push:
+    branches:
+      - feature/regime-router-dashboard-research
+    paths:
+      - ctrader-web-plugin/regime-router-dashboard/index.html
+      - .github/workflows/check-ctrader-web-plugin.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract module JavaScript
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path("ctrader-web-plugin/regime-router-dashboard/index.html")
+          s = p.read_text(encoding="utf-8")
+          m = re.search(r'<script type="module">(.*?)</script>', s, re.S)
+          if not m:
+              raise SystemExit("module script not found")
+          js = m.group(1)
+          Path("/tmp/casio-dashboard.mjs").write_text(js, encoding="utf-8")
+          required = [
+              "M15-0591 MTF",
+              "V1 Legacy M15",
+              "Outcome First M15",
+              "Structural Portfolio MTF",
+              "Structural Frequency M15",
+              "trendAdxThreshold=18",
+              "supportBars=2",
+              "getTrendbarList",
+              "subscribeQuotes",
+          ]
+          for token in required:
+              if token not in js:
+                  raise SystemExit(f"missing required dashboard token: {token}")
+          forbidden = ["createNewOrder", "modifyOrder", "closePosition", "cancelOrder"]
+          for token in forbidden:
+              if token in js:
+                  raise SystemExit(f"read-only guard failed: {token} present")
+          print("dashboard source guardrails passed")
+          PY
+      - name: Check JavaScript syntax
+        run: node --check /tmp/casio-dashboard.mjs
