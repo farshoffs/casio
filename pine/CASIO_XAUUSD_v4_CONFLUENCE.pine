@@ -11,14 +11,15 @@ strategy("CASIO XAUUSD v4 — Confluence Signal Engine", overlay=true, pyramidin
 // Inputs
 // ─────────────────────────────────────────────────────────────────────────────
 groupProfile = "CASIO v4 profile"
-profile = input.string("FREQUENCY", "Profile", options=["QUALITY_70", "BALANCED", "FREQUENCY"], group=groupProfile)
+profile = input.string("QUALITY_70", "Profile", options=["QUALITY_70", "BALANCED", "FREQUENCY"], group=groupProfile)
 targetR = input.float(0.60, "Take-profit R", minval=0.50, maxval=3.00, step=0.05, group=groupProfile)
 minRiskAtr = input.float(0.35, "Minimum stop distance / ATR", minval=0.10, step=0.05, group=groupProfile)
 maxRiskAtr = input.float(1.80, "Maximum stop distance / ATR", minval=0.50, step=0.10, group=groupProfile)
 stopBufferAtr = input.float(0.15, "Structural stop buffer / ATR", minval=0.00, step=0.05, group=groupProfile)
-maxTradesPerDay = input.int(3, "Maximum accepted trades / day", minval=1, maxval=8, group=groupProfile)
-cooldownBars = input.int(6, "Cooldown M5 bars", minval=0, maxval=60, group=groupProfile)
+maxTradesPerDay = input.int(2, "Maximum accepted trades / day", minval=1, maxval=8, group=groupProfile)
+cooldownBars = input.int(9, "Cooldown M5 bars", minval=0, maxval=60, group=groupProfile)
 weeklyTarget = input.int(8, "Weekly trade target", minval=1, maxval=25, group=groupProfile)
+maxTradesPerWeek = input.int(10, "Maximum accepted trades / week", minval=5, maxval=25, group=groupProfile)
 winRateTarget = input.float(70.0, "Win-rate target %", minval=40, maxval=90, step=1, group=groupProfile)
 
 // TradingView strategy/backtest execution. Explicit quantity avoids broker-emulator
@@ -52,7 +53,7 @@ groupSession = "Sessions UTC"
 asiaSession = input.session("0000-0600", "Asia", group=groupSession)
 londonSession = input.session("0700-1130", "London", group=groupSession)
 newYorkSession = input.session("1230-1700", "New York", group=groupSession)
-tradeAsia = input.bool(true, "Allow high-score Asia setups", group=groupSession)
+tradeAsia = input.bool(false, "Allow high-score Asia setups", group=groupSession)
 tradeOther = input.bool(false, "Allow transition setups", group=groupSession)
 
 groupDisplay = "Display"
@@ -69,24 +70,43 @@ groupAlerts = "Alerts"
 sendWebhookAlerts = input.bool(true, "Enable CASIO webhook alert() payload", group=groupAlerts)
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Confirmed higher-timeframe context — previous CLOSED bar only.
-// ─────────────────────────────────────────────────────────────────────────────
-f_htf_bundle() =>
+// Confirmed higher-timeframe context with lookahead OFF.
+// Raw HTF values may update during the current HTF bar, so we only snapshot
+// the value from the final M5 bar of the HTF period when the next period begins.
+f_htf_raw_bundle() =>
     ema20_ = ta.ema(close, 20)
     ema50_ = ta.ema(close, 50)
     atr_ = ta.atr(14)
-    [close[1], ema20_[1], ema50_[1], atr_[1]]
+    [close, ema20_, ema50_, atr_]
 
-f_m15_bundle() =>
+f_m15_raw_bundle() =>
     ema20_ = ta.ema(close, 20)
     ema50_ = ta.ema(close, 50)
     atr_ = ta.atr(14)
     [plus_, minus_, adx_] = ta.dmi(14, 14)
-    [close[1], ema20_[1], ema50_[1], atr_[1], adx_[1]]
+    [close, ema20_, ema50_, atr_, adx_]
 
-[h4Close, h4Ema20, h4Ema50, h4Atr] = request.security(syminfo.tickerid, "240", f_htf_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=2500)
-[h1Close, h1Ema20, h1Ema50, h1Atr] = request.security(syminfo.tickerid, "60", f_htf_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=5000)
-[m15Close, m15Ema20, m15Ema50, m15Atr, m15Adx] = request.security(syminfo.tickerid, "15", f_m15_bundle(), lookahead=barmerge.lookahead_on, calc_bars_count=10000)
+[h4CloseRaw, h4Ema20Raw, h4Ema50Raw, h4AtrRaw] = request.security(syminfo.tickerid, "240", f_htf_raw_bundle(), lookahead=barmerge.lookahead_off, calc_bars_count=2500)
+[h1CloseRaw, h1Ema20Raw, h1Ema50Raw, h1AtrRaw] = request.security(syminfo.tickerid, "60", f_htf_raw_bundle(), lookahead=barmerge.lookahead_off, calc_bars_count=5000)
+[m15CloseRaw, m15Ema20Raw, m15Ema50Raw, m15AtrRaw, m15AdxRaw] = request.security(syminfo.tickerid, "15", f_m15_raw_bundle(), lookahead=barmerge.lookahead_off, calc_bars_count=10000)
+
+newH4 = ta.change(time("240")) != 0
+newH1 = ta.change(time("60")) != 0
+newM15 = ta.change(time("15")) != 0
+
+h4Close = ta.valuewhen(newH4, h4CloseRaw[1], 0)
+h4Ema20 = ta.valuewhen(newH4, h4Ema20Raw[1], 0)
+h4Ema50 = ta.valuewhen(newH4, h4Ema50Raw[1], 0)
+h4Atr = ta.valuewhen(newH4, h4AtrRaw[1], 0)
+h1Close = ta.valuewhen(newH1, h1CloseRaw[1], 0)
+h1Ema20 = ta.valuewhen(newH1, h1Ema20Raw[1], 0)
+h1Ema50 = ta.valuewhen(newH1, h1Ema50Raw[1], 0)
+h1Atr = ta.valuewhen(newH1, h1AtrRaw[1], 0)
+m15Close = ta.valuewhen(newM15, m15CloseRaw[1], 0)
+m15Ema20 = ta.valuewhen(newM15, m15Ema20Raw[1], 0)
+m15Ema50 = ta.valuewhen(newM15, m15Ema50Raw[1], 0)
+m15Atr = ta.valuewhen(newM15, m15AtrRaw[1], 0)
+m15Adx = ta.valuewhen(newM15, m15AdxRaw[1], 0)
 
 h4Bias = h4Ema20 > h4Ema50 and h4Close > h4Ema20 ? 1 : h4Ema20 < h4Ema50 and h4Close < h4Ema20 ? -1 : 0
 h1Bias = h1Ema20 > h1Ema50 and h1Close > h1Ema20 ? 1 : h1Ema20 < h1Ema50 and h1Close < h1Ema20 ? -1 : 0
@@ -108,10 +128,12 @@ inOther = not inAsia and not inPrimary
 sessionName = inAsia ? "ASIA" : inLondon ? "LONDON" : inNewYork ? "NEW YORK" : "TRANSITION"
 sessionAllowed = inPrimary or (tradeAsia and inAsia) or (tradeOther and inOther)
 
-prevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
-prevDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
-
 newDay = ta.change(time("D")) != 0
+dayHighRaw = request.security(syminfo.tickerid, "D", high, lookahead=barmerge.lookahead_off)
+dayLowRaw = request.security(syminfo.tickerid, "D", low, lookahead=barmerge.lookahead_off)
+prevDayHigh = ta.valuewhen(newDay, dayHighRaw[1], 0)
+prevDayLow = ta.valuewhen(newDay, dayLowRaw[1], 0)
+
 var float asiaHigh = na
 var float asiaLow = na
 if newDay
@@ -265,7 +287,8 @@ if newWeek
 
 cooldownReady = na(lastAcceptedBar) or bar_index - lastAcceptedBar >= cooldownBars
 flat = strategy.position_size == 0
-canConsider = chartIsM5 and barstate.isconfirmed and inBacktestWindow and sessionAllowed and flat and cooldownReady and dayTrades < maxTradesPerDay
+qualityRegimeOk = profile != "QUALITY_70" or directionalRegime
+canConsider = chartIsM5 and barstate.isconfirmed and inBacktestWindow and sessionAllowed and flat and cooldownReady and dayTrades < maxTradesPerDay and weekTrades < maxTradesPerWeek and qualityRegimeOk
 longQualified = canConsider and longSetup and longScore >= requiredScore and longRiskOk
 shortQualified = canConsider and shortSetup and shortScore >= requiredScore and shortRiskOk
 longSignal = longQualified and (not shortQualified or longScore >= shortScore)
@@ -285,6 +308,17 @@ var int activeScore = 0
 var bool orderPending = false
 var int pendingBar = na
 var int seenClosedTrades = 0
+var int firstFilledTime = na
+var int bbmaClosed = 0
+var int bbmaWins = 0
+var int demandClosed = 0
+var int demandWins = 0
+var int supplyClosed = 0
+var int supplyWins = 0
+var int liqClosed = 0
+var int liqWins = 0
+var int breakClosed = 0
+var int breakWins = 0
 var line[] historyLines = array.new_line()
 
 f_bias_text(v) => v == 1 ? "bullish" : v == -1 ? "bearish" : "neutral"
@@ -361,6 +395,8 @@ if justOpened
     if orderPending
         dayTrades += 1
         weekTrades += 1
+    if na(firstFilledTime)
+        firstFilledTime := time
     orderPending := false
     pendingBar := na
 
@@ -377,6 +413,24 @@ if strategy.position_size < 0 and activeDirection == -1 and not na(activeRisk)
 
 newClosedTrade = strategy.closedtrades > seenClosedTrades
 if newClosedTrade
+    lastClosedIndex = strategy.closedtrades - 1
+    lastClosedProfit = strategy.closedtrades.profit(lastClosedIndex)
+    lastWasWin = lastClosedProfit > 0
+    if activePlaybook == "BBMA_REENTRY"
+        bbmaClosed += 1
+        bbmaWins += lastWasWin ? 1 : 0
+    else if activePlaybook == "DEMAND_REJECT"
+        demandClosed += 1
+        demandWins += lastWasWin ? 1 : 0
+    else if activePlaybook == "SUPPLY_REJECT"
+        supplyClosed += 1
+        supplyWins += lastWasWin ? 1 : 0
+    else if activePlaybook == "LIQ_FVG"
+        liqClosed += 1
+        liqWins += lastWasWin ? 1 : 0
+    else if activePlaybook == "BREAK_RETEST"
+        breakClosed += 1
+        breakWins += lastWasWin ? 1 : 0
     seenClosedTrades := strategy.closedtrades
     activeDirection := 0
     activeEntry := na
@@ -429,6 +483,8 @@ plotshape(shortSignal, title="CASIO v4 SELL", text="SELL", style=shape.labeldown
 closedTrades = strategy.closedtrades
 winRate = closedTrades > 0 ? strategy.wintrades * 100.0 / closedTrades : na
 profitFactor = math.abs(strategy.grossloss) > 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+elapsedWeeks = not na(firstFilledTime) ? math.max((time - firstFilledTime) / 604800000.0, 1.0 / 7.0) : na
+actualTradesPerWeek = not na(elapsedWeeks) and elapsedWeeks > 0 ? closedTrades / elapsedWeeks : na
 strategyDirection = strategy.position_size > 0 ? 1 : strategy.position_size < 0 ? -1 : 0
 status = strategyDirection == 1 ? "LONG ACTIVE" : strategyDirection == -1 ? "SHORT ACTIVE" : orderPending ? "ORDER PENDING" : longSetup and longScore >= requiredScore ? "LONG READY" : shortSetup and shortScore >= requiredScore ? "SHORT READY" : "WAIT"
 statusColor = strategyDirection == 1 ? color.new(color.green, 65) : strategyDirection == -1 ? color.new(color.red, 65) : orderPending ? color.new(color.orange, 70) : color.new(color.gray, 82)
@@ -436,8 +492,9 @@ statusColor = strategyDirection == 1 ? color.new(color.green, 65) : strategyDire
 f_num(v) => na(v) ? "—" : str.tostring(v, "#.00")
 f_pct(v) => na(v) ? "—" : str.tostring(v, "#.0") + "%"
 f_bias(v) => v == 1 ? "BULL" : v == -1 ? "BEAR" : "NEUTRAL"
+f_wr(w, n) => n > 0 ? str.tostring(w * 100.0 / n, "#.0") + "% (" + str.tostring(w) + "/" + str.tostring(n) + ")" : "—"
 
-var table dash = table.new(position.top_right, 2, 16, bgcolor=color.new(color.rgb(15, 18, 25), 3), frame_color=color.new(color.white, 60), frame_width=1)
+var table dash = table.new(position.top_right, 2, 21, bgcolor=color.new(color.rgb(15, 18, 25), 3), frame_color=color.new(color.white, 60), frame_width=1)
 if showDashboard and barstate.islast
     table.cell(dash, 0, 0, "CASIO v4", text_color=color.white, bgcolor=color.new(color.rgb(70, 55, 190), 0))
     table.cell(dash, 1, 0, "CONFLUENCE", text_color=color.white, bgcolor=color.new(color.rgb(70, 55, 190), 0))
@@ -471,5 +528,15 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 14, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.lime : color.red)
     table.cell(dash, 0, 15, "MAX DRAWDOWN", text_color=color.silver)
     table.cell(dash, 1, 15, str.tostring(strategy.max_drawdown, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 16, "ACTUAL TRADES/WK", text_color=color.silver)
+    table.cell(dash, 1, 16, f_num(actualTradesPerWeek), text_color=not na(actualTradesPerWeek) and actualTradesPerWeek >= weeklyTarget ? color.lime : color.white)
+    table.cell(dash, 0, 17, "BBMA W/R", text_color=color.silver)
+    table.cell(dash, 1, 17, f_wr(bbmaWins, bbmaClosed), text_color=color.white)
+    table.cell(dash, 0, 18, "DEMAND W/R", text_color=color.silver)
+    table.cell(dash, 1, 18, f_wr(demandWins, demandClosed), text_color=color.white)
+    table.cell(dash, 0, 19, "SUPPLY W/R", text_color=color.silver)
+    table.cell(dash, 1, 19, f_wr(supplyWins, supplyClosed), text_color=color.white)
+    table.cell(dash, 0, 20, "LIQ / BREAK W/R", text_color=color.silver)
+    table.cell(dash, 1, 20, f_wr(liqWins + breakWins, liqClosed + breakClosed), text_color=color.white)
 else if barstate.islast
-    table.clear(dash, 0, 0, 1, 15)
+    table.clear(dash, 0, 0, 1, 20)
