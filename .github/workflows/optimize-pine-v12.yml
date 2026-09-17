@@ -83,8 +83,9 @@ jobs:
               if token not in s:
                   raise SystemExit(f'Guardrail failed; missing: {token}')
 
-          if s.count('request.security(') != 3:
-              raise SystemExit(f'Expected 3 request.security calls after optimization, got {s.count("request.security(")}')
+          call_count = s.count('request.security(syminfo.tickerid')
+          if call_count != 3:
+              raise SystemExit(f'Expected 3 actual request.security calls after optimization, got {call_count}')
 
           path.write_text(s)
           print('Pine v1.2 optimization applied successfully')
