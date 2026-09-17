@@ -6,6 +6,7 @@ on:
       - feature/equity-first-search
     paths:
       - casio/equity_first_search.py
+      - casio/equity_first_crossfeed.py
       - .github/workflows/equity-first-search.yml
   workflow_dispatch:
 
@@ -33,8 +34,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run equity-first find and test
-        run: python -m casio.equity_first_search
+      - name: Find on 2024-2025 secondary and test on Dukascopy 2026
+        run: python -m casio.equity_first_crossfeed
 
       - name: Commit report and audit files
         run: |
@@ -45,6 +46,6 @@ jobs:
             echo "No report changes to commit"
             exit 0
           fi
-          git commit -m "research: equity-first 2025 find 2026 test"
+          git commit -m "research: equity-first cross-feed 2026 test"
           git pull --rebase origin feature/equity-first-search
           git push origin HEAD:feature/equity-first-search
