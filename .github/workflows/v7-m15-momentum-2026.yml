@@ -1,0 +1,51 @@
+name: CASIO v7 Native M15 Momentum
+
+on:
+  push:
+    branches:
+      - feature/v7-m15-momentum
+    paths:
+      - casio/v7_m15_momentum.py
+      - .github/workflows/v7-m15-momentum-2026.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout M15 branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/v7-m15-momentum
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install tabulate
+
+      - name: Run native M15 discovery and untouched 2026 test
+        run: python -m casio.v7_m15_momentum
+
+      - name: Commit report and audit files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/v7-m15-momentum-2026
+          if git diff --cached --quiet; then
+            echo "No report changes to commit"
+            exit 0
+          fi
+          git commit -m "research: native M15 momentum 2026 report"
+          git pull --rebase origin feature/v7-m15-momentum
+          git push origin HEAD:feature/v7-m15-momentum
