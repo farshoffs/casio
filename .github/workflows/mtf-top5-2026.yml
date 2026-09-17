@@ -1,0 +1,51 @@
+name: CASIO Top Five MTF 2026
+
+on:
+  push:
+    branches:
+      - feature/mtf-top5-2026
+    paths:
+      - casio/mtf_top5_2026.py
+      - .github/workflows/mtf-top5-2026.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout MTF branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/mtf-top5-2026
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install tabulate
+
+      - name: Run M15-H1-H4 top five benchmark
+        run: python -m casio.mtf_top5_2026
+
+      - name: Commit report and audit files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/mtf-top5-2026
+          if git diff --cached --quiet; then
+            echo "No report changes to commit"
+            exit 0
+          fi
+          git commit -m "research: top five MTF 2026 report"
+          git pull --rebase origin feature/mtf-top5-2026
+          git push origin HEAD:feature/mtf-top5-2026
