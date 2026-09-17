@@ -1,0 +1,46 @@
+name: CASIO Multi-Technique Ensemble 2026
+
+on:
+  push:
+    branches:
+      - feature/multi-technique-2026
+    paths:
+      - 'casio/multi_technique_2026.py'
+      - '.github/workflows/multi-technique-2026.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ensemble branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/multi-technique-2026
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install numpy pandas tabulate
+
+      - name: Run multi-technique 2026 benchmark
+        run: python -m casio.multi_technique_2026
+
+      - name: Commit report and audit files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/multi-technique-2026
+          if git diff --cached --quiet; then
+            echo "No report changes to commit"
+          else
+            git commit -m "research: multi-technique 2026 ensemble report"
+            git push origin HEAD:feature/multi-technique-2026
+          fi
