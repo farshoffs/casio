@@ -1,0 +1,18 @@
+{
+  "primary": "V6-0245",
+  "primary_2026": {
+    "candidate": "V6-0245",
+    "trades": 186,
+    "trades_per_30d": 21.580855692530818,
+    "end_rm": 15.713977627329118,
+    "lowest_rm": 14.346644098283317,
+    "max_drawdown_pct": 88.57794411091231,
+    "min_month_trades": 12,
+    "discovery_end_rm": 48.705900217978055,
+    "params": "{\"body_min\": 0.55, \"excursion_atr\": 0.1, \"mode\": \"REVERSAL\", \"range_ratio_cut\": 1.0, \"retest_bars\": 4, \"sessions\": \"BOTH\", \"stop_buffer_atr\": 0.16, \"target_scheme\": \"FIXED2\"}"
+  },
+  "frequency_pass": true,
+  "growth_pass": false,
+  "overall_pass": false,
+  "test_end": "2026-09-16T13:30:00+00:00"
+}
