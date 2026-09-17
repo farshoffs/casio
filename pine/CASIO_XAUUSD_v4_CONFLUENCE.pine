@@ -1,5 +1,5 @@
 //@version=6
-strategy("CASIO XAUUSD v4 — Confluence Signal Engine", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_order_fills=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.005, max_labels_count=500, max_lines_count=500, max_boxes_count=50, max_bars_back=10000)
+strategy("CASIO XAUUSD v4 — Confluence Signal Engine", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_order_fills=true, calc_on_every_tick=false, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1, margin_long=1, margin_short=1, commission_type=strategy.commission.percent, commission_value=0.005, max_labels_count=500, max_lines_count=500, max_boxes_count=50, max_bars_back=10000)
 
 // CASIO v4 research challenger.
 // Native chart: XAUUSD 5m.
@@ -20,6 +20,14 @@ maxTradesPerDay = input.int(3, "Maximum accepted trades / day", minval=1, maxval
 cooldownBars = input.int(6, "Cooldown M5 bars", minval=0, maxval=60, group=groupProfile)
 weeklyTarget = input.int(8, "Weekly trade target", minval=1, maxval=25, group=groupProfile)
 winRateTarget = input.float(70.0, "Win-rate target %", minval=40, maxval=90, step=1, group=groupProfile)
+
+// TradingView strategy/backtest execution. Explicit quantity avoids broker-emulator
+// rejections on XAUUSD feeds whose minimum contract is larger than 1% equity sizing.
+groupBacktest = "Backtest execution"
+backtestQty = input.float(1.0, "Order size (contracts)", minval=0.01, step=0.01, group=groupBacktest, tooltip="TradingView strategy quantity. Match this to your broker/feed contract convention.")
+backtestStart = input.time(timestamp("GMT+0", 2024, 1, 1, 0, 0), "Backtest start", group=groupBacktest)
+backtestEnd = input.time(timestamp("GMT+0", 2030, 12, 31, 23, 59), "Backtest end", group=groupBacktest)
+inBacktestWindow = time >= backtestStart and time <= backtestEnd
 
 groupManagement = "Trade management"
 useBreakeven = input.bool(true, "Protect at breakeven", group=groupManagement)
@@ -257,7 +265,7 @@ if newWeek
 
 cooldownReady = na(lastAcceptedBar) or bar_index - lastAcceptedBar >= cooldownBars
 flat = strategy.position_size == 0
-canConsider = chartIsM5 and barstate.isconfirmed and sessionAllowed and flat and cooldownReady and dayTrades < maxTradesPerDay
+canConsider = chartIsM5 and barstate.isconfirmed and inBacktestWindow and sessionAllowed and flat and cooldownReady and dayTrades < maxTradesPerDay
 longQualified = canConsider and longSetup and longScore >= requiredScore and longRiskOk
 shortQualified = canConsider and shortSetup and shortScore >= requiredScore and shortRiskOk
 longSignal = longQualified and (not shortQualified or longScore >= shortScore)
@@ -274,6 +282,9 @@ var float activeTarget = na
 var float activeRisk = na
 var string activePlaybook = "WAIT"
 var int activeScore = 0
+var bool orderPending = false
+var int pendingBar = na
+var int seenClosedTrades = 0
 var line[] historyLines = array.new_line()
 
 f_bias_text(v) => v == 1 ? "bullish" : v == -1 ? "bearish" : "neutral"
@@ -295,15 +306,15 @@ if longSignal or shortSignal
     activeTarget := longSignal ? longTargetPlan : shortTargetPlan
     activePlaybook := longSignal ? longPlaybook : shortPlaybook
     activeScore := longSignal ? longScore : shortScore
+    orderPending := true
+    pendingBar := bar_index
     lastAcceptedBar := bar_index
-    dayTrades += 1
-    weekTrades += 1
 
     if longSignal
-        strategy.entry("CASIO-L", strategy.long)
+        strategy.entry("CASIO-L", strategy.long, qty=backtestQty)
         strategy.exit("CASIO-L-X", "CASIO-L", stop=activeStop, limit=activeTarget)
     else
-        strategy.entry("CASIO-S", strategy.short)
+        strategy.entry("CASIO-S", strategy.short, qty=backtestQty)
         strategy.exit("CASIO-S-X", "CASIO-S", stop=activeStop, limit=activeTarget)
 
     if keepHistoricalLevels
@@ -338,6 +349,21 @@ if longSignal or shortSignal
           "}"
         alert(payload, alert.freq_once_per_bar_close)
 
+// Synchronize the visual plan with TradingView's actual broker-emulator fill.
+// This is the source of truth for both live chart state and Strategy Tester history.
+justOpened = strategy.position_size != 0 and strategy.position_size[1] == 0
+if justOpened
+    activeDirection := strategy.position_size > 0 ? 1 : -1
+    activeEntry := strategy.position_avg_price
+    activeRisk := math.abs(activeEntry - activeInitialStop)
+    activeStop := activeInitialStop
+    activeTarget := activeDirection == 1 ? activeEntry + targetR * activeRisk : activeEntry - targetR * activeRisk
+    if orderPending
+        dayTrades += 1
+        weekTrades += 1
+    orderPending := false
+    pendingBar := na
+
 // Dynamic breakeven protection. Initial stop remains the SL shown at signal time.
 if strategy.position_size > 0 and activeDirection == 1 and not na(activeRisk)
     if useBreakeven and high >= activeEntry + beTriggerR * activeRisk
@@ -349,8 +375,9 @@ if strategy.position_size < 0 and activeDirection == -1 and not na(activeRisk)
         activeStop := math.min(activeStop, activeEntry - beLockR * activeRisk)
     strategy.exit("CASIO-S-X", "CASIO-S", stop=activeStop, limit=activeTarget)
 
-justClosed = strategy.position_size == 0 and strategy.position_size[1] != 0
-if justClosed
+newClosedTrade = strategy.closedtrades > seenClosedTrades
+if newClosedTrade
+    seenClosedTrades := strategy.closedtrades
     activeDirection := 0
     activeEntry := na
     activeInitialStop := na
@@ -359,6 +386,21 @@ if justClosed
     activeRisk := na
     activePlaybook := "WAIT"
     activeScore := 0
+    orderPending := false
+    pendingBar := na
+
+// If a TradingView order is rejected or cannot fill, do not leave a fake ACTIVE trade.
+if strategy.position_size == 0 and orderPending and not na(pendingBar) and bar_index > pendingBar
+    activeDirection := 0
+    activeEntry := na
+    activeInitialStop := na
+    activeStop := na
+    activeTarget := na
+    activeRisk := na
+    activePlaybook := "WAIT"
+    activeScore := 0
+    orderPending := false
+    pendingBar := na
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Visuals + historical context.
@@ -375,9 +417,9 @@ plot(showLiquidity and not inAsia ? asiaHigh : na, "Asia High", color=color.new(
 plot(showLiquidity and not inAsia ? asiaLow : na, "Asia Low", color=color.new(color.green, 82), style=plot.style_linebr)
 plot(showZones ? supplyLevel : na, "Supply pivot", color=color.new(color.red, 65), style=plot.style_circles)
 plot(showZones ? demandLevel : na, "Demand pivot", color=color.new(color.green, 65), style=plot.style_circles)
-plot(showActiveLevels and activeDirection != 0 ? activeEntry : na, "Active Entry", color=color.blue, linewidth=2, style=plot.style_linebr)
-plot(showActiveLevels and activeDirection != 0 ? activeStop : na, "Active Stop", color=color.red, linewidth=2, style=plot.style_linebr)
-plot(showActiveLevels and activeDirection != 0 ? activeTarget : na, "Active Target", color=color.lime, linewidth=2, style=plot.style_linebr)
+plot(showActiveLevels and (strategy.position_size != 0 or orderPending) ? activeEntry : na, "Active Entry", color=color.blue, linewidth=2, style=plot.style_linebr)
+plot(showActiveLevels and (strategy.position_size != 0 or orderPending) ? activeStop : na, "Active Stop", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(showActiveLevels and (strategy.position_size != 0 or orderPending) ? activeTarget : na, "Active Target", color=color.lime, linewidth=2, style=plot.style_linebr)
 plotshape(longSignal, title="CASIO v4 BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
 plotshape(shortSignal, title="CASIO v4 SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny)
 
@@ -387,14 +429,15 @@ plotshape(shortSignal, title="CASIO v4 SELL", text="SELL", style=shape.labeldown
 closedTrades = strategy.closedtrades
 winRate = closedTrades > 0 ? strategy.wintrades * 100.0 / closedTrades : na
 profitFactor = math.abs(strategy.grossloss) > 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
-status = activeDirection == 1 ? "LONG ACTIVE" : activeDirection == -1 ? "SHORT ACTIVE" : longSetup and longScore >= requiredScore ? "LONG READY" : shortSetup and shortScore >= requiredScore ? "SHORT READY" : "WAIT"
-statusColor = activeDirection == 1 ? color.new(color.green, 65) : activeDirection == -1 ? color.new(color.red, 65) : color.new(color.gray, 82)
+strategyDirection = strategy.position_size > 0 ? 1 : strategy.position_size < 0 ? -1 : 0
+status = strategyDirection == 1 ? "LONG ACTIVE" : strategyDirection == -1 ? "SHORT ACTIVE" : orderPending ? "ORDER PENDING" : longSetup and longScore >= requiredScore ? "LONG READY" : shortSetup and shortScore >= requiredScore ? "SHORT READY" : "WAIT"
+statusColor = strategyDirection == 1 ? color.new(color.green, 65) : strategyDirection == -1 ? color.new(color.red, 65) : orderPending ? color.new(color.orange, 70) : color.new(color.gray, 82)
 
 f_num(v) => na(v) ? "—" : str.tostring(v, "#.00")
 f_pct(v) => na(v) ? "—" : str.tostring(v, "#.0") + "%"
 f_bias(v) => v == 1 ? "BULL" : v == -1 ? "BEAR" : "NEUTRAL"
 
-var table dash = table.new(position.top_right, 2, 14, bgcolor=color.new(color.rgb(15, 18, 25), 3), frame_color=color.new(color.white, 60), frame_width=1)
+var table dash = table.new(position.top_right, 2, 16, bgcolor=color.new(color.rgb(15, 18, 25), 3), frame_color=color.new(color.white, 60), frame_width=1)
 if showDashboard and barstate.islast
     table.cell(dash, 0, 0, "CASIO v4", text_color=color.white, bgcolor=color.new(color.rgb(70, 55, 190), 0))
     table.cell(dash, 1, 0, "CONFLUENCE", text_color=color.white, bgcolor=color.new(color.rgb(70, 55, 190), 0))
@@ -407,7 +450,7 @@ if showDashboard and barstate.islast
     table.cell(dash, 0, 4, "LONG / SHORT SCORE", text_color=color.silver)
     table.cell(dash, 1, 4, str.tostring(longScore) + " / " + str.tostring(shortScore) + "  (min " + str.tostring(requiredScore) + ")", text_color=color.white)
     table.cell(dash, 0, 5, "PLAYBOOK", text_color=color.silver)
-    table.cell(dash, 1, 5, activeDirection != 0 ? activePlaybook : longScore >= shortScore ? longPlaybook : shortPlaybook, text_color=color.white)
+    table.cell(dash, 1, 5, (strategyDirection != 0 or orderPending) ? activePlaybook : longScore >= shortScore ? longPlaybook : shortPlaybook, text_color=color.white)
     table.cell(dash, 0, 6, "WEEK TRADES", text_color=color.silver)
     table.cell(dash, 1, 6, str.tostring(weekTrades) + " / " + str.tostring(weeklyTarget), text_color=weekTrades >= weeklyTarget ? color.lime : color.white)
     table.cell(dash, 0, 7, "HIST WIN RATE", text_color=color.silver)
@@ -424,5 +467,9 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 12, f_num(activeStop) + " / " + f_num(activeTarget), text_color=color.white)
     table.cell(dash, 0, 13, "PROFILE", text_color=color.silver)
     table.cell(dash, 1, 13, profile + (chartIsM5 ? " • M5" : " • USE M5"), text_color=chartIsM5 ? color.white : color.red)
+    table.cell(dash, 0, 14, "NET PROFIT", text_color=color.silver)
+    table.cell(dash, 1, 14, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.lime : color.red)
+    table.cell(dash, 0, 15, "MAX DRAWDOWN", text_color=color.silver)
+    table.cell(dash, 1, 15, str.tostring(strategy.max_drawdown, "#.##"), text_color=color.white)
 else if barstate.islast
-    table.clear(dash, 0, 0, 1, 13)
+    table.clear(dash, 0, 0, 1, 15)
