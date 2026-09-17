@@ -1,0 +1,8 @@
+{
+  "observed_end": "2026-09-16T13:30:00+00:00",
+  "strategies_tested": 18,
+  "passing": 4,
+  "top_strategy": "Outcome First M15",
+  "top_ending_balance_rm": 419.5960160617378,
+  "m15_0591": "HELD_ASIDE_NOT_RANKED"
+}
