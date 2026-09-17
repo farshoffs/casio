@@ -1,0 +1,29 @@
+name: CASIO Regime Signal Bridge Check
+
+on:
+  push:
+    branches: [feature/regime-router-dashboard-research]
+    paths:
+      - 'integrations/vercel-regime-signal/**'
+      - '.github/workflows/regime-signal-bridge-check.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/regime-router-dashboard-research
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax check Vercel handler
+        run: node --check integrations/vercel-regime-signal/api/signal.js
+      - name: Run webhook smoke test
+        run: node integrations/vercel-regime-signal/test.mjs
+      - name: Audit Apps Script receiver entry points
+        run: |
+          grep -F 'function doPost(e)' integrations/apps-script-regime-signal/Code.gs
+          grep -F 'function doGet()' integrations/apps-script-regime-signal/Code.gs
+          grep -F "const CASIO_SHEET_NAME = 'Signals';" integrations/apps-script-regime-signal/Code.gs
