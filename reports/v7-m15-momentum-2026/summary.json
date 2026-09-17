@@ -1,0 +1,19 @@
+{
+  "primary_candidate": "M15-0591",
+  "primary_2026": {
+    "candidate": "M15-0591",
+    "trades": 263,
+    "trades_per_30d": 30.514865844815084,
+    "min_month_trades": 21,
+    "end_rm": 190.16629577123697,
+    "lowest_rm": 25.29552327698148,
+    "max_drawdown_pct": 81.79504181338899,
+    "passes_monthly_frequency": true,
+    "discovery_end_rm": 157.5731057173761,
+    "params": "{\"body_min\": 0.55, \"breakout_buffer_atr\": 0.0, \"impulse_atr\": 1.2, \"lookback\": 20, \"max_hold_bars\": 40, \"max_risk_atr\": 2.8, \"min_risk_atr\": 0.35, \"pullback_bars\": 4, \"retrace_max\": 0.5, \"session\": \"ALL\", \"stop_buffer_atr\": 0.12, \"target_r\": 3.0}"
+  },
+  "exploratory_candidate": "M15-0605",
+  "candidates": 864,
+  "discovery_qualified": 214,
+  "test_end": "2026-09-16T13:30:00+00:00"
+}
