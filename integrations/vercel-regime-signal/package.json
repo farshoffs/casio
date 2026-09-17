@@ -1,0 +1,8 @@
+{
+  "name": "casio-regime-router-signal",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}
