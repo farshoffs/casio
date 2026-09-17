@@ -33,11 +33,24 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Apply research compatibility patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('casio/v3_asymmetry_challenger.py')
+          s = p.read_text()
+          old = 'target_rr.ge(cfg.min_rr)'
+          new = '(target_rr >= cfg.min_rr)'
+          if old in s:
+              p.write_text(s.replace(old, new))
+          PY
+
       - name: Backtest all CASIO strategies on 2026 Dukascopy
         run: python -m casio.all_strategies_2026_backtest
 
       - name: Commit consolidated report and audit CSVs
         run: |
+          git checkout -- casio/v3_asymmetry_challenger.py || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reports/all-strategies-2026
