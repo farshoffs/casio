@@ -11,6 +11,8 @@ on:
       - 'tradingview/casio_regime_router_dashboard_v1.pine'
       - 'ctrader/CasioRegimeRouterSignal.cs'
       - 'ctrader-web-plugin/regime-router-dashboard/index.html'
+      - 'ctrader-web-plugin/cross-device/index.html'
+      - 'casio/rr10_dashboard_state.py'
       - 'integrations/apps-script-regime-signal/Code.gs'
       - 'integrations/vercel-regime-signal/api/signal.js'
       - '.github/workflows/live-signal.yml'
@@ -59,6 +61,7 @@ jobs:
           pine = read('pine/CASIO_REGIME_ROUTER_RR10.pine')
           legacy_pine = read('tradingview/casio_regime_router_dashboard_v1.pine')
           ctrader = read('ctrader-web-plugin/regime-router-dashboard/index.html')
+          ctrader_cross = read('ctrader-web-plugin/cross-device/index.html')
           cbot = read('ctrader/CasioRegimeRouterSignal.cs')
           gas = read('integrations/apps-script-regime-signal/Code.gs')
           vercel = read('integrations/vercel-regime-signal/api/signal.js')
@@ -77,10 +80,12 @@ jobs:
               'Pine MYR conversion': 'strategy.convert_to_symbol' in pine,
               'Pine canonical gate': 'oldRouterSelected0591' in pine and 'canonicalDir' in pine,
               'Pine RR10 schema': 'casio.regime-router.rr10' in pine,
-              'cTrader dashboard RR10': 'const BUILD_ID="RR10' in ctrader and 'CANONICAL_R=3' in ctrader,
-              'cTrader dashboard canonical gate': 'oldRouterSelected0591' in ctrader and 'canonicalDir' in ctrader,
-              'cTrader dashboard official trendbars': 'getTrendbarList' in ctrader and 'getServerData' not in ctrader,
-              'cTrader dashboard M15-derived HTF': 'fetchM15History' in ctrader and 'resampleBars' in ctrader,
+              'one cTrader cross-device UI': ctrader == ctrader_cross,
+              'cTrader dashboard RR10': 'RR10-XD1' in ctrader and 'casio.regime-router.rr10.state.v1' in ctrader,
+              'cTrader shared state feed': 'rr10-live-state/rr10-state.json' in ctrader,
+              'cTrader no duplicated router': 'oldRouterSelected0591' not in ctrader and 'canonicalDir' not in ctrader,
+              'cTrader no historical RPC': 'getTrendbarList' not in ctrader and 'getServerData' not in ctrader,
+              'cTrader quote overlay only': 'subscribeQuotes' in ctrader and 'quoteEvent' in ctrader,
               'cBot fixed 3R': 'private const double CanonicalTargetR = 3.0;' in cbot,
               'cBot fixed 5% risk': 'private const double RiskPercent = 5.0;' in cbot,
               'cBot canonical gate': 'oldRouterSelected0591' in cbot and 'canonicalDir' in cbot,
