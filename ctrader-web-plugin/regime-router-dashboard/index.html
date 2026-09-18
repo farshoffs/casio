@@ -15,7 +15,7 @@
 <body>
 <div class="app">
 <div class="top">
-<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR10.1</span></div></div></div>
+<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR10.2</span></div></div></div>
 <div class="actions"><span class="badge">Build <span id="buildId">RR10.1</span></span><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
 </div>
 <div id="errorBox" class="error"></div>
@@ -44,7 +44,7 @@ import { handleConfirmEvent, registerEvent, getAccountInformation, getLightSymbo
 import { firstValueFrom, take, filter, timeout } from "https://esm.sh/rxjs@7.8.2";
 import { createLogger } from "https://esm.sh/@veksa/logger@1.0.6";
 
-const BUILD_ID="RR10.1";
+const BUILD_ID="RR10.2";
 const byId=id=>document.getElementById(id);
 const PERIOD={M15:11,H1:15,H4:18,D1:22};
 const PERIOD_MS={M15:900000,H1:3600000,H4:14400000,D1:86400000};
@@ -182,25 +182,78 @@ function resampleBars(bars,periodMs){
   }
   return out;
 }
+const HISTORY_PAGE=500,HISTORY_TARGET=1500,HISTORY_MIN=1200,HISTORY_TIMEOUT_MS=60000,HISTORY_WINDOW_MS=12*86400000;
+let m15History=[];
+function mergeBars(a,b){
+  const m=new Map();
+  for(const x of [...a,...b])if(Number.isFinite(x?.t))m.set(x.t,x);
+  return Array.from(m.values()).sort((x,y)=>x.t-y).slice(-HISTORY_TARGET);
+}
+function cacheKey(){return "casio-rr10-m15-"+String(symbolId??"x")}
+function readHistoryCache(){
+  try{
+    const raw=localStorage.getItem(cacheKey());
+    if(!raw)return[];
+    const x=JSON.parse(raw);
+    return Array.isArray(x)?x.filter(b=>Number.isFinite(b?.t)&&Number.isFinite(b?.close)).slice(-HISTORY_TARGET):[];
+  }catch{return[]}
+}
+function writeHistoryCache(bars){
+  try{localStorage.setItem(cacheKey(),JSON.stringify(bars.slice(-HISTORY_TARGET)))}catch{}
+}
+async function fetchM15Page(toTimestamp,count=HISTORY_PAGE){
+  const fromTimestamp=Math.max(0,toTimestamp-HISTORY_WINDOW_MS);
+  const payload={symbolId,period:PERIOD.M15,fromTimestamp,toTimestamp,count,type:0};
+  const res=await rpc(getTrendbarList(adapter,payload),"M15 trendbar page",HISTORY_TIMEOUT_MS);
+  const bars=trendbars(res,PERIOD_MS.M15);
+  if(!bars.length)throw new Error("cTrader returned zero closed M15 bars");
+  return bars;
+}
 async function fetchM15History(){
-  let lastErr=null;
-  for(let attempt=1;attempt<=3;attempt++){
+  if(!m15History.length)m15History=readHistoryCache();
+
+  if(m15History.length>=HISTORY_MIN){
+    byId("sourceText").textContent="Build "+BUILD_ID+" · refreshing recent M15 bars";
     try{
-      byId("sourceText").textContent="Build "+BUILD_ID+" · loading M15 history ("+attempt+"/3)";
-      const res=await rpc(
-        getTrendbarList(adapter,{symbolId,period:PERIOD.M15,toTimestamp:Date.now(),count:3000,type:0}),
-        "M15 trendbar RPC",
-        30000
-      );
-      const bars=trendbars(res,PERIOD_MS.M15);
-      if(bars.length<100)throw new Error("cTrader returned only "+bars.length+" closed M15 bars");
-      return bars;
+      const recent=await fetchM15Page(Date.now(),300);
+      m15History=mergeBars(m15History,recent);
+      writeHistoryCache(m15History);
+      return m15History;
     }catch(e){
-      lastErr=e;
-      if(attempt<3)await sleep(750*attempt);
+      const last=m15History[m15History.length-1];
+      const age=last?Date.now()-(last.t+PERIOD_MS.M15):Infinity;
+      if(age<=45*60000){
+        showError("Recent cTrader history refresh delayed; using cached completed bars ("+Math.round(age/60000)+" min old).");
+        return m15History;
+      }
+      throw e;
     }
   }
-  throw lastErr||new Error("M15 history request failed");
+
+  let bars=m15History,to=Date.now(),pageNo=0,lastErr=null;
+  while(bars.length<HISTORY_TARGET&&pageNo<6){
+    pageNo++;
+    byId("sourceText").textContent="Build "+BUILD_ID+" · loading M15 history page "+pageNo+" · "+bars.length+"/"+HISTORY_TARGET;
+    try{
+      const page=await fetchM15Page(to,HISTORY_PAGE);
+      const before=bars.length;
+      bars=mergeBars(bars,page);
+      if(bars.length===before)break;
+      to=page[0].t-1;
+      writeHistoryCache(bars);
+      if(bars.length>=HISTORY_TARGET)break;
+      await sleep(300);
+    }catch(e){
+      lastErr=e;
+      if(pageNo<6){await sleep(1000);continue}
+    }
+  }
+  if(bars.length<HISTORY_MIN){
+    throw new Error("cTrader history incomplete: "+bars.length+" M15 bars loaded; need at least "+HISTORY_MIN+(lastErr?" · "+(lastErr?.message||lastErr):""));
+  }
+  m15History=bars;
+  writeHistoryCache(m15History);
+  return m15History;
 }
 async function refresh(){
   if(refreshing||!symbolId)return;
@@ -212,7 +265,7 @@ async function refresh(){
     const d1=resampleBars(m15,PERIOD_MS.D1);
     lastSnapshot=runRouter(m15,h1,h4,d1);
     render();
-    byId("sourceText").textContent=symbolName+" · canonical M15 feed · "+m15.length+" bars · HTF derived locally";
+    byId("sourceText").textContent=symbolName+" · "+m15.length+" cached M15 bars · H1/H4/D1 derived locally";
     byId("updated").textContent="Updated "+new Date().toLocaleTimeString();
     showError("");setConnection("ok","Live");
   }catch(e){
