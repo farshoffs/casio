@@ -1,655 +1,272 @@
 //@version=6
-strategy("CASIO Regime Router — M15/H1/H4 Dashboard v1.2",
-     overlay=true,
-     initial_capital=100,
-     currency="MYR",
-     pyramiding=0,
-     calc_on_order_fills=true,
-     calc_on_every_tick=false,
-     process_orders_on_close=false,
-     commission_type=strategy.commission.percent,
-     commission_value=0.005,
-     max_labels_count=500,
-     max_lines_count=500)
+strategy("CASIO Regime Router RR10 — Canonical", overlay=true, max_labels_count=500, initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.005, process_orders_on_close=true)
 
-// CASIO Regime Router — backtest-first TradingView implementation.
-// Designed for XAUUSD on a 15-minute chart. H1/H4 context uses completed candles only.
-// TradingView broker feeds/fills can differ from the Python/Dukascopy research replay.
+// RR10 is the single canonical live ruleset.
+// Chart timeframe: 15 minutes. All higher-timeframe context uses completed bars only.
+// Fixed target: 3R. Entry/SL/TP stay frozen until SL or TP.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 00 · Mode / Backtest
-// ─────────────────────────────────────────────────────────────────────────────
-groupMode = "00 · Mode / Backtest"
-mode = input.string("BACKTEST", "Mode", options=["BACKTEST", "LIVE SIGNALS"], group=groupMode,
-     tooltip="BACKTEST automatically places simulated strategy orders inside the date range. LIVE SIGNALS does not place TradingView strategy orders; it keeps the dashboard and alerts active.")
-backtestStart = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Backtest start", group=groupMode)
-backtestEnd = input.time(timestamp("31 Dec 2026 23:59 +0000"), "Backtest end", group=groupMode)
-backtestMode = mode == "BACKTEST"
-inBacktestWindow = time >= backtestStart and time <= backtestEnd
+const float TARGET_R = 3.0
+const int SUPPORT_BARS = 2
+const float TREND_ADX = 18.0
+const float RISK_FRACTION = 0.05
+string webhookSecret = input.string("", "Webhook secret")
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 01 · Risk & execution
-// ─────────────────────────────────────────────────────────────────────────────
-groupRisk = "01 · Risk & Execution"
-riskPct = input.float(5.0, "Risk % of current equity", minval=0.1, step=0.1, group=groupRisk) / 100.0
-pointValueOverride = input.float(0.0, "Point value override (0 = syminfo.pointvalue)", minval=0.0, step=0.01, group=groupRisk)
-minRiskAtr = input.float(0.35, "Minimum stop distance (ATR)", minval=0.05, step=0.05, group=groupRisk)
-maxRiskAtr = input.float(3.0, "Maximum stop distance (ATR)", minval=0.5, step=0.1, group=groupRisk)
-tradeLongs = input.bool(true, "Allow longs", group=groupRisk)
-tradeShorts = input.bool(true, "Allow shorts", group=groupRisk)
+f_bias(float c, float e20, float e50) =>
+    e20 > e50 and c > e20 ? 1 : e20 < e50 and c < e20 ? -1 : 0
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 02 · Router
-// ─────────────────────────────────────────────────────────────────────────────
-groupRouter = "02 · Router"
-trendAdxThreshold = input.float(18.0, "Strong H4 trend ADX", minval=5, step=0.5, group=groupRouter)
-supportBars = input.int(2, "Recent agreement window (M15 bars)", minval=1, maxval=4, group=groupRouter)
-requireM15 = input.bool(true, "Require chart timeframe = 15m", group=groupRouter)
+f_quality(int q) =>
+    q >= 4 ? 4 : q >= 2 ? 3 : 2
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 03 · Alerts / webhook
-// ─────────────────────────────────────────────────────────────────────────────
-groupAlert = "03 · Alerts / Webhook"
-enableAlerts = input.bool(true, "Emit JSON alert() on new portfolio signal", group=groupAlert)
-webhookSecret = input.string("", "Webhook shared secret", group=groupAlert,
-     tooltip="Optional. Must match SIGNAL_SECRET on the Vercel endpoint. Keep this script private if you use a secret here.")
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 04 · Dashboard / chart
-// ─────────────────────────────────────────────────────────────────────────────
-groupVisual = "04 · Dashboard"
-showDashboard = input.bool(true, "Show dashboard", group=groupVisual)
-showTradeLevels = input.bool(true, "Show Entry / SL / TP lines", group=groupVisual)
-keepLastLevels = input.bool(true, "Keep last trade levels after exit", group=groupVisual)
-showSignalLabels = input.bool(true, "Show portfolio signal labels", group=groupVisual)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 f_adx() =>
-    [_, _, a] = ta.dmi(14, 14)
+    [pdi, mdi, a] = ta.dmi(14, 14)
     a
 
-f_bias(_c, _e20, _e50) =>
-    _e20 > _e50 and _c > _e20 ? 1 : _e20 < _e50 and _c < _e20 ? -1 : 0
+f_mtf_target(int base, int dir, int h1b, int h4b, float h4adx) =>
+    bool blocked = h1b == -dir and h4b == -dir
+    int baseGrade = base >= 4 ? 2 : base >= 3 ? 1 : 0
+    int align = (h1b == dir ? 1 : 0) + (h4b == dir ? 1 : 0)
+    int strong = align == 2 and h4adx >= TREND_ADX ? 1 : 0
+    int score = baseGrade + align + strong
+    int r = score >= 3 ? 4 : score >= 1 ? 3 : 2
+    [not blocked, r]
 
-f_dir_text(_d) => _d == 1 ? "LONG" : _d == -1 ? "SHORT" : "WAIT"
-f_bias_text(_b) => _b == 1 ? "BULL" : _b == -1 ? "BEAR" : "NEUTRAL"
-f_dir_color(_d) => _d == 1 ? color.rgb(38, 208, 124) : _d == -1 ? color.rgb(255, 91, 111) : color.rgb(128, 138, 155)
-f_bool_dir(_l, _s) => _l and not _s ? 1 : _s and not _l ? -1 : 0
-f_quality_target(_q) => _q >= 4 ? 4.0 : _q >= 2 ? 3.0 : 2.0
+bool isM15 = timeframe.isminutes and timeframe.multiplier == 15
+int utcMinute = hour(time, "UTC") * 60 + minute(time, "UTC")
+bool primary = (utcMinute >= 420 and utcMinute < 720) or (utcMinute >= 750 and utcMinute < 1020)
 
-f_mtf_target(_base, _dir, _h1, _h4, _h4adx) =>
-    wanted = _dir
-    blocked = _h1 == -wanted and _h4 == -wanted
-    baseGrade = _base >= 4.0 ? 2 : _base >= 3.0 ? 1 : 0
-    align = (_h1 == wanted ? 1 : 0) + (_h4 == wanted ? 1 : 0)
-    strong = align == 2 and _h4adx >= trendAdxThreshold ? 1 : 0
-    score = baseGrade + align + strong
-    target = score >= 3 ? 4.0 : score >= 1 ? 3.0 : 2.0
-    [not blocked, target]
+// Completed HTF bars only. This is the non-repainting HTF pattern.
+float h1Close = request.security(syminfo.tickerid, "60", close[1], lookahead=barmerge.lookahead_on)
+float h1E20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+float h1E50 = request.security(syminfo.tickerid, "60", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+float h4Close = request.security(syminfo.tickerid, "240", close[1], lookahead=barmerge.lookahead_on)
+float h4E20 = request.security(syminfo.tickerid, "240", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+float h4E50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+float h4Adx = request.security(syminfo.tickerid, "240", f_adx()[1], lookahead=barmerge.lookahead_on)
+float prevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+float prevDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
 
-f_recent(_lastBar) => not na(_lastBar) and bar_index - _lastBar <= supportBars
-f_fmt(_x) => na(_x) ? "—" : str.tostring(_x, "#.##")
+int h1Bias = f_bias(h1Close, h1E20, h1E50)
+int h4Bias = f_bias(h4Close, h4E20, h4E50)
+bool strongLong = h1Bias == 1 and h4Bias == 1
+bool strongShort = h1Bias == -1 and h4Bias == -1
+bool htfLong = h1Bias >= 0 and h4Bias >= 0
+bool htfShort = h1Bias <= 0 and h4Bias <= 0
+bool strongTrend = h1Bias != 0 and h1Bias == h4Bias and h4Adx >= TREND_ADX
 
-// ─────────────────────────────────────────────────────────────────────────────
-// M15 features
-// ─────────────────────────────────────────────────────────────────────────────
-isM15 = timeframe.isminutes and timeframe.multiplier == 15
-atr = ta.atr(14)
-ema20 = ta.ema(close, 20)
-ema50 = ta.ema(close, 50)
-[_, _, adx] = ta.dmi(14, 14)
+float atr = ta.atr(14)
+float e20 = ta.ema(close, 20)
+float e50 = ta.ema(close, 50)
+float adx = f_adx()
+float rng = math.max(high - low, syminfo.mintick)
+float bodyFrac = math.abs(close - open) / rng
+float closeLoc = (close - low) / rng
+float rangeAtr = rng / atr
+bool bull = close > open
+bool bear = close < open
+float hh5 = ta.highest(high[1], 5)
+float ll5 = ta.lowest(low[1], 5)
+float hh10 = ta.highest(high[1], 10)
+float ll10 = ta.lowest(low[1], 10)
+float hh20 = ta.highest(high[1], 20)
+float ll20 = ta.lowest(low[1], 20)
+bool bullFvg = low > high[2]
+bool bearFvg = high < low[2]
+bool dispLong = bull and bodyFrac >= 0.55 and closeLoc >= 0.68 and rangeAtr >= 0.80 and close > hh5
+bool dispShort = bear and bodyFrac >= 0.55 and closeLoc <= 0.32 and rangeAtr >= 0.80 and close < ll5
 
-rng = math.max(high - low, syminfo.mintick)
-bodyFrac = math.abs(close - open) / rng
-closeLoc = (close - low) / rng
-rangeAtr = atr > 0 ? rng / atr : na
-bull = close > open
-bear = close < open
+bool sellSweep = low < ll20 and close > ll20
+bool buySweep = high > hh20 and close < hh20
+int sellSweepAge0 = ta.barssince(sellSweep)
+int buySweepAge0 = ta.barssince(buySweep)
+int sellSweepAge = na(sellSweepAge0) ? 999 : sellSweepAge0
+int buySweepAge = na(buySweepAge0) ? 999 : buySweepAge0
 
-hh5 = ta.highest(high[1], 5)
-ll5 = ta.lowest(low[1], 5)
-hh10 = ta.highest(high[1], 10)
-ll10 = ta.lowest(low[1], 10)
-hh20 = ta.highest(high[1], 20)
-ll20 = ta.lowest(low[1], 20)
+bool v1Long = e20 > e50 and close > hh10 and bull and bodyFrac >= 0.45
+bool v1Short = e20 < e50 and close < ll10 and bear and bodyFrac >= 0.45
+int v1Dir = v1Long and not v1Short ? 1 : v1Short and not v1Long ? -1 : 0
 
-bullFvg = low > high[2]
-bearFvg = high < low[2]
-dispLong = bull and bodyFrac >= 0.55 and closeLoc >= 0.68 and rangeAtr >= 0.80 and close > hh5
-dispShort = bear and bodyFrac >= 0.55 and closeLoc <= 0.32 and rangeAtr >= 0.80 and close < ll5
+bool outLong = primary and ((sellSweepAge <= 2 and bullFvg) or (strongLong and dispLong and low <= e20 + 0.25 * atr))
+bool outShort = primary and ((buySweepAge <= 2 and bearFvg) or (strongShort and dispShort and high >= e20 - 0.25 * atr))
+int outDir = outLong and not outShort ? 1 : outShort and not outLong ? -1 : 0
 
-sellSweep = low < ll20 and close > ll20
-buySweep = high > hh20 and close < hh20
-sellSweepAge = ta.barssince(sellSweep)
-buySweepAge = ta.barssince(buySweep)
+bool sfLong = primary and htfLong and sellSweepAge <= 6 and (dispLong or bullFvg)
+bool sfShort = primary and htfShort and buySweepAge <= 6 and (dispShort or bearFvg)
+int sfDir = sfLong and not sfShort ? 1 : sfShort and not sfLong ? -1 : 0
 
-minsUtc = hour(time, "UTC") * 60 + minute(time, "UTC")
-primary = (minsUtc >= 420 and minsUtc < 720) or (minsUtc >= 750 and minsUtc < 1020)
+bool spBaseLong = (strongLong and sellSweepAge <= 5 and bullFvg) or (htfLong and sellSweepAge <= 2 and bullFvg) or (primary and htfLong and low <= prevDayHigh + 0.15 * atr and close > prevDayHigh and bullFvg)
+bool spBaseShort = (strongShort and buySweepAge <= 5 and bearFvg) or (htfShort and buySweepAge <= 2 and bearFvg) or (primary and htfShort and high >= prevDayLow - 0.15 * atr and close < prevDayLow and bearFvg)
+int spBaseR = f_quality((primary ? 1 : 0) + ((strongLong or strongShort) ? 1 : 0) + ((bullFvg or bearFvg) ? 1 : 0) + ((dispLong or dispShort) ? 1 : 0))
+[splAllowed, splR] = f_mtf_target(spBaseR, 1, h1Bias, h4Bias, h4Adx)
+[spsAllowed, spsR] = f_mtf_target(spBaseR, -1, h1Bias, h4Bias, h4Adx)
+bool spLong = spBaseLong and splAllowed
+bool spShort = spBaseShort and spsAllowed
+int spDir = spLong and not spShort ? 1 : spShort and not spLong ? -1 : 0
 
-// Group same-timeframe values into one request.security() call.
-// Expressions and completed-candle offsets are unchanged from v1.1.
-[prevDayHigh, prevDayLow] = request.security(syminfo.tickerid, "D", [high[1], low[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+// 0591 impulse -> pullback -> confirmation state machine.
+var int ms = 0
+var int impulseBar = na
+var float impOpen = na
+var float impClose = na
+var float impHigh = na
+var float impLow = na
+var float impAtr = na
+var float broken = na
+var float pullExtreme = na
 
-// Completed higher-timeframe candles only.
-[h1Close, h1Ema20, h1Ema50] = request.security(syminfo.tickerid, "60", [close[1], ta.ema(close, 20)[1], ta.ema(close, 50)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h1Bias = f_bias(h1Close, h1Ema20, h1Ema50)
+int m0591Dir = 0
+float m0591Stop = na
+bool impLong = rangeAtr >= 1.20 and bodyFrac >= 0.55 and closeLoc >= 0.72 and close > hh20
+bool impShort = rangeAtr >= 1.20 and bodyFrac >= 0.55 and closeLoc <= 0.28 and close < ll20
 
-[h4Close, h4Ema20, h4Ema50, h4Adx] = request.security(syminfo.tickerid, "240", [close[1], ta.ema(close, 20)[1], ta.ema(close, 50)[1], f_adx()[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
-h4Bias = f_bias(h4Close, h4Ema20, h4Ema50)
+if barstate.isconfirmed
+    if ms == 0
+        if impLong and not impShort
+            ms := 1
+            impulseBar := bar_index
+            impOpen := open
+            impClose := close
+            impHigh := high
+            impLow := low
+            impAtr := atr
+            broken := hh20
+            pullExtreme := low
+        else if impShort and not impLong
+            ms := -1
+            impulseBar := bar_index
+            impOpen := open
+            impClose := close
+            impHigh := high
+            impLow := low
+            impAtr := atr
+            broken := ll20
+            pullExtreme := high
+    else if bar_index > impulseBar
+        int age = bar_index - impulseBar
+        float impBody = math.abs(impClose - impOpen)
+        if age > 4
+            ms := 0
+        else if ms == 1
+            pullExtreme := math.min(pullExtreme, low)
+            bool invalid = low < impLow - 0.30 * impAtr
+            bool touched = low <= impClose - 0.18 * impBody and high >= impClose - 0.50 * impBody
+            bool confirm = close > open and close > broken
+            if invalid
+                ms := 0
+            else if touched and confirm
+                [allowedLong, ignoredR1] = f_mtf_target(3, 1, h1Bias, h4Bias, h4Adx)
+                if allowedLong
+                    m0591Dir := 1
+                    m0591Stop := pullExtreme - 0.12 * impAtr
+                ms := 0
+        else
+            pullExtreme := math.max(pullExtreme, high)
+            bool invalid = high > impHigh + 0.30 * impAtr
+            bool touched = high >= impClose + 0.18 * impBody and low <= impClose + 0.50 * impBody
+            bool confirm = close < open and close < broken
+            if invalid
+                ms := 0
+            else if touched and confirm
+                [allowedShort, ignoredR2] = f_mtf_target(3, -1, h1Bias, h4Bias, h4Adx)
+                if allowedShort
+                    m0591Dir := -1
+                    m0591Stop := pullExtreme + 0.12 * impAtr
+                ms := 0
 
-htfLong = h1Bias >= 0 and h4Bias >= 0
-htfShort = h1Bias <= 0 and h4Bias <= 0
-strongLong = h1Bias == 1 and h4Bias == 1
-strongShort = h1Bias == -1 and h4Bias == -1
-strongTrend = h1Bias != 0 and h1Bias == h4Bias and h4Adx >= trendAdxThreshold
+// Internal confirmations are memories only. They are not independent live engines.
+var int lastML = -1000000000
+var int lastMS = -1000000000
+var int lastVL = -1000000000
+var int lastVS = -1000000000
+var int lastOL = -1000000000
+var int lastOS = -1000000000
+var int lastPL = -1000000000
+var int lastPS = -1000000000
+var int lastFL = -1000000000
+var int lastFS = -1000000000
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Technique 1 — V1 Legacy M15
-// ─────────────────────────────────────────────────────────────────────────────
-v1LongRaw = ema20 > ema50 and close > hh10 and bull and bodyFrac >= 0.45
-v1ShortRaw = ema20 < ema50 and close < ll10 and bear and bodyFrac >= 0.45
-v1Dir = f_bool_dir(v1LongRaw, v1ShortRaw)
-v1Q = (adx > 22 ? 1 : 0) + (strongLong ? 1 : 0) + (strongShort ? 1 : 0)
-v1R = f_quality_target(v1Q)
+if barstate.isconfirmed
+    if m0591Dir == 1
+        lastML := bar_index
+    if m0591Dir == -1
+        lastMS := bar_index
+    if v1Dir == 1
+        lastVL := bar_index
+    if v1Dir == -1
+        lastVS := bar_index
+    if outDir == 1
+        lastOL := bar_index
+    if outDir == -1
+        lastOS := bar_index
+    if spDir == 1
+        lastPL := bar_index
+    if spDir == -1
+        lastPS := bar_index
+    if sfDir == 1
+        lastFL := bar_index
+    if sfDir == -1
+        lastFS := bar_index
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Technique 2 — Outcome First M15
-// ─────────────────────────────────────────────────────────────────────────────
-outLongRaw = primary and ((sellSweepAge <= 2 and bullFvg) or (strongLong and dispLong and low <= ema20 + 0.25 * atr))
-outShortRaw = primary and ((buySweepAge <= 2 and bearFvg) or (strongShort and dispShort and high >= ema20 - 0.25 * atr))
-outDir = f_bool_dir(outLongRaw, outShortRaw)
-outQ = (bullFvg or bearFvg ? 1 : 0) + (dispLong or dispShort ? 1 : 0) + (strongLong or strongShort ? 1 : 0)
-outR = f_quality_target(outQ)
+f_recent(int b) =>
+    bar_index - b <= SUPPORT_BARS
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Technique 3 — Structural Frequency M15
-// ─────────────────────────────────────────────────────────────────────────────
-sfLongRaw = primary and htfLong and sellSweepAge <= 6 and (dispLong or bullFvg)
-sfShortRaw = primary and htfShort and buySweepAge <= 6 and (dispShort or bearFvg)
-sfDir = f_bool_dir(sfLongRaw, sfShortRaw)
-sfQ = (strongLong or strongShort ? 1 : 0) + (bullFvg or bearFvg ? 1 : 0) + (rangeAtr > 1 ? 1 : 0)
-sfR = f_quality_target(sfQ)
+int supportLong = (f_recent(lastML) ? 1 : 0) + (f_recent(lastVL) ? 1 : 0) + (f_recent(lastOL) ? 1 : 0) + (f_recent(lastPL) ? 1 : 0) + (f_recent(lastFL) ? 1 : 0)
+int supportShort = (f_recent(lastMS) ? 1 : 0) + (f_recent(lastVS) ? 1 : 0) + (f_recent(lastOS) ? 1 : 0) + (f_recent(lastPS) ? 1 : 0) + (f_recent(lastFS) ? 1 : 0)
+int supportDir = m0591Dir == 1 ? supportLong : m0591Dir == -1 ? supportShort : 0
+int alignCount = m0591Dir == 0 ? 0 : (h1Bias == m0591Dir ? 1 : 0) + (h4Bias == m0591Dir ? 1 : 0)
+bool oldRouterSelected0591 = strongTrend ? (m0591Dir != 0 and m0591Dir == h1Bias) : (spDir == 0 and m0591Dir != 0 and supportDir >= 2)
+int canonicalDir = oldRouterSelected0591 and not primary and alignCount >= 1 ? m0591Dir : 0
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Technique 4 — Structural Portfolio MTF
-// ─────────────────────────────────────────────────────────────────────────────
-spPbLong = strongLong and sellSweepAge <= 5 and bullFvg
-spPbShort = strongShort and buySweepAge <= 5 and bearFvg
-spSwLong = htfLong and sellSweepAge <= 2 and bullFvg
-spSwShort = htfShort and buySweepAge <= 2 and bearFvg
-spRtLong = primary and htfLong and low <= prevDayHigh + 0.15 * atr and close > prevDayHigh and bullFvg
-spRtShort = primary and htfShort and high >= prevDayLow - 0.15 * atr and close < prevDayLow and bearFvg
-spBaseLong = spPbLong or spSwLong or spRtLong
-spBaseShort = spPbShort or spSwShort or spRtShort
-spQ = (primary ? 1 : 0) + (strongLong or strongShort ? 1 : 0) + (bullFvg or bearFvg ? 1 : 0) + (dispLong or dispShort ? 1 : 0)
-spBaseR = f_quality_target(spQ)
-[spLongAllowed, spLongR] = f_mtf_target(spBaseR, 1, h1Bias, h4Bias, h4Adx)
-[spShortAllowed, spShortR] = f_mtf_target(spBaseR, -1, h1Bias, h4Bias, h4Adx)
-spLongRaw = spBaseLong and spLongAllowed
-spShortRaw = spBaseShort and spShortAllowed
-spDir = f_bool_dir(spLongRaw, spShortRaw)
-spR = spDir == 1 ? spLongR : spDir == -1 ? spShortR : spBaseR
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Technique 5 — M15-0591 MTF
-// ─────────────────────────────────────────────────────────────────────────────
-var int m0591State = 0
-var int m0591ImpulseBar = na
-var float m0591ImpOpen = na
-var float m0591ImpClose = na
-var float m0591ImpHigh = na
-var float m0591ImpLow = na
-var float m0591ImpAtr = na
-var float m0591Broken = na
-var float m0591PullExtreme = na
-
-impLong = rangeAtr >= 1.20 and bodyFrac >= 0.55 and closeLoc >= 0.72 and close > hh20
-impShort = rangeAtr >= 1.20 and bodyFrac >= 0.55 and closeLoc <= 0.28 and close < ll20
-
-if m0591State == 0
-    if impLong and not impShort
-        m0591State := 1
-        m0591ImpulseBar := bar_index
-        m0591ImpOpen := open
-        m0591ImpClose := close
-        m0591ImpHigh := high
-        m0591ImpLow := low
-        m0591ImpAtr := atr
-        m0591Broken := hh20
-        m0591PullExtreme := low
-    else if impShort and not impLong
-        m0591State := -1
-        m0591ImpulseBar := bar_index
-        m0591ImpOpen := open
-        m0591ImpClose := close
-        m0591ImpHigh := high
-        m0591ImpLow := low
-        m0591ImpAtr := atr
-        m0591Broken := ll20
-        m0591PullExtreme := high
-
-m0591LongConfirm = false
-m0591ShortConfirm = false
-var float m0591SignalStop = na
-var float m0591SignalR = na
-
-if m0591State != 0 and bar_index > m0591ImpulseBar
-    age = bar_index - m0591ImpulseBar
-    impBody = math.abs(m0591ImpClose - m0591ImpOpen)
-    if age > 4
-        m0591State := 0
-    else if m0591State == 1
-        m0591PullExtreme := math.min(m0591PullExtreme, low)
-        invalid = low < m0591ImpLow - 0.30 * m0591ImpAtr
-        zoneNear = m0591ImpClose - 0.18 * impBody
-        zoneFar = m0591ImpClose - 0.50 * impBody
-        touched = low <= zoneNear and high >= zoneFar
-        confirm = close > open and close > m0591Broken
-        if invalid
-            m0591State := 0
-        else if touched and confirm
-            [allowed, rr] = f_mtf_target(3.0, 1, h1Bias, h4Bias, h4Adx)
-            if allowed
-                m0591LongConfirm := true
-                m0591SignalStop := m0591PullExtreme - 0.12 * m0591ImpAtr
-                m0591SignalR := rr
-            m0591State := 0
-    else
-        m0591PullExtreme := math.max(m0591PullExtreme, high)
-        invalid = high > m0591ImpHigh + 0.30 * m0591ImpAtr
-        zoneNear = m0591ImpClose + 0.18 * impBody
-        zoneFar = m0591ImpClose + 0.50 * impBody
-        touched = high >= zoneNear and low <= zoneFar
-        confirm = close < open and close < m0591Broken
-        if invalid
-            m0591State := 0
-        else if touched and confirm
-            [allowed, rr] = f_mtf_target(3.0, -1, h1Bias, h4Bias, h4Adx)
-            if allowed
-                m0591ShortConfirm := true
-                m0591SignalStop := m0591PullExtreme + 0.12 * m0591ImpAtr
-                m0591SignalR := rr
-            m0591State := 0
-
-m0591Dir = f_bool_dir(m0591LongConfirm, m0591ShortConfirm)
-
-// Recent source-signal memory for mixed-regime support.
-var int last0591Long = na
-var int last0591Short = na
-var int lastV1Long = na
-var int lastV1Short = na
-var int lastOutLong = na
-var int lastOutShort = na
-var int lastSpLong = na
-var int lastSpShort = na
-var int lastSfLong = na
-var int lastSfShort = na
-
-if m0591Dir == 1
-    last0591Long := bar_index
-if m0591Dir == -1
-    last0591Short := bar_index
-if v1Dir == 1
-    lastV1Long := bar_index
-if v1Dir == -1
-    lastV1Short := bar_index
-if outDir == 1
-    lastOutLong := bar_index
-if outDir == -1
-    lastOutShort := bar_index
-if spDir == 1
-    lastSpLong := bar_index
-if spDir == -1
-    lastSpShort := bar_index
-if sfDir == 1
-    lastSfLong := bar_index
-if sfDir == -1
-    lastSfShort := bar_index
-
-f_support_count(_dir) =>
-    c = 0
-    c += _dir == 1 and f_recent(last0591Long) ? 1 : _dir == -1 and f_recent(last0591Short) ? 1 : 0
-    c += _dir == 1 and f_recent(lastV1Long) ? 1 : _dir == -1 and f_recent(lastV1Short) ? 1 : 0
-    c += _dir == 1 and f_recent(lastOutLong) ? 1 : _dir == -1 and f_recent(lastOutShort) ? 1 : 0
-    c += _dir == 1 and f_recent(lastSpLong) ? 1 : _dir == -1 and f_recent(lastSpShort) ? 1 : 0
-    c += _dir == 1 and f_recent(lastSfLong) ? 1 : _dir == -1 and f_recent(lastSfShort) ? 1 : 0
-    c
-
-// Compute agreement once per M15 bar and reuse it in router + dashboard.
-supportLong = f_support_count(1)
-supportShort = f_support_count(-1)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Frozen Regime Router
-// Trend priority: 0591 -> V1 -> Outcome -> Structural Portfolio -> Structural Freq
-// Mixed priority: Structural Portfolio -> Outcome -> Structural Freq -> 0591 -> V1
-// Momentum techniques in mixed mode need a second agreeing technique.
-// ─────────────────────────────────────────────────────────────────────────────
-int finalDir = 0
-string selected = "WAIT"
-float selectedR = na
-float selectedStop = na
-string routerMode = strongTrend ? "TREND" : "MIXED"
-
-stdLongStop = ta.lowest(low, 6) - 0.10 * atr
-stdShortStop = ta.highest(high, 6) + 0.10 * atr
-
-if strongTrend
-    wanted = h1Bias
-    if m0591Dir == wanted
-        finalDir := wanted
-        selected := "M15-0591 MTF"
-        selectedR := m0591SignalR
-        selectedStop := m0591SignalStop
-    else if v1Dir == wanted
-        finalDir := wanted
-        selected := "V1 Legacy M15"
-        selectedR := v1R
-        selectedStop := wanted == 1 ? stdLongStop : stdShortStop
-    else if outDir == wanted
-        finalDir := wanted
-        selected := "Outcome First M15"
-        selectedR := outR
-        selectedStop := wanted == 1 ? stdLongStop : stdShortStop
-    else if spDir == wanted
-        finalDir := wanted
-        selected := "Structural Portfolio MTF"
-        selectedR := spR
-        selectedStop := wanted == 1 ? stdLongStop : stdShortStop
-    else if sfDir == wanted
-        finalDir := wanted
-        selected := "Structural Frequency M15"
-        selectedR := sfR
-        selectedStop := wanted == 1 ? stdLongStop : stdShortStop
-else
-    if spDir != 0
-        finalDir := spDir
-        selected := "Structural Portfolio MTF"
-        selectedR := spR
-        selectedStop := spDir == 1 ? stdLongStop : stdShortStop
-    else if outDir != 0
-        finalDir := outDir
-        selected := "Outcome First M15"
-        selectedR := outR
-        selectedStop := outDir == 1 ? stdLongStop : stdShortStop
-    else if sfDir != 0
-        finalDir := sfDir
-        selected := "Structural Frequency M15"
-        selectedR := sfR
-        selectedStop := sfDir == 1 ? stdLongStop : stdShortStop
-    else if m0591Dir != 0 and (m0591Dir == 1 ? supportLong : supportShort) >= 2
-        finalDir := m0591Dir
-        selected := "M15-0591 MTF"
-        selectedR := m0591SignalR
-        selectedStop := m0591SignalStop
-    else if v1Dir != 0 and (v1Dir == 1 ? supportLong : supportShort) >= 2
-        finalDir := v1Dir
-        selected := "V1 Legacy M15"
-        selectedR := v1R
-        selectedStop := v1Dir == 1 ? stdLongStop : stdShortStop
-
-if not tradeLongs and finalDir == 1
-    finalDir := 0
-if not tradeShorts and finalDir == -1
-    finalDir := 0
-if requireM15 and not isM15
-    finalDir := 0
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Portfolio signal + risk sizing
-// ─────────────────────────────────────────────────────────────────────────────
-entryEstimate = close
-riskDistance = math.abs(entryEstimate - selectedStop)
-riskAtr = atr > 0 ? riskDistance / atr : na
-pointValue = pointValueOverride > 0 ? pointValueOverride : math.max(syminfo.pointvalue, 0.0000001)
-riskCashAccount = strategy.equity * riskPct
-riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
-qty = riskDistance > 0 ? riskCashSymbol / (riskDistance * pointValue) : na
-validRisk = not na(riskAtr) and riskAtr >= minRiskAtr and riskAtr <= maxRiskAtr and not na(qty) and qty > 0
-portfolioSignal = finalDir != 0 and validRisk
-signalTarget = portfolioSignal ? entryEstimate + finalDir * selectedR * riskDistance : na
-
-// In BACKTEST mode, TradingView creates simulated orders automatically.
-// In LIVE SIGNALS mode, the dashboard/alerts remain active without simulated entries.
-backtestEntry = backtestMode and inBacktestWindow and portfolioSignal and strategy.position_size == 0
-liveEntrySignal = not backtestMode and portfolioSignal and not portfolioSignal[1]
-visualSignal = backtestEntry or liveEntrySignal
-
-var float pendingStop = na
-var float pendingR = na
-var string pendingTechnique = ""
+// Strict lifecycle: one active signal, frozen levels, no replacement until SL or TP.
+var int activeDir = 0
+var float activeEntry = na
 var float activeStop = na
 var float activeTarget = na
-var float activeR = na
-var string activeTechnique = ""
+var int activeSignalTime = na
 
-if backtestEntry
-    pendingStop := selectedStop
-    pendingR := selectedR
-    pendingTechnique := selected
-    if finalDir == 1
-        strategy.entry("RR-L", strategy.long, qty=qty, comment=selected)
-    else
-        strategy.entry("RR-S", strategy.short, qty=qty, comment=selected)
+bool closedNow = false
+string closeReason = ""
+if barstate.isconfirmed and activeDir != 0
+    bool stopHit = activeDir == 1 ? low <= activeStop : high >= activeStop
+    bool targetHit = activeDir == 1 ? high >= activeTarget : low <= activeTarget
+    if stopHit or targetHit
+        closedNow := true
+        closeReason := stopHit ? (targetHit ? "SL same bar" : "SL") : "TP"
+        label.new(bar_index, activeDir == 1 ? low : high, "RR10 " + closeReason, style=activeDir == 1 ? label.style_label_up : label.style_label_down, textcolor=color.white, color=stopHit ? color.red : color.green)
+        activeDir := 0
+        activeEntry := na
+        activeStop := na
+        activeTarget := na
+        activeSignalTime := na
 
-openedLong = strategy.position_size > 0 and strategy.position_size[1] <= 0
-openedShort = strategy.position_size < 0 and strategy.position_size[1] >= 0
-if openedLong or openedShort
-    activeStop := pendingStop
-    activeR := pendingR
-    activeTechnique := pendingTechnique
-    actualRisk = math.abs(strategy.position_avg_price - activeStop)
-    activeTarget := strategy.position_avg_price + (openedLong ? 1 : -1) * activeR * actualRisk
+bool newSignal = false
+if barstate.isconfirmed and isM15 and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
+    float risk = math.abs(close - m0591Stop)
+    if risk > 0
+        activeDir := canonicalDir
+        activeEntry := close
+        activeStop := m0591Stop
+        activeTarget := close + canonicalDir * TARGET_R * risk
+        activeSignalTime := time_close
+        float riskCashAccount = strategy.equity * RISK_FRACTION
+        float riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
+        float riskPerUnit = risk * syminfo.pointvalue
+        float qty = riskPerUnit > 0 ? riskCashSymbol / riskPerUnit : na
+        if not na(qty) and qty > 0
+            strategy.entry("RR10", canonicalDir == 1 ? strategy.long : strategy.short, qty=qty)
+            strategy.exit("RR10-X", "RR10", stop=activeStop, limit=activeTarget)
+        newSignal := true
+        label.new(bar_index, canonicalDir == 1 ? low : high, "RR10 " + (canonicalDir == 1 ? "LONG" : "SHORT") + "\n3R", style=canonicalDir == 1 ? label.style_label_up : label.style_label_down, textcolor=color.white, color=canonicalDir == 1 ? color.green : color.red)
 
-if strategy.position_size > 0 and not na(activeStop) and not na(activeTarget)
-    strategy.exit("RR-L-X", "RR-L", stop=activeStop, limit=activeTarget)
-if strategy.position_size < 0 and not na(activeStop) and not na(activeTarget)
-    strategy.exit("RR-S-X", "RR-S", stop=activeStop, limit=activeTarget)
+plot(activeDir != 0 ? activeEntry : na, "RR10 Entry", color=color.gray, linewidth=2, style=plot.style_linebr)
+plot(activeDir != 0 ? activeStop : na, "RR10 Stop", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(activeDir != 0 ? activeTarget : na, "RR10 Target", color=color.green, linewidth=2, style=plot.style_linebr)
 
-if backtestMode and time > backtestEnd and strategy.position_size != 0
-    strategy.close_all(comment="Backtest end")
+bgcolor(not isM15 ? color.new(color.orange, 85) : na, title="Wrong timeframe warning")
 
-closedNow = strategy.position_size == 0 and strategy.position_size[1] != 0
-if closedNow
-    activeStop := na
-    activeTarget := na
-    activeR := na
-    activeTechnique := ""
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Persistent chart levels: Entry / SL / TP
-// ─────────────────────────────────────────────────────────────────────────────
-var line entryLine = na
-var line stopLine = na
-var line targetLine = na
-var label entryTag = na
-var label stopTag = na
-var label targetTag = na
-
-f_clear_levels() =>
-    if not na(entryLine)
-        line.delete(entryLine)
-    if not na(stopLine)
-        line.delete(stopLine)
-    if not na(targetLine)
-        line.delete(targetLine)
-    if not na(entryTag)
-        label.delete(entryTag)
-    if not na(stopTag)
-        label.delete(stopTag)
-    if not na(targetTag)
-        label.delete(targetTag)
-
-if visualSignal and showTradeLevels
-    f_clear_levels()
-    entryLine := line.new(bar_index, entryEstimate, bar_index + 1, entryEstimate, extend=extend.right,
-         color=color.new(color.white, 20), width=1, style=line.style_dashed)
-    stopLine := line.new(bar_index, selectedStop, bar_index + 1, selectedStop, extend=extend.right,
-         color=color.rgb(255, 91, 111), width=2)
-    targetLine := line.new(bar_index, signalTarget, bar_index + 1, signalTarget, extend=extend.right,
-         color=color.rgb(38, 208, 124), width=2)
-    entryTag := label.new(bar_index + 1, entryEstimate, "ENTRY  " + f_fmt(entryEstimate), style=label.style_label_left,
-         textcolor=color.white, color=color.new(color.rgb(70, 80, 96), 15), size=size.small)
-    stopTag := label.new(bar_index + 1, selectedStop, "SL  " + f_fmt(selectedStop), style=label.style_label_left,
-         textcolor=color.white, color=color.new(color.rgb(180, 45, 62), 5), size=size.small)
-    targetTag := label.new(bar_index + 1, signalTarget, "TP  " + f_fmt(signalTarget) + " · " + f_fmt(selectedR) + "R",
-         style=label.style_label_left, textcolor=color.white, color=color.new(color.rgb(19, 120, 78), 5), size=size.small)
-
-// After a simulated fill, move the visible entry/TP levels to the actual Strategy Tester fill.
-if (openedLong or openedShort) and showTradeLevels
-    if not na(entryLine)
-        line.set_y1(entryLine, strategy.position_avg_price)
-        line.set_y2(entryLine, strategy.position_avg_price)
-    if not na(entryTag)
-        label.set_y(entryTag, strategy.position_avg_price)
-        label.set_text(entryTag, "ENTRY  " + f_fmt(strategy.position_avg_price))
-    if not na(targetLine)
-        line.set_y1(targetLine, activeTarget)
-        line.set_y2(targetLine, activeTarget)
-    if not na(targetTag)
-        label.set_y(targetTag, activeTarget)
-        label.set_text(targetTag, "TP  " + f_fmt(activeTarget) + " · " + f_fmt(activeR) + "R")
-
-// Keep level tags close to the right edge while the chart advances.
-if showTradeLevels
-    if not na(entryTag)
-        label.set_x(entryTag, bar_index + 2)
-    if not na(stopTag)
-        label.set_x(stopTag, bar_index + 2)
-    if not na(targetTag)
-        label.set_x(targetTag, bar_index + 2)
-
-if closedNow and showTradeLevels and not keepLastLevels
-    f_clear_levels()
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Alerts
-// ─────────────────────────────────────────────────────────────────────────────
-alertSignal = (backtestMode ? backtestEntry : liveEntrySignal)
-if alertSignal and enableAlerts
-    targetEstimate = entryEstimate + finalDir * selectedR * riskDistance
-    payload = "{" +
-      "\"source\":\"CASIO_REGIME_ROUTER_V1\"," +
-      "\"secret\":\"" + webhookSecret + "\"," +
-      "\"symbol\":\"" + syminfo.ticker + "\"," +
-      "\"timeframe\":\"" + timeframe.period + "\"," +
-      "\"action\":\"" + f_dir_text(finalDir) + "\"," +
-      "\"technique\":\"" + selected + "\"," +
-      "\"router_mode\":\"" + routerMode + "\"," +
-      "\"entry_estimate\":" + str.tostring(entryEstimate) + "," +
-      "\"stop\":" + str.tostring(selectedStop) + "," +
-      "\"target_estimate\":" + str.tostring(targetEstimate) + "," +
-      "\"target_r\":" + str.tostring(selectedR) + "," +
-      "\"risk_pct\":" + str.tostring(riskPct * 100) + "," +
-      "\"h1_bias\":" + str.tostring(h1Bias) + "," +
-      "\"h4_bias\":" + str.tostring(h4Bias) + "," +
-      "\"h4_adx\":" + str.tostring(h4Adx) + "," +
-      "\"bar_time\":" + str.tostring(time) + "}"
+if newSignal
+    string action = activeDir == 1 ? "LONG" : "SHORT"
+    string payload = '{"schema":"casio.regime-router.rr10","event":"signal","engine":"RR10","secret":"' + webhookSecret + '","source":"tradingview-rr10","symbol":"' + syminfo.ticker + '","timeframe":"15","direction":"' + (activeDir == 1 ? "long" : "short") + '","action":"' + action + '","technique":"RR10 Canonical","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","entry":' + str.tostring(activeEntry) + ',"entry_estimate":' + str.tostring(activeEntry) + ',"stop":' + str.tostring(activeStop) + ',"target":' + str.tostring(activeTarget) + ',"target_estimate":' + str.tostring(activeTarget) + ',"rr":3,"target_r":3,"risk_pct":5,"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + str.tostring(h4Adx) + ',"signal_time":' + str.tostring(activeSignalTime) + ',"bar_time":' + str.tostring(activeSignalTime) + '}'
     alert(payload, alert.freq_once_per_bar_close)
 
-alertcondition(alertSignal and finalDir == 1, "CASIO Regime Router LONG", "CASIO Regime Router LONG — use Any alert() function call for full JSON.")
-alertcondition(alertSignal and finalDir == -1, "CASIO Regime Router SHORT", "CASIO Regime Router SHORT — use Any alert() function call for full JSON.")
-
-if visualSignal and showSignalLabels
-    label.new(bar_index, finalDir == 1 ? low : high,
-      (finalDir == 1 ? "▲ LONG" : "▼ SHORT") + "\n" + selected + " · " + str.tostring(selectedR, "#") + "R",
-      style=finalDir == 1 ? label.style_label_up : label.style_label_down,
-      textcolor=color.white, color=color.new(f_dir_color(finalDir), 10), size=size.small)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dashboard
-// ─────────────────────────────────────────────────────────────────────────────
-var table dash = table.new(position.top_right, 4, 13,
-     bgcolor=color.new(color.rgb(12, 17, 25), 4),
-     frame_color=color.new(color.rgb(58, 70, 88), 30), frame_width=1,
-     border_color=color.new(color.rgb(58, 70, 88), 65), border_width=1)
-
-f_cell(_c, _r, _txt, _bg, _tc, _sz) =>
-    table.cell(dash, _c, _r, _txt, bgcolor=_bg, text_color=_tc, text_size=_sz)
-
-if barstate.islast and showDashboard
-    ink = color.rgb(228, 234, 242)
-    muted = color.rgb(145, 156, 174)
-    panel = color.rgb(18, 25, 36)
-    panel2 = color.rgb(23, 31, 44)
-    accent = color.rgb(75, 139, 255)
-    green = color.rgb(38, 208, 124)
-    red = color.rgb(255, 91, 111)
-    amber = color.rgb(247, 186, 72)
-    modeText = backtestMode ? "BACKTEST" : "LIVE"
-    modeBg = backtestMode ? color.rgb(62, 72, 145) : color.rgb(22, 104, 75)
-
-    f_cell(0, 0, "CASIO", color.rgb(28, 66, 129), color.white, size.large)
-    f_cell(1, 0, "REGIME ROUTER", color.rgb(28, 66, 129), color.white, size.normal)
-    f_cell(2, 0, syminfo.ticker, color.rgb(28, 66, 129), color.white, size.normal)
-    f_cell(3, 0, isM15 ? "M15 · " + modeText : "USE M15", isM15 ? modeBg : color.rgb(130, 55, 58), color.white, size.normal)
-
-    f_cell(0, 1, "MARKET STATE", panel2, muted, size.small)
-    f_cell(1, 1, "H1", panel2, muted, size.small)
-    f_cell(2, 1, "H4", panel2, muted, size.small)
-    f_cell(3, 1, "ROUTER", panel2, muted, size.small)
-    f_cell(0, 2, strongTrend ? "TREND" : "MIXED", strongTrend ? color.new(accent, 70) : color.new(amber, 72), ink, size.normal)
-    f_cell(1, 2, f_bias_text(h1Bias), color.new(f_dir_color(h1Bias), 80), ink, size.normal)
-    f_cell(2, 2, f_bias_text(h4Bias) + " · " + f_fmt(h4Adx), color.new(f_dir_color(h4Bias), 80), ink, size.normal)
-    f_cell(3, 2, routerMode, strongTrend ? color.new(accent, 70) : color.new(amber, 72), ink, size.normal)
-
-    f_cell(0, 3, "TECHNIQUE", panel2, muted, size.small)
-    f_cell(1, 3, "STATE", panel2, muted, size.small)
-    f_cell(2, 3, "TARGET", panel2, muted, size.small)
-    f_cell(3, 3, "ROLE", panel2, muted, size.small)
-
-    f_cell(0, 4, "0591 MTF", panel, ink, size.small)
-    f_cell(1, 4, f_dir_text(m0591Dir), color.new(f_dir_color(m0591Dir), 82), ink, size.small)
-    f_cell(2, 4, m0591Dir != 0 ? f_fmt(m0591SignalR) + "R" : "—", panel, ink, size.small)
-    f_cell(3, 4, "Momentum", panel, muted, size.small)
-
-    f_cell(0, 5, "V1 Legacy", panel, ink, size.small)
-    f_cell(1, 5, f_dir_text(v1Dir), color.new(f_dir_color(v1Dir), 82), ink, size.small)
-    f_cell(2, 5, v1Dir != 0 ? f_fmt(v1R) + "R" : "—", panel, ink, size.small)
-    f_cell(3, 5, "Momentum", panel, muted, size.small)
-
-    f_cell(0, 6, "Outcome First", panel, ink, size.small)
-    f_cell(1, 6, f_dir_text(outDir), color.new(f_dir_color(outDir), 82), ink, size.small)
-    f_cell(2, 6, outDir != 0 ? f_fmt(outR) + "R" : "—", panel, ink, size.small)
-    f_cell(3, 6, "Structure", panel, muted, size.small)
-
-    f_cell(0, 7, "Struct Portfolio", panel, ink, size.small)
-    f_cell(1, 7, f_dir_text(spDir), color.new(f_dir_color(spDir), 82), ink, size.small)
-    f_cell(2, 7, spDir != 0 ? f_fmt(spR) + "R" : "—", panel, ink, size.small)
-    f_cell(3, 7, "Structure", panel, muted, size.small)
-
-    f_cell(0, 8, "Struct Frequency", panel, ink, size.small)
-    f_cell(1, 8, f_dir_text(sfDir), color.new(f_dir_color(sfDir), 82), ink, size.small)
-    f_cell(2, 8, sfDir != 0 ? f_fmt(sfR) + "R" : "—", panel, ink, size.small)
-    f_cell(3, 8, "Structure", panel, muted, size.small)
-
-    f_cell(0, 9, "AGREEMENT", panel2, muted, size.small)
-    f_cell(1, 9, "▲ " + str.tostring(supportLong), color.new(green, 84), ink, size.small)
-    f_cell(2, 9, "▼ " + str.tostring(supportShort), color.new(red, 84), ink, size.small)
-    f_cell(3, 9, "30m window", panel2, muted, size.small)
-
-    displayDir = strategy.position_size > 0 ? 1 : strategy.position_size < 0 ? -1 : finalDir
-    displayTechnique = strategy.position_size != 0 ? activeTechnique : selected
-    displayR = strategy.position_size != 0 ? activeR : selectedR
-    signalBg = displayDir == 1 ? color.rgb(19, 103, 73) : displayDir == -1 ? color.rgb(130, 45, 58) : color.rgb(54, 63, 77)
-    f_cell(0, 10, "PORTFOLIO", signalBg, color.white, size.small)
-    f_cell(1, 10, f_dir_text(displayDir), signalBg, color.white, size.large)
-    f_cell(2, 10, displayTechnique, signalBg, color.white, size.small)
-    f_cell(3, 10, not na(displayR) ? f_fmt(displayR) + "R" : "—", signalBg, color.white, size.normal)
-
-    entryShow = strategy.position_size != 0 ? strategy.position_avg_price : finalDir != 0 ? entryEstimate : na
-    stopShow = strategy.position_size != 0 ? activeStop : finalDir != 0 ? selectedStop : na
-    targetShow = strategy.position_size != 0 ? activeTarget : finalDir != 0 ? signalTarget : na
-    f_cell(0, 11, "LEVELS", panel2, muted, size.small)
-    f_cell(1, 11, "ENTRY " + f_fmt(entryShow), panel2, ink, size.small)
-    f_cell(2, 11, "SL " + f_fmt(stopShow), panel2, red, size.small)
-    f_cell(3, 11, "TP " + f_fmt(targetShow), panel2, green, size.small)
-
-    windowText = backtestMode ? (inBacktestWindow ? "IN RANGE" : "OUTSIDE") : "ALERT MODE"
-    windowBg = backtestMode and not inBacktestWindow ? color.new(amber, 75) : color.new(green, 82)
-    f_cell(0, 12, "MODE", panel, muted, size.small)
-    f_cell(1, 12, modeText, modeBg, color.white, size.small)
-    f_cell(2, 12, "Risk " + str.tostring(riskPct * 100, "#.##") + "%", panel, muted, size.small)
-    f_cell(3, 12, windowText, windowBg, ink, size.small)
+alertcondition(newSignal and activeDir == 1, "RR10 LONG", "RR10 canonical LONG")
+alertcondition(newSignal and activeDir == -1, "RR10 SHORT", "RR10 canonical SHORT")
