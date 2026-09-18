@@ -20,7 +20,7 @@ def _ts(value: str | None) -> pd.Timestamp | None:
     return x.tz_localize("UTC") if x.tzinfo is None else x.tz_convert("UTC")
 
 
-def _equity_curve(trades: pd.DataFrame, start_rm: float = START_EQUITY_RM) -> tuple[pd.DataFrame, dict]:
+def _equity_curve(trades: pd.DataFrame, start_rm: float = START_EQUITY_RM, risk_fraction: float = RISK_FRACTION) -> tuple[pd.DataFrame, dict]:
     x = trades.copy()
     bal = float(start_rm)
     peak = bal
@@ -29,7 +29,7 @@ def _equity_curve(trades: pd.DataFrame, start_rm: float = START_EQUITY_RM) -> tu
 
     for r in pd.to_numeric(x.get("result_r", pd.Series(dtype=float)), errors="coerce").fillna(0.0):
         b = bal
-        p = b * RISK_FRACTION * float(r)
+        p = b * risk_fraction * float(r)
         bal = max(0.0, b + p)
         peak = max(peak, bal)
         max_dd = max(max_dd, ((peak - bal) / peak * 100.0) if peak > 0 else 0.0)
@@ -56,7 +56,7 @@ def _profit_factor(r: pd.Series) -> float:
     return gross_win / gross_loss if gross_loss > 0 else (float("inf") if gross_win > 0 else 0.0)
 
 
-def _monthly(trades: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+def _monthly(trades: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp, risk_fraction: float) -> pd.DataFrame:
     periods = pd.period_range(
         start=start.tz_localize(None).to_period("M"),
         end=(end - pd.Timedelta(seconds=1)).tz_localize(None).to_period("M"),
@@ -68,7 +68,7 @@ def _monthly(trades: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd
         a = pd.Timestamp(p.start_time, tz="UTC")
         b = pd.Timestamp((p + 1).start_time, tz="UTC")
         z = trades[(trades["entry_time"] >= a) & (trades["entry_time"] < b)].copy()
-        z, eq = _equity_curve(z, prev)
+        z, eq = _equity_curve(z, prev, risk_fraction)
         ending = eq["ending_balance_rm"]
         wins = int((pd.to_numeric(z.get("result_r"), errors="coerce") > 0).sum()) if len(z) else 0
         rows.append({
@@ -83,7 +83,7 @@ def _monthly(trades: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd
     return pd.DataFrame(rows)
 
 
-def run_one(m15: pd.DataFrame, rr: float, start: pd.Timestamp, end: pd.Timestamp, out: Path) -> dict:
+def run_one(m15: pd.DataFrame, rr: float, start: pd.Timestamp, end: pd.Timestamp, out: Path, risk_fraction: float) -> dict:
     events, active = replay_engine(m15, RegimeRouterConfig(target_r=float(rr)))
 
     if events.empty:
@@ -95,12 +95,12 @@ def run_one(m15: pd.DataFrame, rr: float, start: pd.Timestamp, end: pd.Timestamp
         trades = trades[(trades["entry_time"] >= start) & (trades["entry_time"] < end)].copy()
         trades = trades.sort_values("entry_time").reset_index(drop=True)
 
-    trades_eq, eq = _equity_curve(trades)
+    trades_eq, eq = _equity_curve(trades, risk_fraction=risk_fraction)
     result_r = pd.to_numeric(trades_eq.get("result_r", pd.Series(dtype=float)), errors="coerce")
     wins = int((result_r > 0).sum()) if len(trades_eq) else 0
     losses = int((result_r < 0).sum()) if len(trades_eq) else 0
     days = max((end - start).total_seconds() / 86400.0, 1e-9)
-    monthly = _monthly(trades_eq, start, end)
+    monthly = _monthly(trades_eq, start, end, risk_fraction)
 
     summary = {
         "engine": "RR10",
@@ -108,7 +108,7 @@ def run_one(m15: pd.DataFrame, rr: float, start: pd.Timestamp, end: pd.Timestamp
         "start": start.isoformat(),
         "end": end.isoformat(),
         "start_equity_rm": START_EQUITY_RM,
-        "risk_pct": RISK_FRACTION * 100.0,
+        "risk_pct": risk_fraction * 100.0,
         "closed_trades": int(len(trades_eq)),
         "wins": wins,
         "losses": losses,
@@ -133,6 +133,7 @@ def main() -> None:
     p.add_argument("--start", default="2026-01-01T00:00:00Z")
     p.add_argument("--end", default="")
     p.add_argument("--rr", nargs="+", type=float, default=list(DEFAULT_RRS))
+    p.add_argument("--risk-pct", type=float, default=RISK_FRACTION * 100.0)
     p.add_argument("--out", default="reports/regime-router-canonical/fxpro-integrity")
     args = p.parse_args()
 
@@ -158,7 +159,10 @@ def main() -> None:
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    rows = [run_one(m15, rr, start, end, out) for rr in args.rr]
+    if not (0.0 < args.risk_pct < 100.0):
+        raise SystemExit("--risk-pct must be between 0 and 100")
+    risk_fraction = args.risk_pct / 100.0
+    rows = [run_one(m15, rr, start, end, out, risk_fraction) for rr in args.rr]
     summary = pd.DataFrame(rows)
     summary.to_csv(out / "summary.csv", index=False)
     (out / "summary.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
@@ -170,7 +174,7 @@ def main() -> None:
         f"- Detected timeframe: **{source_tf}**",
         f"- Window: **{start.isoformat()} -> {end.isoformat()}**",
         "- Start equity: **RM100**",
-        "- Risk: **5% of current equity per closed trade**",
+        f"- Risk: **{args.risk_pct:g}% of current equity per closed trade**",
         "- Engine: **RR10 canonical**, one active trade at a time, stop-first on same-bar SL+TP.",
         "- R targets tested: **" + ", ".join(f"{x:g}R" for x in args.rr) + "**",
         "",
