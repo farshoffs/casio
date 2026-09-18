@@ -1,4 +1,4 @@
-name: Build bundled cTrader WebView dashboard
+name: Build bundled cTrader RR10 cross-device client
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - feature/regime-router-dashboard-research
     paths:
       - ctrader-web-plugin/regime-router-dashboard/index.html
+      - ctrader-web-plugin/cross-device/index.html
       - .github/workflows/build-ctrader-web-plugin.yml
   workflow_dispatch:
 
