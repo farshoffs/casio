@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#09111d">
+<title>CASIO RR10 Cross-Device</title>
+<style>
+:root{color-scheme:dark;--bg:#09111d;--panel:#101b2b;--panel2:#16243a;--line:#263a57;--text:#edf4ff;--muted:#8fa3bd;--green:#28d17c;--red:#ff6475;--amber:#f5b945;--blue:#5b91ff;--neutral:#7c8ba0}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{padding:max(10px,env(safe-area-inset-top)) 10px max(12px,env(safe-area-inset-bottom))}
+.app{max-width:980px;margin:0 auto}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}.brand{display:flex;gap:10px;align-items:center}.logo{width:44px;height:44px;border-radius:13px;background:#184487;display:grid;place-items:center;font-weight:900}.title{font-size:19px;font-weight:850}.sub{font-size:12px;color:var(--muted)}.badges{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.badge{border:1px solid var(--line);border-radius:999px;padding:6px 9px;background:var(--panel);font-size:12px;display:inline-flex;align-items:center;gap:6px}.dot{width:8px;height:8px;border-radius:50%;background:var(--neutral)}.dot.ok{background:var(--green)}.dot.warn{background:var(--amber)}.dot.err{background:var(--red)}button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:7px 10px;font-weight:700}
+.notice{display:none;border:1px solid rgba(245,185,69,.45);background:rgba(245,185,69,.08);color:#ffe0a1;padding:10px 12px;border-radius:10px;margin-bottom:10px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:12px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span12{grid-column:span 12}.label{font-size:11px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:7px}.value{font-size:21px;font-weight:850}.long{color:var(--green)}.short{color:var(--red)}.wait{color:var(--neutral)}.trend{color:var(--blue)}.mixed{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.level{padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2)}.level b{display:block;font-size:18px;margin-top:4px}.kv{display:grid;grid-template-columns:1fr auto;gap:7px 12px}.kv span:nth-child(odd){color:var(--muted)}.footer{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px}.source{overflow-wrap:anywhere}
+@media(max-width:720px){.top{flex-direction:column}.badges{justify-content:flex-start}.span3,.span4,.span6{grid-column:span 12}.levels{grid-template-columns:1fr}.title{font-size:18px}.value{font-size:20px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">RR10 canonical · cross-device WebView · iOS / Web / Windows / Mac</div></div></div>
+    <div class="badges">
+      <span class="badge">Build RR10-XD1</span>
+      <span class="badge"><span id="stateDot" class="dot warn"></span><span id="stateStatus">State loading</span></span>
+      <span class="badge"><span id="quoteDot" class="dot warn"></span><span id="quoteStatus">Quote connecting</span></span>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+  </div>
+  <div id="notice" class="notice"></div>
+  <div class="grid">
+    <section class="card span3"><div class="label">Portfolio</div><div id="portfolio" class="value wait">WAIT</div><div id="signalAge" class="sub">Cloud state loading</div></section>
+    <section class="card span3"><div class="label">Router mode</div><div id="routerMode" class="value mixed">—</div><div class="sub">Canonical RR10</div></section>
+    <section class="card span3"><div class="label">H1 bias</div><div id="h1Bias" class="value wait">—</div><div class="sub">Completed H1 context</div></section>
+    <section class="card span3"><div class="label">H4 bias / ADX</div><div id="h4Bias" class="value wait">—</div><div id="h4Adx" class="sub">ADX —</div></section>
+
+    <section class="card span12"><div class="label">Current canonical levels</div><div class="levels">
+      <div class="level"><span class="sub">ENTRY</span><b id="entry" class="mono">—</b></div>
+      <div class="level"><span class="sub">STOP LOSS</span><b id="stop" class="mono short">—</b></div>
+      <div class="level"><span class="sub">TAKE PROFIT · 3R</span><b id="target" class="mono long">—</b></div>
+    </div></section>
+
+    <section class="card span4"><div class="label">FxPro live quote</div><div class="value mono"><span id="bid">—</span> / <span id="ask">—</span></div><div id="symbolText" class="sub">cTrader host optional</div></section>
+    <section class="card span4"><div class="label">Risk model</div><div class="value"><span id="riskPct">5</span>% · <span id="targetR">3</span>R</div><div class="sub">Same frozen RR10 parameters</div></section>
+    <section class="card span4"><div class="label">Agreement</div><div id="agreement" class="value wait">—</div><div class="sub">Support / HTF alignment on active setup</div></section>
+
+    <section class="card span6"><div class="label">Cloud state</div><div class="kv"><span>Last M15 close</span><b id="barTime">—</b><span>Generated</span><b id="generated">—</b><span>Data age</span><b id="dataAge">—</b></div></section>
+    <section class="card span6"><div class="label">Sources</div><div id="dataSource" class="sub source">—</div><div id="executionSource" class="sub source" style="margin-top:6px">—</div></section>
+  </div>
+  <div class="footer"><span>One RR10 decision state shared by every device.</span><span id="updated">Updated —</span></div>
+</div>
+
+<script type="module">
+import { createClientAdapter } from "https://esm.sh/@spotware-web-team/sdk-external-api@0.0.5";
+import { handleConfirmEvent, registerEvent, getLightSymbolList, getSymbol, subscribeQuotes, quoteEvent } from "https://esm.sh/@spotware-web-team/sdk@0.0.20";
+import { firstValueFrom, take, filter, timeout } from "https://esm.sh/rxjs@7.8.2";
+import { createLogger } from "https://esm.sh/@veksa/logger@1.0.6";
+
+const BUILD="RR10-XD1";
+const STATE_URL="https://raw.githubusercontent.com/farshoffs/casio/rr10-live-state/rr10-state.json";
+const byId=id=>document.getElementById(id);
+let cloudState=null,adapter=null,symbolId=null,digits=2,quote={bid:NaN,ask:NaN};
+
+function num(v){if(v==null)return NaN;if(typeof v==="number")return v;if(typeof v==="string")return Number(v);if(typeof v==="bigint")return Number(v);if(typeof v==="object"&&typeof v.toString==="function")return Number(v.toString());return Number(v)}
+function keyNorm(v){return String(v??"").replace(/[^A-Z0-9]/gi,"").toLowerCase()}
+function field(obj,...names){if(!obj||typeof obj!=="object")return undefined;for(const n of names)if(Object.prototype.hasOwnProperty.call(obj,n))return obj[n];const wanted=new Set(names.map(keyNorm));for(const [k,v] of Object.entries(obj))if(wanted.has(keyNorm(k)))return v}
+function arrayField(x,key){const names=[key,key+"s",key+"List",key+"Collection"],seen=new Set();function walk(v,d){if(v==null||d>7)return[];if(Array.isArray(v))return key===""?v:[];if(typeof v!=="object"||seen.has(v))return[];seen.add(v);const direct=field(v,...names);if(Array.isArray(direct))return direct;if(direct&&typeof direct==="object"){const vals=Object.values(direct);if(vals.length&&vals.every(z=>z&&typeof z==="object"))return vals}for(const child of Object.values(v)){const f=walk(child,d+1);if(f.length)return f}return[]}return walk(x,0)}
+function rpc(obs,label,ms=12000){return firstValueFrom(obs.pipe(take(1),timeout({first:ms}))).catch(e=>{throw new Error(label+": "+(e?.message||e))})}
+function norm(v){return String(v??"").toUpperCase().replace(/[^A-Z0-9]/g,"")}
+function sname(s){return String(field(s,"name","symbolName","symbol","displayName")??"")}
+function sid(s){return num(field(s,"id","symbolId"))}
+function fmt(v){return Number.isFinite(v)?v.toFixed(Math.max(2,digits)):"—"}
+function bias(v){return v===1?"BULL":v===-1?"BEAR":"NEUTRAL"}
+function dirClass(v){return v==="LONG"||v===1?"long":v==="SHORT"||v===-1?"short":"wait"}
+function setBadge(dot,status,kind,text){byId(dot).className="dot "+kind;byId(status).textContent=text}
+function isoShort(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?"—":d.toISOString().replace(".000Z","Z")}
+function showNotice(msg){const e=byId("notice");e.textContent=msg;e.style.display=msg?"block":"none"}
+
+function renderState(){
+  const s=cloudState;if(!s)return;
+  const p=String(s.portfolio||"WAIT").toUpperCase();
+  byId("portfolio").textContent=p;byId("portfolio").className="value "+dirClass(p);
+  byId("routerMode").textContent=s.router_mode||"—";byId("routerMode").className="value "+(s.router_mode==="TREND"?"trend":"mixed");
+  byId("h1Bias").textContent=bias(Number(s.h1_bias));byId("h1Bias").className="value "+dirClass(Number(s.h1_bias));
+  byId("h4Bias").textContent=bias(Number(s.h4_bias));byId("h4Bias").className="value "+dirClass(Number(s.h4_bias));
+  byId("h4Adx").textContent="ADX "+(Number.isFinite(Number(s.h4_adx))?Number(s.h4_adx).toFixed(2):"—");
+  byId("riskPct").textContent=Number(s.risk_pct||5).toFixed(0);byId("targetR").textContent=Number(s.target_r||3).toFixed(0);
+  byId("barTime").textContent=isoShort(s.last_m15_close_utc);byId("generated").textContent=isoShort(s.generated_at_utc);
+  byId("dataAge").textContent=Number.isFinite(Number(s.data_age_minutes))?Number(s.data_age_minutes).toFixed(1)+" min":"—";
+  byId("dataSource").textContent="Decision feed: "+(s.data_source||"—");
+  byId("executionSource").textContent="Quote overlay: "+(s.execution_source||"—");
+  const a=s.active_signal;
+  if(a){
+    byId("entry").textContent=fmt(Number(a.entry));byId("stop").textContent=fmt(Number(a.stop));byId("target").textContent=fmt(Number(a.target));
+    byId("agreement").textContent=String(a.support??"—")+" / "+String(a.align_count??"—");
+    byId("agreement").className="value "+dirClass(p);
+    byId("signalAge").textContent="Active since "+isoShort(a.entry_time_utc);
+  }else{
+    byId("entry").textContent="—";byId("stop").textContent="—";byId("target").textContent="—";byId("agreement").textContent="—";byId("agreement").className="value wait";byId("signalAge").textContent="No active RR10 setup";
+  }
+  if(s.stale){
+    setBadge("stateDot","stateStatus","warn","State stale");
+    showNotice("RR10 cloud state is stale. Do not treat WAIT/LONG/SHORT as current until the next successful state update.");
+  }else{
+    setBadge("stateDot","stateStatus","ok","State live");
+    showNotice("");
+  }
+  byId("updated").textContent="Updated "+new Date().toLocaleTimeString();
+}
+function renderQuote(){byId("bid").textContent=fmt(quote.bid);byId("ask").textContent=fmt(quote.ask)}
+
+async function loadState(){
+  try{
+    const res=await fetch(STATE_URL+"?t="+Date.now(),{cache:"no-store"});
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    const s=await res.json();
+    if(s.engine!=="RR10"||s.schema!=="casio.regime-router.rr10.state.v1")throw new Error("non-canonical state");
+    cloudState=s;renderState();
+  }catch(e){
+    setBadge("stateDot","stateStatus","err","State error");
+    showNotice("Shared RR10 state unavailable: "+(e?.message||e));
+  }
+}
+
+async function connectQuote(){
+  try{
+    adapter=createClientAdapter({logger:createLogger(location.href.includes("showLogs"))});
+    handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();
+    await rpc(registerEvent(adapter),"host registration",10000);
+    handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();
+    let first=await rpc(getLightSymbolList(adapter,{includeArchivedSymbols:false}),"symbol list",12000);
+    let symbols=arrayField(first,"symbol");
+    if(!symbols.length){
+      try{symbols=await firstValueFrom(getLightSymbolList(adapter,{includeArchivedSymbols:false},true).pipe(filter(x=>arrayField(x,"symbol").length>0),take(1),timeout({first:12000}))).then(x=>arrayField(x,"symbol"))}catch{}
+    }
+    let sym=symbols.find(x=>norm(sname(x))==="XAUUSD")||symbols.find(x=>norm(sname(x)).includes("XAUUSD"))||symbols.find(x=>sname(x).toUpperCase().includes("GOLD"));
+    if(!sym)throw new Error("XAUUSD not found");
+    symbolId=sid(sym);if(!Number.isFinite(symbolId))throw new Error("no symbol ID");
+    const detail=await rpc(getSymbol(adapter,{symbolId:[symbolId]}),"symbol details",12000);
+    const d=arrayField(detail,"symbol")[0];if(d)digits=Math.max(0,num(field(d,"digits"))||2);
+    await rpc(subscribeQuotes(adapter,{symbolId:[symbolId],subscribeToSpotTimestamp:true}),"quote subscription",12000);
+    quoteEvent(adapter).subscribe(qr=>{if(num(field(qr,"symbolId"))!==symbolId)return;const b=num(field(qr,"bid")),a=num(field(qr,"ask"));if(Number.isFinite(b))quote.bid=b/100000;if(Number.isFinite(a))quote.ask=a/100000;renderQuote()});
+    byId("symbolText").textContent=sname(sym)+" · live cTrader quote";
+    setBadge("quoteDot","quoteStatus","ok","Quote live");
+  }catch(e){
+    byId("symbolText").textContent="Cloud RR10 remains available without quote overlay";
+    setBadge("quoteDot","quoteStatus","warn","Quote optional");
+  }
+}
+
+byId("refreshBtn").addEventListener("click",()=>{loadState();connectQuote()});
+loadState();
+connectQuote();
+setInterval(loadState,30000);
+</script>
+</body>
+</html>
