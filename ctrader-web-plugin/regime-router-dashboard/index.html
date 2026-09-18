@@ -15,8 +15,8 @@
 <body>
 <div class="app">
 <div class="top">
-<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR7</span></div></div></div>
-<div class="actions"><span class="badge">Build <span id="buildId">RR7</span></span><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
+<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR8</span></div></div></div>
+<div class="actions"><span class="badge">Build <span id="buildId">RR8</span></span><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
 </div>
 <div id="errorBox" class="error"></div>
 <div class="grid">
@@ -44,9 +44,9 @@ import { handleConfirmEvent, registerEvent, getAccountInformation, getLightSymbo
 import { firstValueFrom, take, filter, timeout } from "https://esm.sh/rxjs@7.8.2";
 import { createLogger } from "https://esm.sh/@veksa/logger@1.0.6";
 
-const BUILD_ID="RR7";
+const BUILD_ID="RR8";
 const byId=id=>document.getElementById(id);
-const PERIOD={M15:7,H1:9,H4:10,D1:12};
+const PERIOD={M15:11,H1:15,H4:18,D1:22};
 const PERIOD_MS={M15:900000,H1:3600000,H4:14400000,D1:86400000};
 const trendAdxThreshold=18,supportBars=2;
 let adapter,symbolId=null,symbolName="XAUUSD",digits=2,quote={bid:NaN,ask:NaN},lastSnapshot=null,refreshing=false,lastM15Bucket=Math.floor(Date.now()/PERIOD_MS.M15);
