@@ -51,7 +51,6 @@ jobs:
               js = js.replace(old, new)
 
           Path("/tmp/casio-app.mjs").write_text(js, encoding="utf-8")
-
           dist = Path("ctrader-web-plugin/regime-router-dashboard/dist")
           dist.mkdir(parents=True, exist_ok=True)
           html_dist = html[:m.start()] + '<script src="./bundle.js"></script>' + html[m.end():]
@@ -59,10 +58,32 @@ jobs:
           PY
 
       - name: Bundle SDK into same-origin JavaScript
+        id: bundle
+        continue-on-error: true
         run: |
-          npx esbuild /tmp/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle.js
+          set +e
+          npx esbuild /tmp/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle.js             > /tmp/esbuild.log 2>&1
+          CODE=$?
+          cat /tmp/esbuild.log
+          echo "exit_code=$CODE" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Record bundler failure
+        if: steps.bundle.outputs.exit_code != '0'
+        run: |
+          cp /tmp/esbuild.log ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
+          git commit -m "Record cTrader WebView bundle error"
+          git push
+
+      - name: Stop on bundler failure
+        if: steps.bundle.outputs.exit_code != '0'
+        run: exit 1
 
       - name: Guard bundled output
+        if: steps.bundle.outputs.exit_code == '0'
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -79,13 +100,15 @@ jobs:
           PY
 
       - name: Commit bundled output
+        if: steps.bundle.outputs.exit_code == '0'
         run: |
-          if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard/dist; then
+          rm -f ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
+          if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard/dist ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt; then
             echo "Bundled output unchanged."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ctrader-web-plugin/regime-router-dashboard/dist
+          git add -A ctrader-web-plugin/regime-router-dashboard/dist ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
           git commit -m "Bundle cTrader WebView SDK for same-origin loading"
           git push
