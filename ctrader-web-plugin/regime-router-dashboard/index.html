@@ -19,7 +19,7 @@ body{padding:max(10px,env(safe-area-inset-top)) 10px max(12px,env(safe-area-inse
   <div class="top">
     <div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">RR10 canonical · cross-device WebView · iOS / Web / Windows / Mac</div></div></div>
     <div class="badges">
-      <span class="badge">Build RR10-XD1</span>
+      <span class="badge">Build RR10-XD2</span>
       <span class="badge"><span id="stateDot" class="dot warn"></span><span id="stateStatus">State loading</span></span>
       <span class="badge"><span id="quoteDot" class="dot warn"></span><span id="quoteStatus">Quote connecting</span></span>
       <button id="refreshBtn">Refresh</button>
@@ -45,7 +45,7 @@ body{padding:max(10px,env(safe-area-inset-top)) 10px max(12px,env(safe-area-inse
     <section class="card span6"><div class="label">Cloud state</div><div class="kv"><span>Last M15 close</span><b id="barTime">—</b><span>Generated</span><b id="generated">—</b><span>Data age</span><b id="dataAge">—</b></div></section>
     <section class="card span6"><div class="label">Sources</div><div id="dataSource" class="sub source">—</div><div id="executionSource" class="sub source" style="margin-top:6px">—</div></section>
   </div>
-  <div class="footer"><span>One RR10 decision state shared by every device.</span><span id="updated">Updated —</span></div>
+  <div class="footer"><span>One TradingView FxPro RR10 state shared by every device.</span><span id="updated">Updated —</span></div>
 </div>
 
 <script type="module">
@@ -54,8 +54,8 @@ import { handleConfirmEvent, registerEvent, getLightSymbolList, getSymbol, subsc
 import { firstValueFrom, take, filter, timeout } from "https://esm.sh/rxjs@7.8.2";
 import { createLogger } from "https://esm.sh/@veksa/logger@1.0.6";
 
-const BUILD="RR10-XD1";
-const STATE_URL="https://raw.githubusercontent.com/farshoffs/casio/rr10-live-state/rr10-state.json";
+const BUILD="RR10-XD2";
+const STATE_URL="__CASIO_RR10_STATE_URL__";
 const byId=id=>document.getElementById(id);
 let cloudState=null,adapter=null,symbolId=null,digits=2,quote={bid:NaN,ask:NaN};
 
@@ -109,14 +109,28 @@ function renderQuote(){byId("bid").textContent=fmt(quote.bid);byId("ask").textCo
 
 async function loadState(){
   try{
-    const res=await fetch(STATE_URL+"?t="+Date.now(),{cache:"no-store"});
-    if(!res.ok)throw new Error("HTTP "+res.status);
-    const s=await res.json();
-    if(s.engine!=="RR10"||s.schema!=="casio.regime-router.rr10.state.v1")throw new Error("non-canonical state");
+    const s=await new Promise((resolve,reject)=>{
+      const cb="__casioRr10State_"+Date.now()+"_"+Math.random().toString(36).slice(2);
+      const script=document.createElement("script");
+      let done=false;
+      const cleanup=()=>{
+        if(done)return;done=true;
+        clearTimeout(timer);
+        try{delete window[cb]}catch{}
+        script.remove();
+      };
+      window[cb]=(value)=>{cleanup();resolve(value)};
+      script.onerror=()=>{cleanup();reject(new Error("state endpoint unavailable"))};
+      const sep=STATE_URL.includes("?")?"&":"?";
+      script.src=STATE_URL+sep+"callback="+encodeURIComponent(cb)+"&t="+Date.now();
+      document.head.appendChild(script);
+      const timer=setTimeout(()=>{cleanup();reject(new Error("state endpoint timed out"))},12000);
+    });
+    if(!s||s.engine!=="RR10"||s.schema!=="casio.regime-router.rr10.state.v1")throw new Error("non-canonical state");
     cloudState=s;renderState();
   }catch(e){
     setBadge("stateDot","stateStatus","err","State error");
-    showNotice("Shared RR10 state unavailable: "+(e?.message||e));
+    showNotice("TradingView FxPro RR10 state unavailable: "+(e?.message||e));
   }
 }
 
@@ -141,7 +155,7 @@ async function connectQuote(){
     byId("symbolText").textContent=sname(sym)+" · live cTrader quote";
     setBadge("quoteDot","quoteStatus","ok","Quote live");
   }catch(e){
-    byId("symbolText").textContent="Cloud RR10 remains available without quote overlay";
+    byId("symbolText").textContent="TradingView RR10 state remains available without quote overlay";
     setBadge("quoteDot","quoteStatus","warn","Quote optional");
   }
 }
