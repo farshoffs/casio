@@ -1,0 +1,45 @@
+name: Diagnose cTrader Plugin SDK packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/regime-router-dashboard-research
+    paths:
+      - .github/workflows/diagnose-ctrader-sdk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install SDK packages
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save @spotware-web-team/sdk@0.0.20 @spotware-web-team/sdk-external-api rxjs@7.8.2 @veksa/logger@1.0.6
+      - name: Print versions and package metadata
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          for (const p of ['@spotware-web-team/sdk','@spotware-web-team/sdk-external-api','rxjs','@veksa/logger']) {
+            const path=require.resolve(p+'/package.json');
+            const j=JSON.parse(fs.readFileSync(path,'utf8'));
+            console.log('PACKAGE',p,'VERSION',j.version,'MAIN',j.main,'MODULE',j.module,'EXPORTS',JSON.stringify(j.exports||null));
+          }
+          NODE
+      - name: Inspect external adapter and SDK request wrappers
+        run: |
+          echo '--- sdk-external-api files ---'
+          find node_modules/@spotware-web-team/sdk-external-api -maxdepth 3 -type f | sort | head -80
+          echo '--- sdk files ---'
+          find node_modules/@spotware-web-team/sdk -maxdepth 3 -type f | sort | head -80
+          echo '--- adapter source snippets ---'
+          grep -Rni "class.*Adapter\|send(\|createClientAdapter\|event\$" node_modules/@spotware-web-team/sdk-external-api --include='*.js' --include='*.mjs' --include='*.ts' | head -120 || true
+          echo '--- light symbols wrapper snippets ---'
+          grep -Rni "getLightSymbolList\|GetLightSymbolListReq\|payloadType.*841\|payloadType.*842" node_modules/@spotware-web-team/sdk --include='*.js' --include='*.mjs' --include='*.ts' | head -160 || true
