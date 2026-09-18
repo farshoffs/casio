@@ -1,0 +1,100 @@
+name: CASIO RR10 FxPro M15 Integrity
+
+on:
+  workflow_dispatch:
+    inputs:
+      csv_path:
+        description: Path to the FxPro XAUUSD M15 CSV in this branch
+        required: true
+        default: data/fxpro_xauusd_m15.csv
+      start:
+        description: UTC backtest start
+        required: true
+        default: '2026-01-01T00:00:00Z'
+      end:
+        description: UTC backtest end; leave blank to use last completed CSV bar
+        required: false
+        default: ''
+  push:
+    branches: [feature/regime-router-dashboard-research]
+    paths:
+      - 'data/fxpro_xauusd_m15.csv'
+
+permissions:
+  contents: write
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/regime-router-dashboard-research
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install tabulate
+
+      - name: Resolve inputs
+        id: cfg
+        shell: bash
+        run: |
+          CSV_PATH='${{ github.event.inputs.csv_path }}'
+          START='${{ github.event.inputs.start }}'
+          END='${{ github.event.inputs.end }}'
+          if [ -z "$CSV_PATH" ]; then CSV_PATH='data/fxpro_xauusd_m15.csv'; fi
+          if [ -z "$START" ]; then START='2026-01-01T00:00:00Z'; fi
+          echo "csv_path=$CSV_PATH" >> "$GITHUB_OUTPUT"
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+
+      - name: Verify source CSV
+        run: |
+          test -s '${{ steps.cfg.outputs.csv_path }}' || {
+            echo "Missing FxPro M15 CSV: ${{ steps.cfg.outputs.csv_path }}"
+            exit 1
+          }
+
+      - name: Run RR 2-5 integrity backtest
+        shell: bash
+        run: |
+          if [ -n '${{ steps.cfg.outputs.end }}' ]; then
+            python -m casio.rr10_integrity_backtest \
+              --data '${{ steps.cfg.outputs.csv_path }}' \
+              --start '${{ steps.cfg.outputs.start }}' \
+              --end '${{ steps.cfg.outputs.end }}' \
+              --rr 2 3 4 5 \
+              --out reports/regime-router-canonical/fxpro-integrity
+          else
+            python -m casio.rr10_integrity_backtest \
+              --data '${{ steps.cfg.outputs.csv_path }}' \
+              --start '${{ steps.cfg.outputs.start }}' \
+              --rr 2 3 4 5 \
+              --out reports/regime-router-canonical/fxpro-integrity
+          fi
+
+      - name: Publish results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rr10-fxpro-integrity
+          path: reports/regime-router-canonical/fxpro-integrity
+
+      - name: Commit integrity report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/regime-router-canonical/fxpro-integrity
+          if git diff --cached --quiet; then
+            echo "No report changes"
+          else
+            git commit -m "test: record RR10 FxPro M15 integrity backtest"
+            git push origin HEAD:feature/regime-router-dashboard-research
+          fi
