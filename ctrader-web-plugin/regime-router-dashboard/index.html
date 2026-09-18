@@ -15,8 +15,8 @@
 <body>
 <div class="app">
 <div class="top">
-<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR6</span></div></div></div>
-<div class="actions"><span class="badge">Build <span id="buildId">RR6</span></span><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
+<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR7</span></div></div></div>
+<div class="actions"><span class="badge">Build <span id="buildId">RR7</span></span><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
 </div>
 <div id="errorBox" class="error"></div>
 <div class="grid">
@@ -44,7 +44,7 @@ import { handleConfirmEvent, registerEvent, getAccountInformation, getLightSymbo
 import { firstValueFrom, take, filter, timeout } from "https://esm.sh/rxjs@7.8.2";
 import { createLogger } from "https://esm.sh/@veksa/logger@1.0.6";
 
-const BUILD_ID="RR6";
+const BUILD_ID="RR7";
 const byId=id=>document.getElementById(id);
 const PERIOD={M15:7,H1:9,H4:10,D1:12};
 const PERIOD_MS={M15:900000,H1:3600000,H4:14400000,D1:86400000};
@@ -53,17 +53,25 @@ let adapter,symbolId=null,symbolName="XAUUSD",digits=2,quote={bid:NaN,ask:NaN},l
 
 function num(v){if(v==null)return NaN;if(typeof v==="number")return v;if(typeof v==="bigint")return Number(v);if(typeof v==="string")return Number(v);if(typeof v==="object"){if(typeof v.toNumber==="function")return v.toNumber();if(typeof v.toString==="function")return Number(v.toString())}return Number(v)}
 function maybeJson(v){if(typeof v!=="string")return v;const t=v.trim();if(!t||(t[0]!=="{"&&t[0]!=="["))return v;try{return JSON.parse(t)}catch{return v}}
-function unwrap(x){let v=maybeJson(x);for(let i=0;i<4;i++){if(v&&typeof v==="object"&&v.payload!==undefined){const n=maybeJson(v.payload);if(n!==v){v=n;continue}}if(v&&typeof v==="object"&&v.data!==undefined){const n=maybeJson(v.data);if(n!==v){v=n;continue}}break}return v??{}}
+function keyNorm(v){return String(v??"").replace(/[^A-Z0-9]/gi,"").toLowerCase()}
+function field(obj,...names){
+  if(!obj||typeof obj!=="object")return undefined;
+  for(const name of names)if(Object.prototype.hasOwnProperty.call(obj,name))return obj[name];
+  const wanted=new Set(names.map(keyNorm));
+  for(const [k,v] of Object.entries(obj))if(wanted.has(keyNorm(k)))return v;
+  return undefined;
+}
+function unwrap(x){let v=maybeJson(x);for(let i=0;i<6;i++){if(v&&typeof v==="object"){const p=field(v,"payload");if(p!==undefined){const n=maybeJson(p);if(n!==v){v=n;continue}}const d=field(v,"data");if(d!==undefined){const n=maybeJson(d);if(n!==v){v=n;continue}}}break}return v??{}}
 function arrayField(x,key){
-  const seen=new Set();
+  const seen=new Set(),names=[key,key+"s",key+"List",key+"Collection"];
   function walk(v,depth){
     v=maybeJson(v);
-    if(v==null||depth>6)return [];
+    if(v==null||depth>8)return [];
     if(Array.isArray(v))return key===""?v:[];
     if(typeof v!=="object")return [];
     if(seen.has(v))return [];
     seen.add(v);
-    const direct=v[key];
+    const direct=field(v,...names);
     if(direct!==undefined){
       const d=maybeJson(direct);
       if(Array.isArray(d))return d;
@@ -82,10 +90,10 @@ function arrayField(x,key){
   return walk(x,0);
 }
 function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
-function symbolDisplayName(s){return String(s?.name??s?.symbolName??s?.symbol??s?.displayName??"")}
-function symbolIdValue(s){return num(s?.id??s?.symbolId)}
+function symbolDisplayName(s){return String(field(s,"name","symbolName","symbol","displayName")??"")}
+function symbolIdValue(s){return num(field(s,"id","symbolId"))}
 function normalizeSymbolName(v){return String(v??"").toUpperCase().replace(/[^A-Z0-9]/g,"")}
-function symbolSearchText(s){return [symbolDisplayName(s),s?.description,s?.translation,s?.tags].filter(Boolean).join(" ").toUpperCase()}
+function symbolSearchText(s){return [symbolDisplayName(s),field(s,"description"),field(s,"translation"),field(s,"tags")].filter(Boolean).join(" ").toUpperCase()}
 function once(obs){return firstValueFrom(obs.pipe(take(1)))}
 function clientMsgId(){
   if(globalThis.crypto&&typeof globalThis.crypto.randomUUID==="function") return globalThis.crypto.randomUUID();
@@ -94,15 +102,15 @@ function clientMsgId(){
 async function getTrendbarListCompat(payload){
   const inner={payloadType:113,payload,clientMsgId:clientMsgId()};
   const outer=await rpc(getServerData(adapter,{data:JSON.stringify(inner)}),"trendbar RPC",12000);
-  const raw=outer?.data;
+  const raw=field(outer,"data");
   if(typeof raw!=="string") throw new Error("Trendbar RPC returned no serialized data. raw="+shortJson(outer));
   const parsed=JSON.parse(raw);
-  if(num(parsed?.payloadType)!==114) throw new Error("Trendbar RPC returned payloadType "+String(parsed?.payloadType??"unknown")+" instead of 114. raw="+shortJson(parsed));
+  if(num(field(parsed,"payloadType"))!==114) throw new Error("Trendbar RPC returned payloadType "+String(field(parsed,"payloadType")??"unknown")+" instead of 114. raw="+shortJson(parsed));
   return parsed;
 }
 async function rpc(obs,label,ms=10000){try{return await firstValueFrom(obs.pipe(take(1),timeout({first:ms})))}catch(e){throw new Error(label+" failed or timed out: "+(e?.message||e))}}
 function shortJson(v,max=420){try{const x=JSON.stringify(v);return x.length>max?x.slice(0,max)+"…":x}catch{return String(v)}}
-async function getLightSymbolsCompat(){const payload={includeArchivedSymbols:false};let first=await rpc(getLightSymbolList(adapter,payload),"symbol list",10000);let symbols=arrayField(first,"symbol");if(symbols.length)return{response:first,symbols,mode:"standard"};try{const streamed=await firstValueFrom(getLightSymbolList(adapter,payload,true).pipe(filter(msg=>num(msg?.payloadType)===842||arrayField(msg,"symbol").length>0),take(1),timeout({first:10000})));symbols=arrayField(streamed,"symbol");if(symbols.length)return{response:streamed,symbols,mode:"multi-842"};return{response:streamed,symbols,mode:"multi-empty"}}catch(e){return{response:first,symbols:[],mode:"standard-empty; multi failed: "+(e?.message||e)}}}
+async function getLightSymbolsCompat(){const payload={includeArchivedSymbols:false};let first=await rpc(getLightSymbolList(adapter,payload),"symbol list",10000);let symbols=arrayField(first,"symbol");if(symbols.length)return{response:first,symbols,mode:"standard"};try{const streamed=await firstValueFrom(getLightSymbolList(adapter,payload,true).pipe(filter(msg=>num(field(msg,"payloadType"))===842||arrayField(msg,"symbol").length>0),take(1),timeout({first:10000})));symbols=arrayField(streamed,"symbol");if(symbols.length)return{response:streamed,symbols,mode:"multi-842"};return{response:streamed,symbols,mode:"multi-empty"}}catch(e){return{response:first,symbols:[],mode:"standard-empty; multi failed: "+(e?.message||e)}}}
 function fmt(v){return Number.isFinite(v)?v.toFixed(Math.max(2,digits)):"—"}
 function dirText(d){return d===1?"LONG":d===-1?"SHORT":"WAIT"}
 function biasText(d){return d===1?"BULL":d===-1?"BEAR":"NEUTRAL"}
@@ -111,7 +119,7 @@ function setState(id,d){const e=byId(id);e.textContent=dirText(d);e.className="s
 function showError(msg){const e=byId("errorBox");e.textContent=msg;e.style.display=msg?"block":"none"}
 function setConnection(state,text){byId("connText").textContent=text;byId("connDot").className="dot "+state}
 
-function decodeTrendbar(tb){const lowRaw=num(tb.low),dOpen=num(tb.deltaOpen)||0,dClose=num(tb.deltaClose)||0,dHigh=num(tb.deltaHigh)||0,minute=num(tb.utcTimestampInMinutes);return{t:minute*60000,open:(lowRaw+dOpen)/100000,high:(lowRaw+dHigh)/100000,low:lowRaw/100000,close:(lowRaw+dClose)/100000,volume:num(tb.volume)||0}}
+function decodeTrendbar(tb){const lowRaw=num(field(tb,"low")),dOpen=num(field(tb,"deltaOpen"))||0,dClose=num(field(tb,"deltaClose"))||0,dHigh=num(field(tb,"deltaHigh"))||0,minute=num(field(tb,"utcTimestampInMinutes"));return{t:minute*60000,open:(lowRaw+dOpen)/100000,high:(lowRaw+dHigh)/100000,low:lowRaw/100000,close:(lowRaw+dClose)/100000,volume:num(field(tb,"volume"))||0}}
 function trendbars(res,periodMs){const now=Date.now();return arrayField(res,"trendbar").map(decodeTrendbar).filter(b=>Number.isFinite(b.t)&&Number.isFinite(b.close)&&b.t+periodMs<=now+1000).sort((a,b)=>a.t-b.t)}
 function ema(bars,p){const o=Array(bars.length).fill(NaN);if(!bars.length)return o;let e=bars[0].close,k=2/(p+1);o[0]=e;for(let i=1;i<bars.length;i++){e=bars[i].close*k+e*(1-k);o[i]=e}return o}
 function trueRanges(bars){const o=Array(bars.length).fill(NaN);for(let i=0;i<bars.length;i++){const r=bars[i].high-bars[i].low;o[i]=i===0?r:Math.max(r,Math.abs(bars[i].high-bars[i-1].close),Math.abs(bars[i].low-bars[i-1].close))}return o}
@@ -162,7 +170,7 @@ if(!snap)throw new Error("Router could not form a valid snapshot from the return
 function render(){const s=lastSnapshot;byId("bid").textContent=fmt(quote.bid);byId("ask").textContent=fmt(quote.ask);if(!s)return;byId("portfolio").textContent=dirText(s.finalDir);byId("portfolio").className="value "+dirClass(s.finalDir);byId("selected").textContent=s.finalDir?s.selected:"No routed setup";byId("routerMode").textContent=s.routerMode;byId("routerMode").className="value "+(s.routerMode==="TREND"?"trend":"mixed");byId("h1Bias").textContent=biasText(s.h1Bias);byId("h1Bias").className="value "+dirClass(s.h1Bias);byId("h4Bias").textContent=biasText(s.h4Bias);byId("h4Bias").className="value "+dirClass(s.h4Bias);byId("h4Adx").textContent="ADX "+(Number.isFinite(s.h4Adx)?s.h4Adx.toFixed(2):"—");byId("barTime").textContent="M15 closed "+new Date(s.barTime+PERIOD_MS.M15).toISOString().replace(".000Z","Z");byId("supportLong").textContent=s.supportLong;byId("supportShort").textContent=s.supportShort;setState("t0591",s.techniques.m0591.dir);setState("tv1",s.techniques.v1.dir);setState("tout",s.techniques.out.dir);setState("tsp",s.techniques.sp.dir);setState("tsf",s.techniques.sf.dir);byId("r0591").textContent=s.techniques.m0591.dir?s.techniques.m0591.r+"R":"—";byId("rv1").textContent=s.techniques.v1.dir?s.techniques.v1.r+"R":"—";byId("rout").textContent=s.techniques.out.dir?s.techniques.out.r+"R":"—";byId("rsp").textContent=s.techniques.sp.dir?s.techniques.sp.r+"R":"—";byId("rsf").textContent=s.techniques.sf.dir?s.techniques.sf.r+"R":"—";byId("targetR").textContent=s.finalDir&&Number.isFinite(s.selectedR)?s.selectedR+"R · "+s.selected:"—";if(s.finalDir&&Number.isFinite(s.selectedStop)){const entry=s.finalDir===1?(Number.isFinite(quote.ask)?quote.ask:s.close):(Number.isFinite(quote.bid)?quote.bid:s.close),risk=Math.abs(entry-s.selectedStop),target=entry+s.finalDir*s.selectedR*risk;byId("entry").textContent=fmt(entry);byId("stop").textContent=fmt(s.selectedStop);byId("target").textContent=fmt(target)}else{byId("entry").textContent="—";byId("stop").textContent="—";byId("target").textContent="—"}}
 async function fetchBars(period,count,periodMs){const res=await getTrendbarListCompat({symbolId,period,toTimestamp:Date.now(),count,type:0});return trendbars(res,periodMs)}
 async function refresh(){if(refreshing||!symbolId)return;refreshing=true;byId("refreshBtn").disabled=true;setConnection("busy","Updating");try{const data=await Promise.all([fetchBars(PERIOD.M15,1000,PERIOD_MS.M15),fetchBars(PERIOD.H1,500,PERIOD_MS.H1),fetchBars(PERIOD.H4,500,PERIOD_MS.H4),fetchBars(PERIOD.D1,100,PERIOD_MS.D1)]);lastSnapshot=runRouter(data[0],data[1],data[2],data[3]);render();byId("sourceText").textContent=symbolName+" · cTrader plugin SDK · "+data[0].length+" M15 bars loaded";byId("updated").textContent="Updated "+new Date().toLocaleTimeString();showError("");setConnection("ok","Live")}catch(e){console.error(e);showError("Dashboard refresh failed: "+(e?.message||e));setConnection("err","Data error")}finally{refreshing=false;byId("refreshBtn").disabled=false}}
-async function connect(){try{byId("buildId").textContent=BUILD_ID;byId("sourceText").textContent="Build "+BUILD_ID+" · starting cTrader handshake";adapter=createClientAdapter({logger:createLogger(location.href.includes("showLogs"))});setConnection("busy","Connecting");handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();await rpc(registerEvent(adapter),"host registration",10000);handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();setConnection("ok","Connected");byId("sourceText").textContent="Build "+BUILD_ID+" · host connected";await rpc(getAccountInformation(adapter,{}),"account RPC",10000);byId("sourceText").textContent="Build "+BUILD_ID+" · account RPC OK";const requestedSymbol=new URLSearchParams(location.search).get("symbol")||"XAUUSD",requestedNorm=normalizeSymbolName(requestedSymbol);await sleep(250);const list=await getLightSymbolsCompat(),listRes=list.response,symbols=list.symbols;let sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x))===requestedNorm);if(!sym)sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x))==="XAUUSD");if(!sym)sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x)).includes("XAUUSD"));if(!sym)sym=symbols.find(x=>symbolSearchText(x).includes("GOLD"));if(!sym){const sample=symbols.slice(0,12).map(symbolDisplayName).filter(Boolean).join(", ");const raw=listRes&&typeof listRes==="object"?Object.keys(listRes).join(", "):typeof listRes;throw new Error("Build "+BUILD_ID+" · symbol mode "+list.mode+" · could not match "+requestedSymbol+" ("+symbols.length+" symbols). payloadType="+(num(listRes?.payloadType)||"?")+" keys="+(raw||"none")+" sample="+(sample||"none")+" raw="+shortJson(listRes));}symbolId=symbolIdValue(sym);symbolName=symbolDisplayName(sym)||requestedSymbol;if(!Number.isFinite(symbolId))throw new Error("Build "+BUILD_ID+" · matched "+symbolName+" but cTrader returned no usable symbol ID. raw="+shortJson(sym));byId("sourceText").textContent="Build "+BUILD_ID+" · "+symbolName+" matched via "+list.mode;const detailRes=await rpc(getSymbol(adapter,{symbolId:[symbolId]}),"symbol details",10000),detail=arrayField(detailRes,"symbol")[0];if(detail)digits=Math.max(0,num(detail.digits)||2);await rpc(subscribeQuotes(adapter,{symbolId:[symbolId],subscribeToSpotTimestamp:true}),"quote subscription",10000);quoteEvent(adapter).subscribe(qr=>{const q=unwrap(qr);if(num(q.symbolId)!==symbolId)return;const b=num(q.bid),a=num(q.ask);if(Number.isFinite(b))quote.bid=b/100000;if(Number.isFinite(a))quote.ask=a/100000;render()});byId("refreshBtn").disabled=false;byId("refreshBtn").addEventListener("click",refresh);setConnection("ok","Connected");await refresh();setInterval(()=>{const bucket=Math.floor(Date.now()/PERIOD_MS.M15);if(bucket!==lastM15Bucket){lastM15Bucket=bucket;setTimeout(refresh,4000)}},5000);setInterval(refresh,300000)}catch(e){console.error(e);showError("Build "+BUILD_ID+" · "+(e?.message||e));setConnection("err","Data setup error");byId("sourceText").textContent="Build "+BUILD_ID+" · diagnostic failure"}}
+async function connect(){try{byId("buildId").textContent=BUILD_ID;byId("sourceText").textContent="Build "+BUILD_ID+" · starting cTrader handshake";adapter=createClientAdapter({logger:createLogger(location.href.includes("showLogs"))});setConnection("busy","Connecting");handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();await rpc(registerEvent(adapter),"host registration",10000);handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();setConnection("ok","Connected");byId("sourceText").textContent="Build "+BUILD_ID+" · host connected";await rpc(getAccountInformation(adapter,{}),"account RPC",10000);byId("sourceText").textContent="Build "+BUILD_ID+" · account RPC OK";const requestedSymbol=new URLSearchParams(location.search).get("symbol")||"XAUUSD",requestedNorm=normalizeSymbolName(requestedSymbol);await sleep(250);const list=await getLightSymbolsCompat(),listRes=list.response,symbols=list.symbols;let sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x))===requestedNorm);if(!sym)sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x))==="XAUUSD");if(!sym)sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x)).includes("XAUUSD"));if(!sym)sym=symbols.find(x=>symbolSearchText(x).includes("GOLD"));if(!sym){const sample=symbols.slice(0,12).map(symbolDisplayName).filter(Boolean).join(", ");const raw=listRes&&typeof listRes==="object"?Object.keys(listRes).join(", "):typeof listRes;throw new Error("Build "+BUILD_ID+" · symbol mode "+list.mode+" · could not match "+requestedSymbol+" ("+symbols.length+" symbols). payloadType="+(num(field(listRes,"payloadType"))||"?")+" keys="+(raw||"none")+" sample="+(sample||"none")+" raw="+shortJson(listRes));}symbolId=symbolIdValue(sym);symbolName=symbolDisplayName(sym)||requestedSymbol;if(!Number.isFinite(symbolId))throw new Error("Build "+BUILD_ID+" · matched "+symbolName+" but cTrader returned no usable symbol ID. raw="+shortJson(sym));byId("sourceText").textContent="Build "+BUILD_ID+" · "+symbolName+" matched via "+list.mode;const detailRes=await rpc(getSymbol(adapter,{symbolId:[symbolId]}),"symbol details",10000),detail=arrayField(detailRes,"symbol")[0];if(detail)digits=Math.max(0,num(field(detail,"digits"))||2);await rpc(subscribeQuotes(adapter,{symbolId:[symbolId],subscribeToSpotTimestamp:true}),"quote subscription",10000);quoteEvent(adapter).subscribe(qr=>{const q=unwrap(qr);if(num(field(q,"symbolId"))!==symbolId)return;const b=num(field(q,"bid")),a=num(field(q,"ask"));if(Number.isFinite(b))quote.bid=b/100000;if(Number.isFinite(a))quote.ask=a/100000;render()});byId("refreshBtn").disabled=false;byId("refreshBtn").addEventListener("click",refresh);setConnection("ok","Connected");await refresh();setInterval(()=>{const bucket=Math.floor(Date.now()/PERIOD_MS.M15);if(bucket!==lastM15Bucket){lastM15Bucket=bucket;setTimeout(refresh,4000)}},5000);setInterval(refresh,300000)}catch(e){console.error(e);showError("Build "+BUILD_ID+" · "+(e?.message||e));setConnection("err","Data setup error");byId("sourceText").textContent="Build "+BUILD_ID+" · diagnostic failure"}}
 connect();
 </script>
 </body>
