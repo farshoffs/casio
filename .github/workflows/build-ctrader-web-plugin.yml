@@ -105,17 +105,8 @@ jobs:
           print(f"Bundled dashboard: {len(js):,} bytes")
           PY
 
-      - name: Commit bundled output
+      - name: Report bundled output
         if: steps.bundle.outputs.exit_code == '0'
         run: |
-          rm -f ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
           rm -rf ctrader-web-plugin/regime-router-dashboard/.build
-          if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard; then
-            echo "Bundled output unchanged."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A ctrader-web-plugin/regime-router-dashboard
-          git commit -m "Bundle cTrader WebView SDK for same-origin loading"
-          git push
+          echo "RR10 dashboard bundle validated successfully; generated dist is not committed by CI."
