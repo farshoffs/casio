@@ -1,7 +1,0 @@
-✘ [ERROR] No matching export in "node_modules/@spotware-web-team/sdk/dist/index.mjs" for import "getTrendbarList"
-
-    ctrader-web-plugin/regime-router-dashboard/.build/casio-app.mjs:3:75:
-      3 │ ...htSymbolList, getSymbol, getTrendbarList, subscribeQuotes, quote...
-        ╵                             ~~~~~~~~~~~~~~~
-
-1 error
