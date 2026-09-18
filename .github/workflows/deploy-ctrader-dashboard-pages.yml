@@ -44,10 +44,12 @@ jobs:
       - name: Build self-contained RR10 cross-device plugin
         env:
           BUILD_SHA: ${{ github.sha }}
+          CASIO_GAS_WEBHOOK_URL: ${{ secrets.CASIO_GAS_WEBHOOK_URL }}
         run: |
           python - <<'PY'
           from pathlib import Path
           import os, re
+          from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
           src = Path("ctrader-web-plugin/cross-device/index.html")
           html = src.read_text(encoding="utf-8")
@@ -67,14 +69,28 @@ jobs:
                   raise SystemExit(f"expected import missing: {old}")
               js = js.replace(old, new)
 
+          raw_webhook = os.environ.get("CASIO_GAS_WEBHOOK_URL", "").strip()
+          if not raw_webhook:
+              raise SystemExit("CASIO_GAS_WEBHOOK_URL is required for the TradingView RR10 live state")
+          parts = urlsplit(raw_webhook)
+          if parts.scheme != "https" or "script.google.com" not in parts.netloc:
+              raise SystemExit("CASIO_GAS_WEBHOOK_URL must be the deployed Google Apps Script web app URL")
+          query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                   if k.lower() not in {"token", "action", "callback", "t"}]
+          query.append(("action", "state"))
+          public_state_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
+          if "__CASIO_RR10_STATE_URL__" not in js:
+              raise SystemExit("RR10 state URL placeholder missing")
+          js = js.replace("__CASIO_RR10_STATE_URL__", public_state_url)
+
           required = [
-              "RR10-XD1",
-              "rr10-live-state/rr10-state.json",
+              "RR10-XD2",
               "casio.regime-router.rr10.state.v1",
               "getLightSymbolList",
               "getSymbol",
               "subscribeQuotes",
               "quoteEvent",
+              "action=state",
           ]
           for token in required:
               if token not in js:
@@ -124,15 +140,17 @@ jobs:
           rr10_js = Path("public/rr10/bundle.js").read_text(encoding="utf-8")
 
           checks = {
-              "versioned RR10 route": "RR10-XD1" in rr10_html,
-              "RR10 visible": "CASIO Regime Router" in html and "RR10-XD1" in html,
+              "versioned RR10 route": "RR10-XD2" in rr10_html,
+              "RR10 visible": "CASIO Regime Router" in html and "RR10-XD2" in html,
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
-              "shared state feed": "rr10-live-state/rr10-state.json" in js,
+              "TradingView state endpoint": "script.google.com" in js and "action=state" in js,
+              "no webhook token exposed": "token=" not in js,
+              "no Dukascopy/GitHub state feed": "rr10-live-state" not in js and "raw.githubusercontent.com" not in js,
               "state schema": "casio.regime-router.rr10.state.v1" in js,
               "quote overlay": "Quote live" in js,
               "no history RPC": "getTrendbarList" not in js and "getServerData" not in js,
-              "one decision state": "One RR10 decision state shared by every device" in html,
+              "one decision state": "One TradingView FxPro RR10 state shared by every device" in html,
           }
           failed = [name for name, ok in checks.items() if not ok]
           if failed:
