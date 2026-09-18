@@ -1,0 +1,91 @@
+name: Build bundled cTrader WebView dashboard
+
+on:
+  push:
+    branches:
+      - feature/regime-router-dashboard-research
+    paths:
+      - ctrader-web-plugin/regime-router-dashboard/index.html
+      - .github/workflows/build-ctrader-web-plugin.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install pinned browser dependencies
+        run: |
+          npm install --no-save             esbuild@0.25.9             @spotware-web-team/sdk@0.0.9             @spotware-web-team/sdk-external-api@0.0.5             rxjs@7.8.2             @veksa/logger@1.0.6
+
+      - name: Extract and retarget module imports
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          src = Path("ctrader-web-plugin/regime-router-dashboard/index.html")
+          html = src.read_text(encoding="utf-8")
+          m = re.search(r'<script type="module">(.*?)</script>', html, re.S)
+          if not m:
+              raise SystemExit("module script not found")
+
+          js = m.group(1)
+          replacements = {
+              'https://esm.sh/@spotware-web-team/sdk-external-api@0.0.5': '@spotware-web-team/sdk-external-api',
+              'https://esm.sh/@spotware-web-team/sdk@0.0.9': '@spotware-web-team/sdk',
+              'https://esm.sh/rxjs@7.8.2': 'rxjs',
+              'https://esm.sh/@veksa/logger@1.0.6': '@veksa/logger',
+          }
+          for old, new in replacements.items():
+              if old not in js:
+                  raise SystemExit(f"expected import missing: {old}")
+              js = js.replace(old, new)
+
+          Path("/tmp/casio-app.mjs").write_text(js, encoding="utf-8")
+
+          dist = Path("ctrader-web-plugin/regime-router-dashboard/dist")
+          dist.mkdir(parents=True, exist_ok=True)
+          html_dist = html[:m.start()] + '<script src="./bundle.js"></script>' + html[m.end():]
+          (dist / "index.html").write_text(html_dist, encoding="utf-8")
+          PY
+
+      - name: Bundle SDK into same-origin JavaScript
+        run: |
+          npx esbuild /tmp/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle.js
+
+      - name: Guard bundled output
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          dist = Path("ctrader-web-plugin/regime-router-dashboard/dist")
+          html = (dist / "index.html").read_text(encoding="utf-8")
+          js = (dist / "bundle.js").read_text(encoding="utf-8")
+          if "esm.sh" in html or "esm.sh" in js:
+              raise SystemExit("external esm.sh dependency remains in bundle")
+          if "bundle.js" not in html:
+              raise SystemExit("bundle.js is not referenced by dist/index.html")
+          if len(js) < 10000:
+              raise SystemExit("bundle unexpectedly small")
+          print(f"Bundled dashboard: {len(js):,} bytes")
+          PY
+
+      - name: Commit bundled output
+        run: |
+          if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard/dist; then
+            echo "Bundled output unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ctrader-web-plugin/regime-router-dashboard/dist
+          git commit -m "Bundle cTrader WebView SDK for same-origin loading"
+          git push
