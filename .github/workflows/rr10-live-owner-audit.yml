@@ -1,0 +1,67 @@
+name: CASIO RR10 Live Owner Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pine/CASIO_REGIME_ROUTER_RR10.pine'
+      - 'tradingview/casio_regime_router_dashboard_v1.pine'
+      - 'apps-script/Code.gs'
+      - 'ctrader/CasioRegimeRouterSignal.cs'
+      - 'ctrader-web-plugin/cross-device/index.html'
+      - 'ctrader-web-plugin/regime-router-dashboard/index.html'
+      - '.github/workflows/deploy-ctrader-dashboard-pages.yml'
+      - '.github/workflows/rr10-live-owner-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      CASIO_GAS_WEBHOOK_URL: ${{ secrets.CASIO_GAS_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert repository live-path topology
+        run: |
+          test ! -f .github/workflows/live-signal.yml
+          cmp -s pine/CASIO_REGIME_ROUTER_RR10.pine tradingview/casio_regime_router_dashboard_v1.pine
+          grep -F 'casio.regime-router.rr10.state.v1' pine/CASIO_REGIME_ROUTER_RR10.pine
+          grep -F 'tradingview-fxpro-rr10' pine/CASIO_REGIME_ROUTER_RR10.pine
+          grep -F 'if barstate.isconfirmed and isM15' pine/CASIO_REGIME_ROUTER_RR10.pine
+          grep -F 'retired as a live signal engine' ctrader/CasioRegimeRouterSignal.cs
+          grep -F '__CASIO_RR10_STATE_URL__' ctrader-web-plugin/cross-device/index.html
+          ! grep -F 'rr10-live-state' ctrader-web-plugin/cross-device/index.html
+          ! grep -F 'getTrendbarList' ctrader-web-plugin/cross-device/index.html
+          grep -F "RR10_STATE_SCHEMA = 'casio.regime-router.rr10.state.v1'" apps-script/Code.gs
+          grep -F 'legacy_live_signal_retired' apps-script/Code.gs
+
+      - name: Verify deployed Apps Script state endpoint
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+          raw = os.environ.get('CASIO_GAS_WEBHOOK_URL', '').strip()
+          if not raw:
+              raise SystemExit('CASIO_GAS_WEBHOOK_URL secret is missing')
+          parts = urlsplit(raw)
+          q = [(k,v) for k,v in parse_qsl(parts.query, keep_blank_values=True)
+               if k.lower() not in {'token','action','callback','t'}]
+          q.append(('action','state'))
+          url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), ''))
+          with urllib.request.urlopen(url, timeout=20) as r:
+              state = json.load(r)
+          if state.get('schema') != 'casio.regime-router.rr10.state.v1' or state.get('engine') != 'RR10':
+              raise SystemExit('Deployed Apps Script is not serving the RR10 state endpoint yet: ' + json.dumps(state)[:500])
+          print('Apps Script RR10 state endpoint is deployed.')
+          print(json.dumps({
+              'portfolio': state.get('portfolio'),
+              'last_m15_close_utc': state.get('last_m15_close_utc'),
+              'stale': state.get('stale'),
+              'data_source': state.get('data_source'),
+          }, indent=2))
+          PY
