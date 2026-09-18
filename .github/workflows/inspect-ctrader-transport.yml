@@ -1,0 +1,28 @@
+name: Inspect cTrader SDK transport flow
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/regime-router-dashboard-research
+    paths:
+      - .github/workflows/inspect-ctrader-transport.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-save @spotware-web-team/sdk@0.0.20 @spotware-web-team/sdk-external-api@0.0.6 rxjs@7.8.2 @veksa/logger@1.0.6
+      - name: External adapter transport source
+        run: |
+          sed -n '1,245p' node_modules/@spotware-web-team/sdk-external-api/dist/index.mjs
+      - name: SDK server request source
+        run: |
+          sed -n '10555,10645p' node_modules/@spotware-web-team/sdk/dist/index.mjs
