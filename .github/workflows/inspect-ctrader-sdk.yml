@@ -1,0 +1,45 @@
+name: Inspect cTrader Plugin SDK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/regime-router-dashboard-research
+    paths:
+      - .github/workflows/inspect-ctrader-sdk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install current official packages
+        run: |
+          npm install --no-save @spotware-web-team/sdk@0.0.20 @spotware-web-team/sdk-external-api rxjs @veksa/logger
+      - name: Versions
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          for (const p of ['@spotware-web-team/sdk','@spotware-web-team/sdk-external-api','rxjs','@veksa/logger']) {
+            const j=JSON.parse(fs.readFileSync('node_modules/'+p+'/package.json','utf8'));
+            console.log(p, j.version, 'main=', j.main, 'module=', j.module);
+          }
+          NODE
+      - name: Find adapter implementation
+        run: |
+          echo '--- external api files ---'
+          find node_modules/@spotware-web-team/sdk-external-api -maxdepth 3 -type f | sort
+          echo '--- createClientAdapter occurrences ---'
+          grep -R -n "createClientAdapter" node_modules/@spotware-web-team/sdk-external-api | head -20 || true
+          echo '--- send occurrences around built source ---'
+          grep -R -n "class.*Adapter\|send.*payloadType\|postMessage\|CustomEvent" node_modules/@spotware-web-team/sdk-external-api | head -80 || true
+      - name: Inspect SDK request wrapper
+        run: |
+          echo '--- getLightSymbolList occurrences ---'
+          grep -R -n "getLightSymbolList\|GetLightSymbolList" node_modules/@spotware-web-team/sdk | head -60 || true
