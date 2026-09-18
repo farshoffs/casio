@@ -40,7 +40,7 @@ jobs:
 
           js = m.group(1)
           replacements = {
-              'https://esm.sh/@spotware-web-team/sdk-external-api@0.0.6': '@spotware-web-team/sdk-external-api',
+              'https://esm.sh/@spotware-web-team/sdk-external-api@0.0.5': '@spotware-web-team/sdk-external-api',
               'https://esm.sh/@spotware-web-team/sdk@0.0.9': '@spotware-web-team/sdk',
               'https://esm.sh/rxjs@7.8.2': 'rxjs',
               'https://esm.sh/@veksa/logger@1.0.6': '@veksa/logger',
