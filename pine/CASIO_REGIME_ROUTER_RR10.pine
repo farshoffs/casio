@@ -9,7 +9,6 @@ const float TARGET_R = 3.0
 const int SUPPORT_BARS = 2
 const float TREND_ADX = 18.0
 const float RISK_FRACTION = 0.05
-string webhookSecret = input.string("", "Webhook secret")
 
 f_bias(float c, float e20, float e50) =>
     e20 > e50 and c > e20 ? 1 : e20 < e50 and c < e20 ? -1 : 0
@@ -31,6 +30,7 @@ f_mtf_target(int base, int dir, int h1b, int h4b, float h4adx) =>
     [not blocked, r]
 
 bool isM15 = timeframe.isminutes and timeframe.multiplier == 15
+bool isFxProXau = syminfo.prefix == "FXPRO" and syminfo.ticker == "XAUUSD"
 int utcMinute = hour(time, "UTC") * 60 + minute(time, "UTC")
 bool primary = (utcMinute >= 420 and utcMinute < 720) or (utcMinute >= 750 and utcMinute < 1020)
 
@@ -245,7 +245,7 @@ if barstate.isconfirmed and activeDir != 0
         activeRouterMode := ""
 
 bool newSignal = false
-if barstate.isconfirmed and isM15 and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
+if barstate.isconfirmed and isM15 and isFxProXau and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
     float risk = math.abs(close - m0591Stop)
     if risk > 0
         activeDir := canonicalDir
@@ -270,7 +270,7 @@ plot(activeDir != 0 ? activeEntry : na, "RR10 Entry", color=color.gray, linewidt
 plot(activeDir != 0 ? activeStop : na, "RR10 Stop", color=color.red, linewidth=2, style=plot.style_linebr)
 plot(activeDir != 0 ? activeTarget : na, "RR10 Target", color=color.green, linewidth=2, style=plot.style_linebr)
 
-bgcolor(not isM15 ? color.new(color.orange, 85) : na, title="Wrong timeframe warning")
+bgcolor(not isFxProXau ? color.new(color.red, 85) : not isM15 ? color.new(color.orange, 85) : na, title="Wrong feed/timeframe warning")
 
 f_json_float(float v) =>
     na(v) ? "null" : str.tostring(v)
@@ -278,10 +278,10 @@ f_json_float(float v) =>
 f_json_int(int v) =>
     na(v) ? "null" : str.tostring(v)
 
-if barstate.isconfirmed and isM15
+if barstate.isconfirmed and isM15 and isFxProXau
     string portfolio = activeDir == 1 ? "LONG" : activeDir == -1 ? "SHORT" : "WAIT"
     string transition = newSignal ? "signal" : closedNow ? "exit" : "state"
-    string statePayload = '{"schema":"casio.regime-router.rr10.state.v1","event":"state","transition":"' + transition + '","engine":"RR10","secret":"' + webhookSecret + '","source":"tradingview-fxpro-rr10","feed":"' + syminfo.tickerid + '","symbol":"' + syminfo.ticker + '","timeframe":"15","portfolio":"' + portfolio + '","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","active_router_mode":"' + activeRouterMode + '","entry":' + f_json_float(activeEntry) + ',"stop":' + f_json_float(activeStop) + ',"target":' + f_json_float(activeTarget) + ',"target_r":3,"risk_pct":5,"support":' + f_json_int(activeSupport) + ',"align_count":' + f_json_int(activeAlign) + ',"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + f_json_float(h4Adx) + ',"signal_time":' + f_json_int(activeSignalTime) + ',"bar_time":' + str.tostring(time_close) + ',"generated_at_ms":' + str.tostring(timenow) + ',"close_reason":"' + closeReason + '"}'
+    string statePayload = '{"schema":"casio.regime-router.rr10.state.v1","event":"state","transition":"' + transition + '","engine":"RR10","source":"tradingview-fxpro-rr10","feed":"' + syminfo.tickerid + '","symbol":"' + syminfo.ticker + '","timeframe":"15","portfolio":"' + portfolio + '","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","active_router_mode":"' + activeRouterMode + '","entry":' + f_json_float(activeEntry) + ',"stop":' + f_json_float(activeStop) + ',"target":' + f_json_float(activeTarget) + ',"target_r":3,"risk_pct":5,"support":' + f_json_int(activeSupport) + ',"align_count":' + f_json_int(activeAlign) + ',"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + f_json_float(h4Adx) + ',"signal_time":' + f_json_int(activeSignalTime) + ',"bar_time":' + str.tostring(time_close) + ',"generated_at_ms":' + str.tostring(timenow) + ',"close_reason":"' + closeReason + '"}'
     alert(statePayload, alert.freq_once_per_bar_close)
 
 alertcondition(newSignal and activeDir == 1, "RR10 LONG", "RR10 canonical LONG")
