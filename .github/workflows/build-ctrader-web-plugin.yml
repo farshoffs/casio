@@ -64,7 +64,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          npx esbuild /tmp/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle.js             > /tmp/esbuild.log 2>&1
+          npx esbuild ctrader-web-plugin/regime-router-dashboard/.build/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle.js             > /tmp/esbuild.log 2>&1
           CODE=$?
           cat /tmp/esbuild.log
           echo "exit_code=$CODE" >> "$GITHUB_OUTPUT"
