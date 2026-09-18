@@ -338,10 +338,9 @@ function validateRr10State_(p) {
   if (String(p.event || '') !== 'state') throw new Error('RR10 state event required');
 
   const symbol = String(p.symbol || p.ticker || '').toUpperCase();
-  const feed = String(p.feed || '');
-  if (symbol.indexOf('XAUUSD') === -1 && feed.toUpperCase().indexOf('XAUUSD') === -1) {
-    throw new Error('XAUUSD only');
-  }
+  const feed = String(p.feed || '').toUpperCase();
+  if (symbol !== 'XAUUSD') throw new Error('XAUUSD only');
+  if (feed !== 'FXPRO:XAUUSD') throw new Error('FxPro TradingView feed only');
   if (String(p.timeframe || '') !== '15') throw new Error('M15 only');
 
   const portfolio = String(p.portfolio || '').toUpperCase();
