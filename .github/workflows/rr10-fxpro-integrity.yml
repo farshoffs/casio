@@ -15,6 +15,10 @@ on:
         description: UTC backtest end; leave blank to use last completed CSV bar
         required: false
         default: ''
+      risk_pct:
+        description: Percent of current equity risked per closed trade
+        required: true
+        default: '10'
   push:
     branches: [feature/regime-router-dashboard-research]
     paths:
@@ -50,11 +54,14 @@ jobs:
           CSV_PATH='${{ github.event.inputs.csv_path }}'
           START='${{ github.event.inputs.start }}'
           END='${{ github.event.inputs.end }}'
+          RISK_PCT='${{ github.event.inputs.risk_pct }}'
           if [ -z "$CSV_PATH" ]; then CSV_PATH='data/fxpro_xauusd_m15.csv'; fi
           if [ -z "$START" ]; then START='2026-01-01T00:00:00Z'; fi
+          if [ -z "$RISK_PCT" ]; then RISK_PCT='10'; fi
           echo "csv_path=$CSV_PATH" >> "$GITHUB_OUTPUT"
           echo "start=$START" >> "$GITHUB_OUTPUT"
           echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "risk_pct=$RISK_PCT" >> "$GITHUB_OUTPUT"
 
       - name: Verify source CSV
         run: |
@@ -63,7 +70,7 @@ jobs:
             exit 1
           }
 
-      - name: Run RR 2-5 integrity backtest
+      - name: Run RR 2-5 integrity backtest at requested risk
         shell: bash
         run: |
           if [ -n '${{ steps.cfg.outputs.end }}' ]; then
@@ -72,12 +79,14 @@ jobs:
               --start '${{ steps.cfg.outputs.start }}' \
               --end '${{ steps.cfg.outputs.end }}' \
               --rr 2 3 4 5 \
+              --risk-pct '${{ steps.cfg.outputs.risk_pct }}' \
               --out reports/regime-router-canonical/fxpro-integrity
           else
             python -m casio.rr10_integrity_backtest \
               --data '${{ steps.cfg.outputs.csv_path }}' \
               --start '${{ steps.cfg.outputs.start }}' \
               --rr 2 3 4 5 \
+              --risk-pct '${{ steps.cfg.outputs.risk_pct }}' \
               --out reports/regime-router-canonical/fxpro-integrity
           fi
 
