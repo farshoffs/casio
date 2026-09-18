@@ -24,7 +24,7 @@ jobs:
 
       - name: Install pinned browser dependencies
         run: |
-          npm install --no-save             esbuild@0.25.9             @spotware-web-team/sdk@0.0.20             @spotware-web-team/sdk-external-api@latest             rxjs@7.8.2             @veksa/logger@1.0.6
+          npm install --no-save             esbuild@0.25.9             @spotware-web-team/sdk@0.0.20             @spotware-web-team/sdk-external-api@0.0.5             rxjs@7.8.2             @veksa/logger@1.0.6
 
       - name: Extract and retarget module imports
         run: |
@@ -55,7 +55,9 @@ jobs:
           (build_dir / "casio-app.mjs").write_text(js, encoding="utf-8")
           dist = Path("ctrader-web-plugin/regime-router-dashboard/dist")
           dist.mkdir(parents=True, exist_ok=True)
-          html_dist = html[:m.start()] + '<script src="./bundle.js"></script>' + html[m.end():]
+          import os
+          build_id = os.environ.get("GITHUB_SHA", "dev")[:12]
+          html_dist = html[:m.start()] + f'<script src="./bundle.js?v={build_id}"></script>' + html[m.end():]
           (dist / "index.html").write_text(html_dist, encoding="utf-8")
           PY
 
