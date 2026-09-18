@@ -6,6 +6,9 @@ const QUEUE_HANDLER = 'processEmailQueue_';
 const MARKET_SHEET_NAME = 'XAUUSD_M5';
 const MARKET_SHEET_ID_PROPERTY = 'CASIO_MARKET_SHEET_ID';
 const LAST_M5_BAR_PROPERTY = 'CASIO_LAST_M5_BAR_TIME';
+const RR10_STATE_SCHEMA = 'casio.regime-router.rr10.state.v1';
+const RR10_STATE_PROPERTY = 'CASIO_RR10_LIVE_STATE';
+const RR10_LAST_EMAIL_SIGNAL_PROPERTY = 'CASIO_RR10_LAST_EMAIL_SIGNAL';
 
 function setupCasio() {
   const props = PropertiesService.getScriptProperties();
@@ -57,6 +60,10 @@ function sendTestEmail() {
 
 function doGet(e) {
   const action = e && e.parameter ? String(e.parameter.action || '') : '';
+  if (action === 'state') {
+    const callback = e && e.parameter ? String(e.parameter.callback || '') : '';
+    return rr10StateResponse_(callback);
+  }
   if (action === 'csv') {
     if (!authorized_(e)) {
       return jsonResponse_({ ok: false, error: 'unauthorized' });
@@ -84,6 +91,10 @@ function doPost(e) {
     }
 
     const payload = JSON.parse(e.postData.contents);
+
+    if (String(payload.schema || '') === RR10_STATE_SCHEMA && payload.event === 'state') {
+      return handleRr10State_(payload);
+    }
 
     if (payload.event === 'bar') {
       validateMarketBar_(payload);
@@ -287,7 +298,11 @@ function processEmailQueue_() {
 
     queue.forEach(function (payload) {
       try {
-        sendSignalEmail_(payload);
+        if (String(payload && payload.schema || '') === RR10_STATE_SCHEMA) {
+          sendRr10SignalEmail_(payload);
+        } else {
+          sendSignalEmail_(payload);
+        }
       } catch (err) {
         console.error('CASIO email failed: ' + (err && err.stack ? err.stack : err));
       }
@@ -299,6 +314,211 @@ function processEmailQueue_() {
       }
     });
   }
+}
+
+function handleRr10State_(p) {
+  validateRr10State_(p);
+  const state = normalizeRr10State_(p);
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(RR10_STATE_PROPERTY, JSON.stringify(state));
+
+  let queued = false;
+  if (String(p.transition || '') === 'signal' && state.active_signal) {
+    const signalId = String(state.active_signal.signal_id || '');
+    const previous = props.getProperty(RR10_LAST_EMAIL_SIGNAL_PROPERTY) || '';
+    if (signalId && signalId !== previous) {
+      props.setProperty(RR10_LAST_EMAIL_SIGNAL_PROPERTY, signalId);
+      enqueueSignal_(state);
+      ensureQueueTrigger_();
+      queued = true;
+    }
+  }
+
+  return jsonResponse_({
+    ok: true,
+    accepted: true,
+    engine: 'RR10',
+    schema: RR10_STATE_SCHEMA,
+    portfolio: state.portfolio,
+    signal_email_queued: queued,
+    bar_time: state.bar_time
+  });
+}
+
+function validateRr10State_(p) {
+  if (!p || typeof p !== 'object') throw new Error('JSON body must be an object');
+  if (String(p.schema || '') !== RR10_STATE_SCHEMA) throw new Error('Unsupported RR10 state schema');
+  if (String(p.engine || '').toUpperCase() !== 'RR10') throw new Error('RR10 only');
+  if (String(p.event || '') !== 'state') throw new Error('RR10 state event required');
+
+  const symbol = String(p.symbol || p.ticker || '').toUpperCase();
+  const feed = String(p.feed || '');
+  if (symbol.indexOf('XAUUSD') === -1 && feed.toUpperCase().indexOf('XAUUSD') === -1) {
+    throw new Error('XAUUSD only');
+  }
+  if (String(p.timeframe || '') !== '15') throw new Error('M15 only');
+
+  const portfolio = String(p.portfolio || '').toUpperCase();
+  if (['WAIT', 'LONG', 'SHORT'].indexOf(portfolio) === -1) throw new Error('Invalid portfolio state');
+  if (!isFinite(Number(p.bar_time))) throw new Error('Invalid bar_time');
+  if (Number(p.target_r) !== 3) throw new Error('RR10 target must be 3R');
+  if (Number(p.risk_pct) !== 5) throw new Error('RR10 risk model must be 5%');
+
+  if (portfolio !== 'WAIT') {
+    ['entry', 'stop', 'target', 'signal_time'].forEach(function (key) {
+      if (p[key] === undefined || p[key] === null || p[key] === '' || !isFinite(Number(p[key]))) {
+        throw new Error('Missing active ' + key);
+      }
+    });
+  }
+}
+
+function normalizeRr10State_(p) {
+  const portfolio = String(p.portfolio || 'WAIT').toUpperCase();
+  const barTime = Number(p.bar_time);
+  const signalTime = p.signal_time === null || p.signal_time === undefined || p.signal_time === '' ? null : Number(p.signal_time);
+  const sourceFeed = String(p.feed || p.source || 'TradingView FxPro XAUUSD');
+  const generatedMs = isFinite(Number(p.generated_at_ms)) ? Number(p.generated_at_ms) : Date.now();
+  const signalId = portfolio === 'WAIT' || signalTime === null ? '' :
+    'RR10:' + String(signalTime) + ':' + (portfolio === 'LONG' ? '1' : '-1');
+
+  const active = portfolio === 'WAIT' ? null : {
+    signal_id: signalId,
+    direction: portfolio,
+    entry_time_utc: new Date(signalTime).toISOString(),
+    signal_bar_open_utc: '',
+    entry: Number(p.entry),
+    stop: Number(p.stop),
+    target: Number(p.target),
+    rr: 3,
+    support: isFinite(Number(p.support)) ? Number(p.support) : null,
+    align_count: isFinite(Number(p.align_count)) ? Number(p.align_count) : null,
+    router_mode: String(p.active_router_mode || p.router_mode || '')
+  };
+
+  return {
+    ok: true,
+    schema: RR10_STATE_SCHEMA,
+    engine: 'RR10',
+    build: 'RR10-TV-LIVE',
+    generated_at_utc: new Date(generatedMs).toISOString(),
+    symbol: 'XAUUSD',
+    timeframe: 'M15',
+    portfolio: portfolio,
+    router_mode: String(p.router_mode || ''),
+    h1_bias: Number(p.h1_bias),
+    h4_bias: Number(p.h4_bias),
+    h4_adx: isFinite(Number(p.h4_adx)) ? Number(p.h4_adx) : null,
+    target_r: 3,
+    risk_pct: 5,
+    active_signal: active,
+    last_m15_open_utc: new Date(barTime - 15 * 60 * 1000).toISOString(),
+    last_m15_close_utc: new Date(barTime).toISOString(),
+    bar_time: barTime,
+    data_age_minutes: Math.max(0, (Date.now() - barTime) / 60000),
+    stale: false,
+    feed_adapter: sourceFeed,
+    data_source: 'TradingView FxPro RR10 live state · ' + sourceFeed,
+    execution_source: 'FxPro/cTrader live quote overlay when available',
+    transition: String(p.transition || 'state'),
+    close_reason: String(p.close_reason || '')
+  };
+}
+
+function rr10StateResponse_(callback) {
+  const props = PropertiesService.getScriptProperties();
+  const raw = props.getProperty(RR10_STATE_PROPERTY);
+  let state;
+  if (raw) {
+    try {
+      state = JSON.parse(raw);
+    } catch (err) {
+      state = null;
+    }
+  }
+
+  if (!state) {
+    state = {
+      ok: false,
+      schema: RR10_STATE_SCHEMA,
+      engine: 'RR10',
+      build: 'RR10-TV-LIVE',
+      portfolio: 'WAIT',
+      router_mode: '',
+      h1_bias: 0,
+      h4_bias: 0,
+      h4_adx: null,
+      target_r: 3,
+      risk_pct: 5,
+      active_signal: null,
+      last_m15_open_utc: null,
+      last_m15_close_utc: null,
+      bar_time: null,
+      data_age_minutes: null,
+      stale: true,
+      data_source: 'Waiting for TradingView FxPro RR10 heartbeat',
+      execution_source: 'FxPro/cTrader live quote overlay when available'
+    };
+  } else {
+    const barTime = Number(state.bar_time || 0);
+    const age = barTime ? Math.max(0, (Date.now() - barTime) / 60000) : null;
+    state.data_age_minutes = age;
+    state.stale = age === null || age > 35;
+    state.server_now_utc = new Date().toISOString();
+  }
+
+  const json = JSON.stringify(state);
+  if (callback && /^[A-Za-z_$][A-Za-z0-9_$.]*$/.test(callback)) {
+    return ContentService
+      .createTextOutput(callback + '(' + json + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return jsonResponse_(state);
+}
+
+function sendRr10SignalEmail_(state) {
+  if (!state || !state.active_signal) return;
+  const props = PropertiesService.getScriptProperties();
+  const to = props.getProperty('CASIO_EMAIL') || DEFAULT_EMAIL;
+  const a = state.active_signal;
+  const direction = String(state.portfolio || a.direction || '').toUpperCase();
+  const subject = '[CASIO RR10] XAUUSD ' + direction + ' · TradingView FxPro';
+
+  const rows = [
+    ['Signal', direction],
+    ['Engine', 'RR10'],
+    ['Source', state.data_source || 'TradingView FxPro'],
+    ['Router mode', a.router_mode || state.router_mode || '—'],
+    ['Entry', fmt_(a.entry)],
+    ['Stop', fmt_(a.stop)],
+    ['Target', fmt_(a.target)],
+    ['R:R', '1:3'],
+    ['Risk model', '5%'],
+    ['H1 bias', String(state.h1_bias)],
+    ['H4 bias', String(state.h4_bias)],
+    ['H4 ADX', fmt_(state.h4_adx)],
+    ['Support', String(a.support === null ? '—' : a.support)],
+    ['HTF alignment', String(a.align_count === null ? '—' : a.align_count)],
+    ['TradingView close', state.last_m15_close_utc || '—']
+  ];
+
+  const plainBody = rows.map(function (row) { return row[0] + ': ' + row[1]; }).join('\n');
+  const tableRows = rows.map(function (row) {
+    return '<tr><td style="padding:7px 10px;color:#94a3b8;border-bottom:1px solid #1f2937">' + html_(row[0]) + '</td>' +
+      '<td style="padding:7px 10px;font-weight:700;border-bottom:1px solid #1f2937">' + html_(row[1]) + '</td></tr>';
+  }).join('');
+
+  MailApp.sendEmail({
+    to: to,
+    subject: subject,
+    body: plainBody,
+    htmlBody: '<div style="background:#090d14;color:#f8fafc;padding:22px;font-family:Arial,sans-serif;max-width:620px">' +
+      '<div style="font-size:12px;letter-spacing:1.5px;color:#94a3b8">CASIO RR10 · SINGLE LIVE OWNER</div>' +
+      '<h1 style="margin:8px 0 14px;color:' + (direction === 'LONG' ? '#22c55e' : '#ef4444') + '">' + html_(direction) + '</h1>' +
+      '<table style="border-collapse:collapse;width:100%;background:#111827">' + tableRows + '</table>' +
+      '</div>',
+    name: 'CASIO RR10'
+  });
 }
 
 function validateSignal_(p) {
