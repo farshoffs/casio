@@ -1,0 +1,33 @@
+✘ [ERROR] Could not resolve "@spotware-web-team/sdk-external-api"
+
+    ../../../../../tmp/casio-app.mjs:2:36:
+      2 │ ...{ createClientAdapter } from "@spotware-web-team/sdk-external-api";
+        ╵                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  You can mark the path "@spotware-web-team/sdk-external-api" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+
+✘ [ERROR] Could not resolve "@spotware-web-team/sdk"
+
+    ../../../../../tmp/casio-app.mjs:3:127:
+      3 │ ...rList, subscribeQuotes, quoteEvent } from "@spotware-web-team/sdk";
+        ╵                                              ~~~~~~~~~~~~~~~~~~~~~~~~
+
+  You can mark the path "@spotware-web-team/sdk" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+
+✘ [ERROR] Could not resolve "rxjs"
+
+    ../../../../../tmp/casio-app.mjs:4:37:
+      4 │ import { firstValueFrom, take } from "rxjs";
+        ╵                                      ~~~~~~
+
+  You can mark the path "rxjs" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+
+✘ [ERROR] Could not resolve "@veksa/logger"
+
+    ../../../../../tmp/casio-app.mjs:5:29:
+      5 │ import { createLogger } from "@veksa/logger";
+        ╵                              ~~~~~~~~~~~~~~~
+
+  You can mark the path "@veksa/logger" as external to exclude it from the bundle, which will remove this error and leave the unresolved path in the bundle.
+
+4 errors
