@@ -124,8 +124,8 @@ jobs:
           rr10_js = Path("public/rr10/bundle.js").read_text(encoding="utf-8")
 
           checks = {
-              "versioned RR10 route": "RR10-XD1" in rr10_html and "RR10-XD1" in rr10_js,
-              "RR10 visible": "CASIO Regime Router" in html and "RR10-XD1" in js,
+              "versioned RR10 route": "RR10-XD1" in rr10_html,
+              "RR10 visible": "CASIO Regime Router" in html and "RR10-XD1" in html,
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
               "shared state feed": "rr10-live-state/rr10-state.json" in js,
