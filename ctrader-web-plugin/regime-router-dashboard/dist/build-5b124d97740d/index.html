@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b111b">
+<title>CASIO Regime Router</title>
+<style>
+:root{color-scheme:dark;--bg:#0b111b;--panel:#111a28;--panel2:#162235;--line:#26364e;--text:#e8eef8;--muted:#91a0b7;--blue:#4b8bff;--green:#26d07c;--red:#ff5b6f;--amber:#f7ba48;--neutral:#808a9b}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{padding:12px}.app{max-width:960px;margin:0 auto}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.brand{display:flex;align-items:center;gap:10px}.logo{width:42px;height:42px;border-radius:12px;background:#1c4281;display:grid;place-items:center;font-weight:800}.title{font-size:18px;font-weight:800;margin:1px 0 2px}.sub{color:var(--muted);font-size:12px}.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:8px 11px;font-weight:650;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:6px 9px;font-size:12px;background:var(--panel)}.dot{width:8px;height:8px;border-radius:50%;background:var(--neutral)}.dot.ok{background:var(--green)}.dot.err{background:var(--red)}.dot.busy{background:var(--amber)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span12{grid-column:span 12}.label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.65px;margin-bottom:6px}.value{font-size:20px;font-weight:800}.smallValue{font-size:15px;font-weight:750}.long{color:var(--green)}.short{color:var(--red)}.wait{color:var(--neutral)}.trend{color:var(--blue)}.mixed{color:var(--amber)}.tech{width:100%;border-collapse:collapse}.tech th,.tech td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}.tech th{color:var(--muted);font-size:11px;text-transform:uppercase}.tech tr:last-child td{border-bottom:0}.state{font-weight:800}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.level{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px}.level b{display:block;font-size:17px;margin-top:3px}.mono{font-variant-numeric:tabular-nums}.footer{color:var(--muted);font-size:11px;margin-top:10px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}.error{display:none;margin:0 0 10px;padding:10px 12px;border:1px solid rgba(255,91,111,.45);background:rgba(255,91,111,.08);border-radius:10px;color:#ffd8dd}
+@media (prefers-color-scheme: light){:root{--bg:#f4f7fb;--panel:#ffffff;--panel2:#eef3f9;--line:#d7e0ec;--text:#152033;--muted:#637087;--blue:#2f6fe4;--green:#0f9f5b;--red:#d83b52;--amber:#b87900;--neutral:#738096}button{background:#eef3f9}.logo{background:#dbe8ff;color:#173f84}.error{background:#fff0f2;color:#8b2436}}
+@media(max-width:720px){body{padding:8px}.top{align-items:stretch;flex-direction:column}.actions{justify-content:flex-start}.span3,.span4{grid-column:span 12}.grid{gap:8px}.card{padding:10px}.levels{grid-template-columns:1fr}.tech th:nth-child(4),.tech td:nth-child(4){display:none}.title{font-size:17px}.value{font-size:18px}}
+</style>
+</head>
+<body>
+<div class="app">
+<div class="top">
+<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildId">Build 5b124d97740d</span></div></div></div>
+<div class="actions"><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
+</div>
+<div id="errorBox" class="error"></div>
+<div class="grid">
+<section class="card span3"><div class="label">Portfolio</div><div id="portfolio" class="value wait">WAIT</div><div id="selected" class="sub">No routed setup</div></section>
+<section class="card span3"><div class="label">Router mode</div><div id="routerMode" class="value mixed">MIXED</div><div id="barTime" class="sub">Waiting for data</div></section>
+<section class="card span3"><div class="label">H1 bias</div><div id="h1Bias" class="value wait">—</div><div class="sub">Completed H1 only</div></section>
+<section class="card span3"><div class="label">H4 bias / ADX</div><div id="h4Bias" class="value wait">—</div><div id="h4Adx" class="sub">ADX —</div></section>
+<section class="card span12"><div class="label">Five source techniques</div><table class="tech"><thead><tr><th>Technique</th><th>State</th><th>Target</th><th>Role</th></tr></thead><tbody>
+<tr><td>0591 MTF</td><td id="t0591" class="state wait">WAIT</td><td id="r0591">—</td><td class="sub">Momentum</td></tr>
+<tr><td>V1 Legacy</td><td id="tv1" class="state wait">WAIT</td><td id="rv1">—</td><td class="sub">Momentum</td></tr>
+<tr><td>Outcome First</td><td id="tout" class="state wait">WAIT</td><td id="rout">—</td><td class="sub">Structure</td></tr>
+<tr><td>Struct Portfolio</td><td id="tsp" class="state wait">WAIT</td><td id="rsp">—</td><td class="sub">Structure</td></tr>
+<tr><td>Struct Frequency</td><td id="tsf" class="state wait">WAIT</td><td id="rsf">—</td><td class="sub">Structure</td></tr>
+</tbody></table></section>
+<section class="card span4"><div class="label">Agreement · prior 30m</div><div class="smallValue"><span class="long">▲ <span id="supportLong">0</span></span> &nbsp; <span class="short">▼ <span id="supportShort">0</span></span></div></section>
+<section class="card span4"><div class="label">Live FxPro quote</div><div class="smallValue mono">Bid <span id="bid">—</span> · Ask <span id="ask">—</span></div></section>
+<section class="card span4"><div class="label">Target quality</div><div id="targetR" class="smallValue">—</div></section>
+<section class="card span12"><div class="label">Current routed levels</div><div class="levels"><div class="level"><span class="sub">ENTRY EST.</span><b id="entry" class="mono">—</b></div><div class="level"><span class="sub">STOP LOSS</span><b id="stop" class="mono short">—</b></div><div class="level"><span class="sub">TAKE PROFIT</span><b id="target" class="mono long">—</b></div></div></section>
+</div>
+<div class="footer"><span id="sourceText">Connecting to cTrader plugin host…</span><span id="updated">Updated —</span></div>
+</div>
+<script src="./bundle.js?v=5b124d97740d"></script>
+</body>
+</html>
