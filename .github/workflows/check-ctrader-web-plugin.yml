@@ -38,7 +38,7 @@ jobs:
               "getSymbol",
               "subscribeQuotes",
               "quoteEvent",
-              "One RR10 decision state shared by every device",
+              "State live",
           ]
           for token in required:
               if token not in js:
