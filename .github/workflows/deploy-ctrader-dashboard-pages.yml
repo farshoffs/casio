@@ -92,6 +92,10 @@ jobs:
             --minify \
             --outfile=public/bundle.js
 
+          mkdir -p public/rr6
+          cp public/index.html public/rr6/index.html
+          cp public/bundle.js public/rr6/bundle.js
+
       - name: Guard deployed build
         run: |
           python - <<'PY'
@@ -99,8 +103,11 @@ jobs:
 
           html = Path("public/index.html").read_text(encoding="utf-8")
           js = Path("public/bundle.js").read_text(encoding="utf-8")
+          rr6_html = Path("public/rr6/index.html").read_text(encoding="utf-8")
+          rr6_js = Path("public/rr6/bundle.js").read_text(encoding="utf-8")
 
           checks = {
+              "versioned RR6 route": "RR6" in rr6_html and "RR6" in rr6_js,
               "RR6 visible": "RR6" in html and "RR6" in js,
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
