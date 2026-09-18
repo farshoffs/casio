@@ -1,13 +1,15 @@
 //@version=6
-indicator("CASIO Regime Router RR10 — Canonical", overlay=true, max_labels_count=500)
+strategy("CASIO Regime Router RR10 — Canonical", overlay=true, max_labels_count=500, initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.005, process_orders_on_close=true)
 
-// RR10 is the single canonical live ruleset.
+// RR10 is the single canonical live ruleset and TradingView FxPro is the single live state owner.
 // Chart timeframe: 15 minutes. All higher-timeframe context uses completed bars only.
 // Fixed target: 3R. Entry/SL/TP stay frozen until SL or TP.
 
 const float TARGET_R = 3.0
 const int SUPPORT_BARS = 2
 const float TREND_ADX = 18.0
+const float RISK_FRACTION = 0.05
+string webhookSecret = input.string("", "Webhook secret")
 
 f_bias(float c, float e20, float e50) =>
     e20 > e50 and c > e20 ? 1 : e20 < e50 and c < e20 ? -1 : 0
@@ -220,6 +222,9 @@ var float activeEntry = na
 var float activeStop = na
 var float activeTarget = na
 var int activeSignalTime = na
+var int activeSupport = na
+var int activeAlign = na
+var string activeRouterMode = ""
 
 bool closedNow = false
 string closeReason = ""
@@ -235,6 +240,9 @@ if barstate.isconfirmed and activeDir != 0
         activeStop := na
         activeTarget := na
         activeSignalTime := na
+        activeSupport := na
+        activeAlign := na
+        activeRouterMode := ""
 
 bool newSignal = false
 if barstate.isconfirmed and isM15 and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
@@ -245,6 +253,16 @@ if barstate.isconfirmed and isM15 and activeDir == 0 and canonicalDir != 0 and n
         activeStop := m0591Stop
         activeTarget := close + canonicalDir * TARGET_R * risk
         activeSignalTime := time_close
+        activeSupport := supportDir
+        activeAlign := alignCount
+        activeRouterMode := strongTrend ? "TREND" : "MIXED"
+        float riskCashAccount = strategy.equity * RISK_FRACTION
+        float riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
+        float riskPerUnit = risk * syminfo.pointvalue
+        float qty = riskPerUnit > 0 ? riskCashSymbol / riskPerUnit : na
+        if not na(qty) and qty > 0
+            strategy.entry("RR10", canonicalDir == 1 ? strategy.long : strategy.short, qty=qty)
+            strategy.exit("RR10-X", "RR10", stop=activeStop, limit=activeTarget)
         newSignal := true
         label.new(bar_index, canonicalDir == 1 ? low : high, "RR10 " + (canonicalDir == 1 ? "LONG" : "SHORT") + "\n3R", style=canonicalDir == 1 ? label.style_label_up : label.style_label_down, textcolor=color.white, color=canonicalDir == 1 ? color.green : color.red)
 
@@ -254,9 +272,17 @@ plot(activeDir != 0 ? activeTarget : na, "RR10 Target", color=color.green, linew
 
 bgcolor(not isM15 ? color.new(color.orange, 85) : na, title="Wrong timeframe warning")
 
-if newSignal
-    string payload = '{"schema":"casio.regime-router.rr10","event":"signal","engine":"RR10","symbol":"' + syminfo.ticker + '","timeframe":"15","direction":"' + (activeDir == 1 ? "long" : "short") + '","entry":' + str.tostring(activeEntry) + ',"stop":' + str.tostring(activeStop) + ',"target":' + str.tostring(activeTarget) + ',"rr":3,"signal_time":' + str.tostring(activeSignalTime) + '}'
-    alert(payload, alert.freq_once_per_bar_close)
+f_json_float(float v) =>
+    na(v) ? "null" : str.tostring(v)
+
+f_json_int(int v) =>
+    na(v) ? "null" : str.tostring(v)
+
+if barstate.isconfirmed and isM15
+    string portfolio = activeDir == 1 ? "LONG" : activeDir == -1 ? "SHORT" : "WAIT"
+    string transition = newSignal ? "signal" : closedNow ? "exit" : "state"
+    string statePayload = '{"schema":"casio.regime-router.rr10.state.v1","event":"state","transition":"' + transition + '","engine":"RR10","secret":"' + webhookSecret + '","source":"tradingview-fxpro-rr10","feed":"' + syminfo.tickerid + '","symbol":"' + syminfo.ticker + '","timeframe":"15","portfolio":"' + portfolio + '","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","active_router_mode":"' + activeRouterMode + '","entry":' + f_json_float(activeEntry) + ',"stop":' + f_json_float(activeStop) + ',"target":' + f_json_float(activeTarget) + ',"target_r":3,"risk_pct":5,"support":' + f_json_int(activeSupport) + ',"align_count":' + f_json_int(activeAlign) + ',"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + f_json_float(h4Adx) + ',"signal_time":' + f_json_int(activeSignalTime) + ',"bar_time":' + str.tostring(time_close) + ',"generated_at_ms":' + str.tostring(timenow) + ',"close_reason":"' + closeReason + '"}'
+    alert(statePayload, alert.freq_once_per_bar_close)
 
 alertcondition(newSignal and activeDir == 1, "RR10 LONG", "RR10 canonical LONG")
 alertcondition(newSignal and activeDir == -1, "RR10 SHORT", "RR10 canonical SHORT")
