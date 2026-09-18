@@ -21,14 +21,11 @@ namespace cAlgo.Robots
         [Parameter("Email Exit Notice", Group = "Email", DefaultValue = false)]
         public bool EmailExitNotice { get; set; }
 
-        [Parameter("Risk %", Group = "Signal", DefaultValue = 5.0, MinValue = 0.1, Step = 0.1)]
-        public double RiskPercent { get; set; }
-
-        [Parameter("Strong H4 ADX", Group = "Router", DefaultValue = 18.0, MinValue = 5.0, Step = 0.5)]
-        public double TrendAdxThreshold { get; set; }
-
-        [Parameter("Agreement Window Bars", Group = "Router", DefaultValue = 2, MinValue = 1, MaxValue = 4)]
-        public int SupportBars { get; set; }
+        // RR10 canonical constants. Keep these frozen across Python, Pine and cTrader.
+        private const double RiskPercent = 5.0;
+        private const double TrendAdxThreshold = 18.0;
+        private const int SupportBars = 2;
+        private const double CanonicalTargetR = 3.0;
 
         [Parameter("Signal Only", Group = "Safety", DefaultValue = true)]
         public bool SignalOnly { get; set; }
@@ -113,7 +110,7 @@ namespace cAlgo.Robots
             _m15Dms = Indicators.DirectionalMovementSystem(Bars, 14, MovingAverageType.WilderSmoothing);
             _h4Dms = Indicators.DirectionalMovementSystem(_h4Bars, 14, MovingAverageType.WilderSmoothing);
 
-            Print("CASIO Regime Router signal engine started on {0} M15. Recipient: {1}", SymbolName, RecipientEmail);
+            Print("CASIO RR10 canonical signal engine started on {0} M15. Recipient: {1}", SymbolName, RecipientEmail);
             Print("Signal-only mode: {0}. No orders will be placed.", SignalOnly);
 
             if (SendTestEmailOnStart)
@@ -228,47 +225,23 @@ namespace cAlgo.Robots
 
             MarkSignals(m0591Dir, v1Dir, outDir, spDir, sfDir);
 
-            var finalDir = 0;
-            var selected = "WAIT";
-            var selectedR = double.NaN;
-            var selectedStop = double.NaN;
-            var routerMode = strongTrend ? "TREND" : "MIXED";
+            // RR10 is the only live selection. The other techniques above are confirmations only.
+            var supportDir = m0591Dir == 0 ? 0 : SupportCount(m0591Dir);
+            var alignCount = m0591Dir == 0 ? 0 : (h1Bias == m0591Dir ? 1 : 0) + (h4Bias == m0591Dir ? 1 : 0);
+            var oldRouterSelected0591 = strongTrend
+                ? m0591Dir != 0 && m0591Dir == h1Bias
+                : spDir == 0 && m0591Dir != 0 && supportDir >= 2;
+            var canonicalDir = oldRouterSelected0591 && !primary && alignCount >= 1 ? m0591Dir : 0;
 
-            var stdLongStop = LowestLow(0, 6) - 0.10 * atr;
-            var stdShortStop = HighestHigh(0, 6) + 0.10 * atr;
-
-            if (strongTrend)
-            {
-                var wanted = h1Bias;
-                if (m0591Dir == wanted)
-                    Select(wanted, "M15-0591 MTF", m0591R, m0591Stop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (v1Dir == wanted)
-                    Select(wanted, "V1 Legacy M15", v1R, wanted == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (outDir == wanted)
-                    Select(wanted, "Outcome First M15", outR, wanted == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (spDir == wanted)
-                    Select(wanted, "Structural Portfolio MTF", spR, wanted == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (sfDir == wanted)
-                    Select(wanted, "Structural Frequency M15", sfR, wanted == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-            }
-            else
-            {
-                if (spDir != 0)
-                    Select(spDir, "Structural Portfolio MTF", spR, spDir == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (outDir != 0)
-                    Select(outDir, "Outcome First M15", outR, outDir == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (sfDir != 0)
-                    Select(sfDir, "Structural Frequency M15", sfR, sfDir == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (m0591Dir != 0 && SupportCount(m0591Dir) >= 2)
-                    Select(m0591Dir, "M15-0591 MTF", m0591R, m0591Stop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-                else if (v1Dir != 0 && SupportCount(v1Dir) >= 2)
-                    Select(v1Dir, "V1 Legacy M15", v1R, v1Dir == 1 ? stdLongStop : stdShortStop, ref finalDir, ref selected, ref selectedR, ref selectedStop);
-            }
+            var finalDir = canonicalDir;
+            var selected = canonicalDir == 0 ? "WAIT" : "RR10 Canonical";
+            var selectedR = canonicalDir == 0 ? double.NaN : CanonicalTargetR;
+            var selectedStop = canonicalDir == 0 ? double.NaN : m0591Stop;
 
             if (finalDir == 0 || double.IsNaN(selectedStop) || double.IsNaN(selectedR))
                 return;
 
-            var entry = finalDir == 1 ? Symbol.Ask : Symbol.Bid;
+            var entry = bar.Close;
             var riskDistance = Math.Abs(entry - selectedStop);
             if (riskDistance <= 0)
                 return;
@@ -299,15 +272,16 @@ namespace cAlgo.Robots
             }
 
             var side = dir == 1 ? "LONG" : "SHORT";
-            var subject = string.Format("[CASIO RR] XAUUSD {0} | {1} | {2}", side, routerMode, technique);
+            var subject = string.Format("[CASIO RR10] XAUUSD {0} | {1}", side, routerMode);
             var body = new StringBuilder();
-            body.AppendLine("CASIO Regime Router signal");
+            body.AppendLine("CASIO RR10 canonical Regime Router signal");
             body.AppendLine();
             body.AppendLine("Symbol: " + SymbolName);
             body.AppendLine("Time: " + Server.Time.ToString("yyyy-MM-dd HH:mm:ss") + " UTC");
             body.AppendLine("Direction: " + side);
             body.AppendLine("Router: " + routerMode);
-            body.AppendLine("Selected technique: " + technique);
+            body.AppendLine("Engine: RR10");
+            body.AppendLine("Selected technique: RR10 Canonical");
             body.AppendLine("Entry estimate: " + Fmt(entry));
             body.AppendLine("Stop loss: " + Fmt(stop));
             body.AppendLine("Take profit: " + Fmt(target));
@@ -340,8 +314,8 @@ namespace cAlgo.Robots
             try
             {
                 Notifications.SendEmail(SenderEmail, RecipientEmail,
-                    "[CASIO RR] FxPro cTrader email test",
-                    "CASIO Regime Router is connected to FxPro cTrader.\n\nRecipient: " + RecipientEmail + "\nSymbol: " + SymbolName + "\nTime: " + Server.Time.ToString("yyyy-MM-dd HH:mm:ss") + " UTC");
+                    "[CASIO RR10] FxPro cTrader email test",
+                    "CASIO RR10 canonical Regime Router is connected to FxPro cTrader.\n\nRecipient: " + RecipientEmail + "\nSymbol: " + SymbolName + "\nTime: " + Server.Time.ToString("yyyy-MM-dd HH:mm:ss") + " UTC");
                 Print("CASIO test email requested for {0}", RecipientEmail);
             }
             catch (Exception ex)
@@ -365,7 +339,7 @@ namespace cAlgo.Robots
             var result = stopHit ? "STOP" : "TARGET"; // same-bar collision is stop-first
             if (EmailExitNotice && !string.IsNullOrWhiteSpace(SenderEmail) && !string.IsNullOrWhiteSpace(RecipientEmail))
             {
-                var subject = string.Format("[CASIO RR] {0} {1} | {2}", SymbolName, result, _virtualTechnique);
+                var subject = string.Format("[CASIO RR10] {0} {1}", SymbolName, result);
                 var body = string.Format("Virtual signal closed by {0}.\nOpened: {1:yyyy-MM-dd HH:mm:ss} UTC\nEntry: {2}\nSL: {3}\nTP: {4}\nTarget: {5:0}R",
                     result, _virtualOpened, Fmt(_virtualEntry), Fmt(_virtualStop), Fmt(_virtualTarget), _virtualR);
                 try { Notifications.SendEmail(SenderEmail, RecipientEmail, subject, body); } catch { }
