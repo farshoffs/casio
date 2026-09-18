@@ -6,6 +6,7 @@ on:
       - feature/regime-router-dashboard-research
     paths:
       - ctrader-web-plugin/regime-router-dashboard/index.html
+      - ctrader-web-plugin/cross-device/index.html
       - .github/workflows/check-ctrader-web-plugin.yml
   workflow_dispatch:
 
@@ -31,8 +32,8 @@ jobs:
           js = m.group(1)
           Path("/tmp/casio-dashboard.mjs").write_text(js, encoding="utf-8")
           required = [
-              "RR10-XD1",
-              "rr10-live-state/rr10-state.json",
+              "RR10-XD2",
+              "__CASIO_RR10_STATE_URL__",
               "casio.regime-router.rr10.state.v1",
               "getLightSymbolList",
               "getSymbol",
@@ -46,7 +47,8 @@ jobs:
           forbidden = [
               "createNewOrder", "modifyOrder", "closePosition", "cancelOrder",
               "getServerData", "getTrendbarList", "getTrendbarListCompat",
-              "oldRouterSelected0591", "fetchM15History", "resampleBars"
+              "oldRouterSelected0591", "fetchM15History", "resampleBars",
+              "rr10-live-state", "raw.githubusercontent.com"
           ]
           for token in forbidden:
               if token in js:
