@@ -230,7 +230,7 @@ async function fetchM15History(){
     }
   }
 
-  let bars=m15History,to=Date.now(),pageNo=0,lastErr=null;
+  let bars=m15History,to=bars.length?bars[0].t-1:Date.now(),pageNo=0,lastErr=null;
   while(bars.length<HISTORY_TARGET&&pageNo<6){
     pageNo++;
     byId("sourceText").textContent="Build "+BUILD_ID+" · loading M15 history page "+pageNo+" · "+bars.length+"/"+HISTORY_TARGET;
