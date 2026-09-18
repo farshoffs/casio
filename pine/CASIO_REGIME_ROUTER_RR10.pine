@@ -1,0 +1,272 @@
+//@version=6
+strategy("CASIO Regime Router RR10 — Canonical", overlay=true, max_labels_count=500, initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.005, process_orders_on_close=true)
+
+// RR10 is the single canonical live ruleset.
+// Chart timeframe: 15 minutes. All higher-timeframe context uses completed bars only.
+// Fixed target: 3R. Entry/SL/TP stay frozen until SL or TP.
+
+const float TARGET_R = 3.0
+const int SUPPORT_BARS = 2
+const float TREND_ADX = 18.0
+const float RISK_FRACTION = 0.05
+string webhookSecret = input.string("", "Webhook secret")
+
+f_bias(float c, float e20, float e50) =>
+    e20 > e50 and c > e20 ? 1 : e20 < e50 and c < e20 ? -1 : 0
+
+f_quality(int q) =>
+    q >= 4 ? 4 : q >= 2 ? 3 : 2
+
+f_adx() =>
+    [pdi, mdi, a] = ta.dmi(14, 14)
+    a
+
+f_mtf_target(int base, int dir, int h1b, int h4b, float h4adx) =>
+    bool blocked = h1b == -dir and h4b == -dir
+    int baseGrade = base >= 4 ? 2 : base >= 3 ? 1 : 0
+    int align = (h1b == dir ? 1 : 0) + (h4b == dir ? 1 : 0)
+    int strong = align == 2 and h4adx >= TREND_ADX ? 1 : 0
+    int score = baseGrade + align + strong
+    int r = score >= 3 ? 4 : score >= 1 ? 3 : 2
+    [not blocked, r]
+
+bool isM15 = timeframe.isminutes and timeframe.multiplier == 15
+int utcMinute = hour(time, "UTC") * 60 + minute(time, "UTC")
+bool primary = (utcMinute >= 420 and utcMinute < 720) or (utcMinute >= 750 and utcMinute < 1020)
+
+// Completed HTF bars only. This is the non-repainting HTF pattern.
+float h1Close = request.security(syminfo.tickerid, "60", close[1], lookahead=barmerge.lookahead_on)
+float h1E20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+float h1E50 = request.security(syminfo.tickerid, "60", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+float h4Close = request.security(syminfo.tickerid, "240", close[1], lookahead=barmerge.lookahead_on)
+float h4E20 = request.security(syminfo.tickerid, "240", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+float h4E50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+float h4Adx = request.security(syminfo.tickerid, "240", f_adx()[1], lookahead=barmerge.lookahead_on)
+float prevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+float prevDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+
+int h1Bias = f_bias(h1Close, h1E20, h1E50)
+int h4Bias = f_bias(h4Close, h4E20, h4E50)
+bool strongLong = h1Bias == 1 and h4Bias == 1
+bool strongShort = h1Bias == -1 and h4Bias == -1
+bool htfLong = h1Bias >= 0 and h4Bias >= 0
+bool htfShort = h1Bias <= 0 and h4Bias <= 0
+bool strongTrend = h1Bias != 0 and h1Bias == h4Bias and h4Adx >= TREND_ADX
+
+float atr = ta.atr(14)
+float e20 = ta.ema(close, 20)
+float e50 = ta.ema(close, 50)
+float adx = f_adx()
+float rng = math.max(high - low, syminfo.mintick)
+float bodyFrac = math.abs(close - open) / rng
+float closeLoc = (close - low) / rng
+float rangeAtr = rng / atr
+bool bull = close > open
+bool bear = close < open
+float hh5 = ta.highest(high[1], 5)
+float ll5 = ta.lowest(low[1], 5)
+float hh10 = ta.highest(high[1], 10)
+float ll10 = ta.lowest(low[1], 10)
+float hh20 = ta.highest(high[1], 20)
+float ll20 = ta.lowest(low[1], 20)
+bool bullFvg = low > high[2]
+bool bearFvg = high < low[2]
+bool dispLong = bull and bodyFrac >= 0.55 and closeLoc >= 0.68 and rangeAtr >= 0.80 and close > hh5
+bool dispShort = bear and bodyFrac >= 0.55 and closeLoc <= 0.32 and rangeAtr >= 0.80 and close < ll5
+
+bool sellSweep = low < ll20 and close > ll20
+bool buySweep = high > hh20 and close < hh20
+int sellSweepAge0 = ta.barssince(sellSweep)
+int buySweepAge0 = ta.barssince(buySweep)
+int sellSweepAge = na(sellSweepAge0) ? 999 : sellSweepAge0
+int buySweepAge = na(buySweepAge0) ? 999 : buySweepAge0
+
+bool v1Long = e20 > e50 and close > hh10 and bull and bodyFrac >= 0.45
+bool v1Short = e20 < e50 and close < ll10 and bear and bodyFrac >= 0.45
+int v1Dir = v1Long and not v1Short ? 1 : v1Short and not v1Long ? -1 : 0
+
+bool outLong = primary and ((sellSweepAge <= 2 and bullFvg) or (strongLong and dispLong and low <= e20 + 0.25 * atr))
+bool outShort = primary and ((buySweepAge <= 2 and bearFvg) or (strongShort and dispShort and high >= e20 - 0.25 * atr))
+int outDir = outLong and not outShort ? 1 : outShort and not outLong ? -1 : 0
+
+bool sfLong = primary and htfLong and sellSweepAge <= 6 and (dispLong or bullFvg)
+bool sfShort = primary and htfShort and buySweepAge <= 6 and (dispShort or bearFvg)
+int sfDir = sfLong and not sfShort ? 1 : sfShort and not sfLong ? -1 : 0
+
+bool spBaseLong = (strongLong and sellSweepAge <= 5 and bullFvg) or (htfLong and sellSweepAge <= 2 and bullFvg) or (primary and htfLong and low <= prevDayHigh + 0.15 * atr and close > prevDayHigh and bullFvg)
+bool spBaseShort = (strongShort and buySweepAge <= 5 and bearFvg) or (htfShort and buySweepAge <= 2 and bearFvg) or (primary and htfShort and high >= prevDayLow - 0.15 * atr and close < prevDayLow and bearFvg)
+int spBaseR = f_quality((primary ? 1 : 0) + ((strongLong or strongShort) ? 1 : 0) + ((bullFvg or bearFvg) ? 1 : 0) + ((dispLong or dispShort) ? 1 : 0))
+[splAllowed, splR] = f_mtf_target(spBaseR, 1, h1Bias, h4Bias, h4Adx)
+[spsAllowed, spsR] = f_mtf_target(spBaseR, -1, h1Bias, h4Bias, h4Adx)
+bool spLong = spBaseLong and splAllowed
+bool spShort = spBaseShort and spsAllowed
+int spDir = spLong and not spShort ? 1 : spShort and not spLong ? -1 : 0
+
+// 0591 impulse -> pullback -> confirmation state machine.
+var int ms = 0
+var int impulseBar = na
+var float impOpen = na
+var float impClose = na
+var float impHigh = na
+var float impLow = na
+var float impAtr = na
+var float broken = na
+var float pullExtreme = na
+
+int m0591Dir = 0
+float m0591Stop = na
+bool impLong = rangeAtr >= 1.20 and bodyFrac >= 0.55 and closeLoc >= 0.72 and close > hh20
+bool impShort = rangeAtr >= 1.20 and bodyFrac >= 0.55 and closeLoc <= 0.28 and close < ll20
+
+if barstate.isconfirmed
+    if ms == 0
+        if impLong and not impShort
+            ms := 1
+            impulseBar := bar_index
+            impOpen := open
+            impClose := close
+            impHigh := high
+            impLow := low
+            impAtr := atr
+            broken := hh20
+            pullExtreme := low
+        else if impShort and not impLong
+            ms := -1
+            impulseBar := bar_index
+            impOpen := open
+            impClose := close
+            impHigh := high
+            impLow := low
+            impAtr := atr
+            broken := ll20
+            pullExtreme := high
+    else if bar_index > impulseBar
+        int age = bar_index - impulseBar
+        float impBody = math.abs(impClose - impOpen)
+        if age > 4
+            ms := 0
+        else if ms == 1
+            pullExtreme := math.min(pullExtreme, low)
+            bool invalid = low < impLow - 0.30 * impAtr
+            bool touched = low <= impClose - 0.18 * impBody and high >= impClose - 0.50 * impBody
+            bool confirm = close > open and close > broken
+            if invalid
+                ms := 0
+            else if touched and confirm
+                [allowedLong, ignoredR1] = f_mtf_target(3, 1, h1Bias, h4Bias, h4Adx)
+                if allowedLong
+                    m0591Dir := 1
+                    m0591Stop := pullExtreme - 0.12 * impAtr
+                ms := 0
+        else
+            pullExtreme := math.max(pullExtreme, high)
+            bool invalid = high > impHigh + 0.30 * impAtr
+            bool touched = high >= impClose + 0.18 * impBody and low <= impClose + 0.50 * impBody
+            bool confirm = close < open and close < broken
+            if invalid
+                ms := 0
+            else if touched and confirm
+                [allowedShort, ignoredR2] = f_mtf_target(3, -1, h1Bias, h4Bias, h4Adx)
+                if allowedShort
+                    m0591Dir := -1
+                    m0591Stop := pullExtreme + 0.12 * impAtr
+                ms := 0
+
+// Internal confirmations are memories only. They are not independent live engines.
+var int lastML = -1000000000
+var int lastMS = -1000000000
+var int lastVL = -1000000000
+var int lastVS = -1000000000
+var int lastOL = -1000000000
+var int lastOS = -1000000000
+var int lastPL = -1000000000
+var int lastPS = -1000000000
+var int lastFL = -1000000000
+var int lastFS = -1000000000
+
+if barstate.isconfirmed
+    if m0591Dir == 1
+        lastML := bar_index
+    if m0591Dir == -1
+        lastMS := bar_index
+    if v1Dir == 1
+        lastVL := bar_index
+    if v1Dir == -1
+        lastVS := bar_index
+    if outDir == 1
+        lastOL := bar_index
+    if outDir == -1
+        lastOS := bar_index
+    if spDir == 1
+        lastPL := bar_index
+    if spDir == -1
+        lastPS := bar_index
+    if sfDir == 1
+        lastFL := bar_index
+    if sfDir == -1
+        lastFS := bar_index
+
+f_recent(int b) =>
+    bar_index - b <= SUPPORT_BARS
+
+int supportLong = (f_recent(lastML) ? 1 : 0) + (f_recent(lastVL) ? 1 : 0) + (f_recent(lastOL) ? 1 : 0) + (f_recent(lastPL) ? 1 : 0) + (f_recent(lastFL) ? 1 : 0)
+int supportShort = (f_recent(lastMS) ? 1 : 0) + (f_recent(lastVS) ? 1 : 0) + (f_recent(lastOS) ? 1 : 0) + (f_recent(lastPS) ? 1 : 0) + (f_recent(lastFS) ? 1 : 0)
+int supportDir = m0591Dir == 1 ? supportLong : m0591Dir == -1 ? supportShort : 0
+int alignCount = m0591Dir == 0 ? 0 : (h1Bias == m0591Dir ? 1 : 0) + (h4Bias == m0591Dir ? 1 : 0)
+bool oldRouterSelected0591 = strongTrend ? (m0591Dir != 0 and m0591Dir == h1Bias) : (spDir == 0 and m0591Dir != 0 and supportDir >= 2)
+int canonicalDir = oldRouterSelected0591 and not primary and alignCount >= 1 ? m0591Dir : 0
+
+// Strict lifecycle: one active signal, frozen levels, no replacement until SL or TP.
+var int activeDir = 0
+var float activeEntry = na
+var float activeStop = na
+var float activeTarget = na
+var int activeSignalTime = na
+
+bool closedNow = false
+string closeReason = ""
+if barstate.isconfirmed and activeDir != 0
+    bool stopHit = activeDir == 1 ? low <= activeStop : high >= activeStop
+    bool targetHit = activeDir == 1 ? high >= activeTarget : low <= activeTarget
+    if stopHit or targetHit
+        closedNow := true
+        closeReason := stopHit ? (targetHit ? "SL same bar" : "SL") : "TP"
+        label.new(bar_index, activeDir == 1 ? low : high, "RR10 " + closeReason, style=activeDir == 1 ? label.style_label_up : label.style_label_down, textcolor=color.white, color=stopHit ? color.red : color.green)
+        activeDir := 0
+        activeEntry := na
+        activeStop := na
+        activeTarget := na
+        activeSignalTime := na
+
+bool newSignal = false
+if barstate.isconfirmed and isM15 and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
+    float risk = math.abs(close - m0591Stop)
+    if risk > 0
+        activeDir := canonicalDir
+        activeEntry := close
+        activeStop := m0591Stop
+        activeTarget := close + canonicalDir * TARGET_R * risk
+        activeSignalTime := time_close
+        float riskCashAccount = strategy.equity * RISK_FRACTION
+        float riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
+        float riskPerUnit = risk * syminfo.pointvalue
+        float qty = riskPerUnit > 0 ? riskCashSymbol / riskPerUnit : na
+        if not na(qty) and qty > 0
+            strategy.entry("RR10", canonicalDir == 1 ? strategy.long : strategy.short, qty=qty)
+            strategy.exit("RR10-X", "RR10", stop=activeStop, limit=activeTarget)
+        newSignal := true
+        label.new(bar_index, canonicalDir == 1 ? low : high, "RR10 " + (canonicalDir == 1 ? "LONG" : "SHORT") + "\n3R", style=canonicalDir == 1 ? label.style_label_up : label.style_label_down, textcolor=color.white, color=canonicalDir == 1 ? color.green : color.red)
+
+plot(activeDir != 0 ? activeEntry : na, "RR10 Entry", color=color.gray, linewidth=2, style=plot.style_linebr)
+plot(activeDir != 0 ? activeStop : na, "RR10 Stop", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(activeDir != 0 ? activeTarget : na, "RR10 Target", color=color.green, linewidth=2, style=plot.style_linebr)
+
+bgcolor(not isM15 ? color.new(color.orange, 85) : na, title="Wrong timeframe warning")
+
+if newSignal
+    string action = activeDir == 1 ? "LONG" : "SHORT"
+    string payload = '{"schema":"casio.regime-router.rr10","event":"signal","engine":"RR10","secret":"' + webhookSecret + '","source":"tradingview-rr10","symbol":"' + syminfo.ticker + '","timeframe":"15","direction":"' + (activeDir == 1 ? "long" : "short") + '","action":"' + action + '","technique":"RR10 Canonical","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","entry":' + str.tostring(activeEntry) + ',"entry_estimate":' + str.tostring(activeEntry) + ',"stop":' + str.tostring(activeStop) + ',"target":' + str.tostring(activeTarget) + ',"target_estimate":' + str.tostring(activeTarget) + ',"rr":3,"target_r":3,"risk_pct":5,"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + str.tostring(h4Adx) + ',"signal_time":' + str.tostring(activeSignalTime) + ',"bar_time":' + str.tostring(activeSignalTime) + '}'
+    alert(payload, alert.freq_once_per_bar_close)
+
+alertcondition(newSignal and activeDir == 1, "RR10 LONG", "RR10 canonical LONG")
+alertcondition(newSignal and activeDir == -1, "RR10 SHORT", "RR10 canonical SHORT")
