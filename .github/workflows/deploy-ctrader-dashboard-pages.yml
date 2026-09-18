@@ -66,8 +66,10 @@ jobs:
                   raise SystemExit(f"expected import missing: {old}")
               js = js.replace(old, new)
 
-          if "getTrendbarList" in js:
-              raise SystemExit("RR6 must use getServerData trendbar compatibility path, not getTrendbarList")
+          if "getTrendbarList," in js or "getTrendbarList }" in js:
+              raise SystemExit("RR6 imported the unsupported getTrendbarList API")
+          if "getServerData" not in js or "getTrendbarListCompat" not in js:
+              raise SystemExit("RR6 trendbar compatibility path is missing")
 
           build = Path(".pages-build")
           public = Path("public")
