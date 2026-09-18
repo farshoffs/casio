@@ -31,20 +31,23 @@ jobs:
           js = m.group(1)
           Path("/tmp/casio-dashboard.mjs").write_text(js, encoding="utf-8")
           required = [
-              "M15-0591 MTF",
-              "V1 Legacy M15",
-              "Outcome First M15",
-              "Structural Portfolio MTF",
-              "Structural Frequency M15",
+              "RR10 Canonical",
+              "CANONICAL_R=3",
+              "oldRouterSelected0591",
               "trendAdxThreshold=18",
               "supportBars=2",
               "getTrendbarList",
+              "fetchM15History",
+              "resampleBars",
               "subscribeQuotes",
           ]
           for token in required:
               if token not in js:
                   raise SystemExit(f"missing required dashboard token: {token}")
-          forbidden = ["createNewOrder", "modifyOrder", "closePosition", "cancelOrder"]
+          forbidden = [
+              "createNewOrder", "modifyOrder", "closePosition", "cancelOrder",
+              "getServerData", "getTrendbarListCompat"
+          ]
           for token in forbidden:
               if token in js:
                   raise SystemExit(f"read-only guard failed: {token} present")
