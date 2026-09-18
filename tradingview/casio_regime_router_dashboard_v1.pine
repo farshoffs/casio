@@ -320,7 +320,7 @@ if barstate.islast
         table.cell(rr10Dash, 0, 10, "RISK MODEL", text_color=color.rgb(143, 163, 189), text_size=size.small)
         table.cell(rr10Dash, 1, 10, "5% · 1:3", text_color=color.white, text_size=size.small)
     else
-        table.clear(rr10Dash)
+        table.clear(rr10Dash, 0, 0, 1, 10)
 
 if newSignal
     string action = activeDir == 1 ? "LONG" : "SHORT"
