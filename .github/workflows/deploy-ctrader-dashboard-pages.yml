@@ -1,4 +1,4 @@
-name: Deploy CASIO cTrader dashboard to GitHub Pages
+name: Deploy CASIO RR10 cross-device plugin
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ctrader-web-plugin/regime-router-dashboard/index.html
+      - ctrader-web-plugin/cross-device/index.html
       - .github/workflows/deploy-ctrader-dashboard-pages.yml
   workflow_dispatch:
 
@@ -40,7 +41,7 @@ jobs:
             rxjs@7.8.2 \
             @veksa/logger@1.0.6
 
-      - name: Build self-contained RR10 dashboard
+      - name: Build self-contained RR10 cross-device plugin
         env:
           BUILD_SHA: ${{ github.sha }}
         run: |
@@ -48,7 +49,7 @@ jobs:
           from pathlib import Path
           import os, re
 
-          src = Path("ctrader-web-plugin/regime-router-dashboard/index.html")
+          src = Path("ctrader-web-plugin/cross-device/index.html")
           html = src.read_text(encoding="utf-8")
           m = re.search(r'<script type="module">(.*?)</script>', html, re.S)
           if not m:
@@ -66,16 +67,26 @@ jobs:
                   raise SystemExit(f"expected import missing: {old}")
               js = js.replace(old, new)
 
-          if "getTrendbarList" not in js:
-              raise SystemExit("RR10 must use the official getTrendbarList API")
-          if "getServerData" in js or "getTrendbarListCompat" in js:
-              raise SystemExit("RR10 must not use the legacy trendbar compatibility wrapper")
-          if "fetchM15History" not in js or "resampleBars" not in js:
-              raise SystemExit("RR10 must fetch one M15 stream and derive HTF locally")
-          if 'const PERIOD={M15:11,H1:15,H4:18,D1:22};' not in js:
-              raise SystemExit("RR10 must use plugin ProtoTimeframe values for M15/H1/H4/D1")
-          if 'CANONICAL_R=3' not in js or 'oldRouterSelected0591' not in js:
-              raise SystemExit("RR10 canonical routing gate is missing")
+          required = [
+              "RR10-XD1",
+              "rr10-live-state/rr10-state.json",
+              "casio.regime-router.rr10.state.v1",
+              "getLightSymbolList",
+              "getSymbol",
+              "subscribeQuotes",
+              "quoteEvent",
+          ]
+          for token in required:
+              if token not in js:
+                  raise SystemExit(f"cross-device plugin missing: {token}")
+          forbidden = [
+              "getTrendbarList", "getServerData", "getTrendbarListCompat",
+              "oldRouterSelected0591", "canonicalDir", "fetchM15History", "resampleBars",
+              "createNewOrder", "modifyOrder", "closePosition", "cancelOrder",
+          ]
+          for token in forbidden:
+              if token in js:
+                  raise SystemExit(f"cross-device plugin must not contain: {token}")
 
           build = Path(".pages-build")
           public = Path("public")
@@ -113,17 +124,20 @@ jobs:
           rr10_js = Path("public/rr10/bundle.js").read_text(encoding="utf-8")
 
           checks = {
-              "versioned RR10 route": "RR10" in rr10_html and "RR10" in rr10_js,
-              "RR10 visible": "RR10" in html and "RR10" in js,
+              "versioned RR10 route": "RR10-XD1" in rr10_html and "RR10-XD1" in rr10_js,
+              "RR10 visible": "CASIO Regime Router" in html and "RR10-XD1" in js,
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
-              "official symbol API": "Could not match" in js or "could not match" in js,
-              "paged cached M15 data path": "M15 trendbar page" in js and "cached M15 bars" in js and "H1/H4/D1 derived locally" in js,
+              "shared state feed": "rr10-live-state/rr10-state.json" in js,
+              "state schema": "casio.regime-router.rr10.state.v1" in js,
+              "quote overlay": "Quote live" in js,
+              "no history RPC": "getTrendbarList" not in js and "getServerData" not in js,
+              "one decision state": "One RR10 decision state shared by every device" in html,
           }
           failed = [name for name, ok in checks.items() if not ok]
           if failed:
               raise SystemExit("Pages build guard failed: " + ", ".join(failed))
-          print("RR10 Pages guard passed")
+          print("RR10 cross-device Pages guard passed")
           PY
 
       - name: Configure Pages
