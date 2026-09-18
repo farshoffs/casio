@@ -16,7 +16,7 @@ on:
     - cron: '2,17,32,47 * * * *'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: casio-rr10-live-signal
@@ -102,6 +102,54 @@ jobs:
               --file tmp/latest_xauusd_m5.csv \
               --output tmp/live_xauusd_m5.csv
           fi
+
+      - name: Build cross-device RR10 state
+        run: |
+          python -m casio.rr10_dashboard_state \
+            --data tmp/live_xauusd_m5.csv \
+            --output tmp/rr10-state.json
+
+      - name: Publish shared RR10 state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          branch = "rr10-live-state"
+          path = "rr10-state.json"
+          api = f"https://api.github.com/repos/{repo}/contents/{path}"
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {token}",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "casio-rr10-state-publisher",
+          }
+
+          req = urllib.request.Request(api + "?ref=" + branch, headers=headers)
+          with urllib.request.urlopen(req, timeout=30) as response:
+              current = json.load(response)
+
+          content = base64.b64encode(Path("tmp/rr10-state.json").read_bytes()).decode("ascii")
+          body = json.dumps({
+              "message": "state: update RR10 cross-device snapshot",
+              "content": content,
+              "sha": current["sha"],
+              "branch": branch,
+          }).encode("utf-8")
+          put = urllib.request.Request(api, data=body, headers={**headers, "Content-Type": "application/json"}, method="PUT")
+          with urllib.request.urlopen(put, timeout=30) as response:
+              result = json.load(response)
+          print("Published RR10 state commit:", result["commit"]["sha"])
+          PY
 
       - name: Evaluate latest canonical RR10 M15 entry
         run: |
