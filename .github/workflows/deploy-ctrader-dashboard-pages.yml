@@ -5,7 +5,7 @@ on:
     branches:
       - feature/regime-router-dashboard-research
     paths:
-      - ctrader-web-plugin/regime-router-dashboard/dist/**
+      - ctrader-web-plugin/regime-router-dashboard/index.html
       - .github/workflows/deploy-ctrader-dashboard-pages.yml
   workflow_dispatch:
 
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build-and-deploy:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -27,15 +27,110 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install exact cTrader browser SDK
+        run: |
+          npm install --no-save \
+            esbuild@0.25.9 \
+            @spotware-web-team/sdk@0.0.9 \
+            @spotware-web-team/sdk-external-api@0.0.5 \
+            rxjs@7.8.2 \
+            @veksa/logger@1.0.6
+
+      - name: Build self-contained RR10 dashboard
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+
+          src = Path("ctrader-web-plugin/regime-router-dashboard/index.html")
+          html = src.read_text(encoding="utf-8")
+          m = re.search(r'<script type="module">(.*?)</script>', html, re.S)
+          if not m:
+              raise SystemExit("module script not found")
+
+          js = m.group(1)
+          replacements = {
+              'https://esm.sh/@spotware-web-team/sdk-external-api@0.0.5': '@spotware-web-team/sdk-external-api',
+              'https://esm.sh/@spotware-web-team/sdk@0.0.9': '@spotware-web-team/sdk',
+              'https://esm.sh/rxjs@7.8.2': 'rxjs',
+              'https://esm.sh/@veksa/logger@1.0.6': '@veksa/logger',
+          }
+          for old, new in replacements.items():
+              if old not in js:
+                  raise SystemExit(f"expected import missing: {old}")
+              js = js.replace(old, new)
+
+          if "getTrendbarList," in js or "getTrendbarList }" in js:
+              raise SystemExit("RR10 imported the unsupported getTrendbarList API")
+          if "getServerData" not in js or "getTrendbarListCompat" not in js:
+              raise SystemExit("RR10 trendbar compatibility path is missing")
+          if 'const PERIOD={M15:11,H1:15,H4:18,D1:22};' not in js:
+              raise SystemExit("RR10 must use plugin ProtoTimeframe values for M15/H1/H4/D1")
+          if 'CANONICAL_R=3' not in js or 'oldRouterSelected0591' not in js:
+              raise SystemExit("RR10 canonical routing gate is missing")
+
+          build = Path(".pages-build")
+          public = Path("public")
+          build.mkdir(exist_ok=True)
+          public.mkdir(exist_ok=True)
+
+          entry = build / "casio-app.mjs"
+          entry.write_text(js, encoding="utf-8")
+
+          version = os.environ["BUILD_SHA"][:12]
+          rendered = html[:m.start()] + f'<script src="./bundle.js?v={version}"></script>' + html[m.end():]
+          (public / "index.html").write_text(rendered, encoding="utf-8")
+          PY
+
+          npx esbuild .pages-build/casio-app.mjs \
+            --bundle \
+            --format=iife \
+            --platform=browser \
+            --target=es2020 \
+            --minify \
+            --outfile=public/bundle.js
+
+          mkdir -p public/rr10
+          cp public/index.html public/rr10/index.html
+          cp public/bundle.js public/rr10/bundle.js
+
+      - name: Guard deployed build
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          html = Path("public/index.html").read_text(encoding="utf-8")
+          js = Path("public/bundle.js").read_text(encoding="utf-8")
+          rr10_html = Path("public/rr10/index.html").read_text(encoding="utf-8")
+          rr10_js = Path("public/rr10/bundle.js").read_text(encoding="utf-8")
+
+          checks = {
+              "versioned RR10 route": "RR10" in rr10_html and "RR10" in rr10_js,
+              "RR10 visible": "RR10" in html and "RR10" in js,
+              "cache-busted bundle": "bundle.js?v=" in html,
+              "self-contained": "esm.sh" not in html and "esm.sh" not in js,
+              "official symbol API": "Could not match" in js or "could not match" in js,
+              "compat trendbar path": "Trendbar RPC" in js,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit("Pages build guard failed: " + ", ".join(failed))
+          print("RR10 Pages guard passed")
+          PY
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Upload dashboard
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ctrader-web-plugin/regime-router-dashboard/dist
+          path: public
 
       - name: Deploy dashboard
         id: deployment
