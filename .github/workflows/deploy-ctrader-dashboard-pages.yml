@@ -128,7 +128,7 @@ jobs:
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
               "official symbol API": "Could not match" in js or "could not match" in js,
-              "official trendbar path": "getTrendbarList" in js and "fetchM15History" in js,
+              "canonical M15 data path": "canonical M15 feed" in js and "HTF derived locally" in js and "M15 trendbar RPC" in js,
           }
           failed = [name for name, ok in checks.items() if not ok]
           if failed:
