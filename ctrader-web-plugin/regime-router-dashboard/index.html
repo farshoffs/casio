@@ -3,281 +3,153 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0b111b">
-<title>CASIO Regime Router</title>
+<meta name="theme-color" content="#09111d">
+<title>CASIO RR10 Cross-Device</title>
 <style>
-:root{color-scheme:dark;--bg:#0b111b;--panel:#111a28;--panel2:#162235;--line:#26364e;--text:#e8eef8;--muted:#91a0b7;--blue:#4b8bff;--green:#26d07c;--red:#ff5b6f;--amber:#f7ba48;--neutral:#808a9b}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{padding:12px}.app{max-width:960px;margin:0 auto}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.brand{display:flex;align-items:center;gap:10px}.logo{width:42px;height:42px;border-radius:12px;background:#1c4281;display:grid;place-items:center;font-weight:800}.title{font-size:18px;font-weight:800;margin:1px 0 2px}.sub{color:var(--muted);font-size:12px}.actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:8px 11px;font-weight:650;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:6px 9px;font-size:12px;background:var(--panel)}.dot{width:8px;height:8px;border-radius:50%;background:var(--neutral)}.dot.ok{background:var(--green)}.dot.err{background:var(--red)}.dot.busy{background:var(--amber)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span12{grid-column:span 12}.label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.65px;margin-bottom:6px}.value{font-size:20px;font-weight:800}.smallValue{font-size:15px;font-weight:750}.long{color:var(--green)}.short{color:var(--red)}.wait{color:var(--neutral)}.trend{color:var(--blue)}.mixed{color:var(--amber)}.tech{width:100%;border-collapse:collapse}.tech th,.tech td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}.tech th{color:var(--muted);font-size:11px;text-transform:uppercase}.tech tr:last-child td{border-bottom:0}.state{font-weight:800}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.level{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px}.level b{display:block;font-size:17px;margin-top:3px}.mono{font-variant-numeric:tabular-nums}.footer{color:var(--muted);font-size:11px;margin-top:10px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}.error{display:none;margin:0 0 10px;padding:10px 12px;border:1px solid rgba(255,91,111,.45);background:rgba(255,91,111,.08);border-radius:10px;color:#ffd8dd}
-@media (prefers-color-scheme: light){:root{--bg:#f4f7fb;--panel:#ffffff;--panel2:#eef3f9;--line:#d7e0ec;--text:#152033;--muted:#637087;--blue:#2f6fe4;--green:#0f9f5b;--red:#d83b52;--amber:#b87900;--neutral:#738096}button{background:#eef3f9}.logo{background:#dbe8ff;color:#173f84}.error{background:#fff0f2;color:#8b2436}}
-@media(max-width:720px){body{padding:8px}.top{align-items:stretch;flex-direction:column}.actions{justify-content:flex-start}.span3,.span4{grid-column:span 12}.grid{gap:8px}.card{padding:10px}.levels{grid-template-columns:1fr}.tech th:nth-child(4),.tech td:nth-child(4){display:none}.title{font-size:17px}.value{font-size:18px}}
+:root{color-scheme:dark;--bg:#09111d;--panel:#101b2b;--panel2:#16243a;--line:#263a57;--text:#edf4ff;--muted:#8fa3bd;--green:#28d17c;--red:#ff6475;--amber:#f5b945;--blue:#5b91ff;--neutral:#7c8ba0}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:14px/1.4 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{padding:max(10px,env(safe-area-inset-top)) 10px max(12px,env(safe-area-inset-bottom))}
+.app{max-width:980px;margin:0 auto}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}.brand{display:flex;gap:10px;align-items:center}.logo{width:44px;height:44px;border-radius:13px;background:#184487;display:grid;place-items:center;font-weight:900}.title{font-size:19px;font-weight:850}.sub{font-size:12px;color:var(--muted)}.badges{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.badge{border:1px solid var(--line);border-radius:999px;padding:6px 9px;background:var(--panel);font-size:12px;display:inline-flex;align-items:center;gap:6px}.dot{width:8px;height:8px;border-radius:50%;background:var(--neutral)}.dot.ok{background:var(--green)}.dot.warn{background:var(--amber)}.dot.err{background:var(--red)}button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:9px;padding:7px 10px;font-weight:700}
+.notice{display:none;border:1px solid rgba(245,185,69,.45);background:rgba(245,185,69,.08);color:#ffe0a1;padding:10px 12px;border-radius:10px;margin-bottom:10px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px}.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:12px}.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span12{grid-column:span 12}.label{font-size:11px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);margin-bottom:7px}.value{font-size:21px;font-weight:850}.long{color:var(--green)}.short{color:var(--red)}.wait{color:var(--neutral)}.trend{color:var(--blue)}.mixed{color:var(--amber)}.mono{font-variant-numeric:tabular-nums}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.level{padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2)}.level b{display:block;font-size:18px;margin-top:4px}.kv{display:grid;grid-template-columns:1fr auto;gap:7px 12px}.kv span:nth-child(odd){color:var(--muted)}.footer{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:10px}.source{overflow-wrap:anywhere}
+@media(max-width:720px){.top{flex-direction:column}.badges{justify-content:flex-start}.span3,.span4,.span6{grid-column:span 12}.levels{grid-template-columns:1fr}.title{font-size:18px}.value{font-size:20px}}
 </style>
 </head>
 <body>
 <div class="app">
-<div class="top">
-<div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">FxPro XAUUSD · M15 / H1 / H4 · read-only dashboard · <span id="buildText">Build RR10.2</span></div></div></div>
-<div class="actions"><span class="badge">Build <span id="buildId">RR10.1</span></span><span class="badge"><span id="connDot" class="dot busy"></span><span id="connText">Connecting</span></span><button id="refreshBtn" disabled>Refresh</button></div>
+  <div class="top">
+    <div class="brand"><div class="logo">C</div><div><div class="title">CASIO Regime Router</div><div class="sub">RR10 canonical · cross-device WebView · iOS / Web / Windows / Mac</div></div></div>
+    <div class="badges">
+      <span class="badge">Build RR10-XD1</span>
+      <span class="badge"><span id="stateDot" class="dot warn"></span><span id="stateStatus">State loading</span></span>
+      <span class="badge"><span id="quoteDot" class="dot warn"></span><span id="quoteStatus">Quote connecting</span></span>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+  </div>
+  <div id="notice" class="notice"></div>
+  <div class="grid">
+    <section class="card span3"><div class="label">Portfolio</div><div id="portfolio" class="value wait">WAIT</div><div id="signalAge" class="sub">Cloud state loading</div></section>
+    <section class="card span3"><div class="label">Router mode</div><div id="routerMode" class="value mixed">—</div><div class="sub">Canonical RR10</div></section>
+    <section class="card span3"><div class="label">H1 bias</div><div id="h1Bias" class="value wait">—</div><div class="sub">Completed H1 context</div></section>
+    <section class="card span3"><div class="label">H4 bias / ADX</div><div id="h4Bias" class="value wait">—</div><div id="h4Adx" class="sub">ADX —</div></section>
+
+    <section class="card span12"><div class="label">Current canonical levels</div><div class="levels">
+      <div class="level"><span class="sub">ENTRY</span><b id="entry" class="mono">—</b></div>
+      <div class="level"><span class="sub">STOP LOSS</span><b id="stop" class="mono short">—</b></div>
+      <div class="level"><span class="sub">TAKE PROFIT · 3R</span><b id="target" class="mono long">—</b></div>
+    </div></section>
+
+    <section class="card span4"><div class="label">FxPro live quote</div><div class="value mono"><span id="bid">—</span> / <span id="ask">—</span></div><div id="symbolText" class="sub">cTrader host optional</div></section>
+    <section class="card span4"><div class="label">Risk model</div><div class="value"><span id="riskPct">5</span>% · <span id="targetR">3</span>R</div><div class="sub">Same frozen RR10 parameters</div></section>
+    <section class="card span4"><div class="label">Agreement</div><div id="agreement" class="value wait">—</div><div class="sub">Support / HTF alignment on active setup</div></section>
+
+    <section class="card span6"><div class="label">Cloud state</div><div class="kv"><span>Last M15 close</span><b id="barTime">—</b><span>Generated</span><b id="generated">—</b><span>Data age</span><b id="dataAge">—</b></div></section>
+    <section class="card span6"><div class="label">Sources</div><div id="dataSource" class="sub source">—</div><div id="executionSource" class="sub source" style="margin-top:6px">—</div></section>
+  </div>
+  <div class="footer"><span>One RR10 decision state shared by every device.</span><span id="updated">Updated —</span></div>
 </div>
-<div id="errorBox" class="error"></div>
-<div class="grid">
-<section class="card span3"><div class="label">Portfolio</div><div id="portfolio" class="value wait">WAIT</div><div id="selected" class="sub">No routed setup</div></section>
-<section class="card span3"><div class="label">Router mode</div><div id="routerMode" class="value mixed">MIXED</div><div id="barTime" class="sub">Waiting for data</div></section>
-<section class="card span3"><div class="label">H1 bias</div><div id="h1Bias" class="value wait">—</div><div class="sub">Completed H1 only</div></section>
-<section class="card span3"><div class="label">H4 bias / ADX</div><div id="h4Bias" class="value wait">—</div><div id="h4Adx" class="sub">ADX —</div></section>
-<section class="card span12"><div class="label">Internal confirmations · diagnostic only</div><table class="tech"><thead><tr><th>Confirmation</th><th>State</th><th>Target</th><th>Role</th></tr></thead><tbody>
-<tr><td>0591 MTF</td><td id="t0591" class="state wait">WAIT</td><td id="r0591">—</td><td class="sub">Momentum</td></tr>
-<tr><td>V1 Legacy</td><td id="tv1" class="state wait">WAIT</td><td id="rv1">—</td><td class="sub">Momentum</td></tr>
-<tr><td>Outcome First</td><td id="tout" class="state wait">WAIT</td><td id="rout">—</td><td class="sub">Structure</td></tr>
-<tr><td>Struct Portfolio</td><td id="tsp" class="state wait">WAIT</td><td id="rsp">—</td><td class="sub">Structure</td></tr>
-<tr><td>Struct Frequency</td><td id="tsf" class="state wait">WAIT</td><td id="rsf">—</td><td class="sub">Structure</td></tr>
-</tbody></table></section>
-<section class="card span4"><div class="label">Agreement · prior 30m</div><div class="smallValue"><span class="long">▲ <span id="supportLong">0</span></span> &nbsp; <span class="short">▼ <span id="supportShort">0</span></span></div></section>
-<section class="card span4"><div class="label">Live FxPro quote</div><div class="smallValue mono">Bid <span id="bid">—</span> · Ask <span id="ask">—</span></div></section>
-<section class="card span4"><div class="label">Target quality</div><div id="targetR" class="smallValue">—</div></section>
-<section class="card span12"><div class="label">Current routed levels</div><div class="levels"><div class="level"><span class="sub">ENTRY EST.</span><b id="entry" class="mono">—</b></div><div class="level"><span class="sub">STOP LOSS</span><b id="stop" class="mono short">—</b></div><div class="level"><span class="sub">TAKE PROFIT</span><b id="target" class="mono long">—</b></div></div></section>
-</div>
-<div class="footer"><span id="sourceText">Connecting to cTrader plugin host…</span><span id="updated">Updated —</span></div>
-</div>
+
 <script type="module">
 import { createClientAdapter } from "https://esm.sh/@spotware-web-team/sdk-external-api@0.0.5";
-import { handleConfirmEvent, registerEvent, getAccountInformation, getLightSymbolList, getSymbol, getTrendbarList, subscribeQuotes, quoteEvent } from "https://esm.sh/@spotware-web-team/sdk@0.0.20";
+import { handleConfirmEvent, registerEvent, getLightSymbolList, getSymbol, subscribeQuotes, quoteEvent } from "https://esm.sh/@spotware-web-team/sdk@0.0.20";
 import { firstValueFrom, take, filter, timeout } from "https://esm.sh/rxjs@7.8.2";
 import { createLogger } from "https://esm.sh/@veksa/logger@1.0.6";
 
-const BUILD_ID="RR10.2";
+const BUILD="RR10-XD1";
+const STATE_URL="https://raw.githubusercontent.com/farshoffs/casio/rr10-live-state/rr10-state.json";
 const byId=id=>document.getElementById(id);
-const PERIOD={M15:11,H1:15,H4:18,D1:22};
-const PERIOD_MS={M15:900000,H1:3600000,H4:14400000,D1:86400000};
-const trendAdxThreshold=18,supportBars=2,CANONICAL_R=3;
-let adapter,symbolId=null,symbolName="XAUUSD",digits=2,quote={bid:NaN,ask:NaN},lastSnapshot=null,refreshing=false,lastM15Bucket=Math.floor(Date.now()/PERIOD_MS.M15);
+let cloudState=null,adapter=null,symbolId=null,digits=2,quote={bid:NaN,ask:NaN};
 
-function num(v){if(v==null)return NaN;if(typeof v==="number")return v;if(typeof v==="bigint")return Number(v);if(typeof v==="string")return Number(v);if(typeof v==="object"){if(typeof v.toNumber==="function")return v.toNumber();if(typeof v.toString==="function")return Number(v.toString())}return Number(v)}
-function maybeJson(v){if(typeof v!=="string")return v;const t=v.trim();if(!t||(t[0]!=="{"&&t[0]!=="["))return v;try{return JSON.parse(t)}catch{return v}}
+function num(v){if(v==null)return NaN;if(typeof v==="number")return v;if(typeof v==="string")return Number(v);if(typeof v==="bigint")return Number(v);if(typeof v==="object"&&typeof v.toString==="function")return Number(v.toString());return Number(v)}
 function keyNorm(v){return String(v??"").replace(/[^A-Z0-9]/gi,"").toLowerCase()}
-function field(obj,...names){
-  if(!obj||typeof obj!=="object")return undefined;
-  for(const name of names)if(Object.prototype.hasOwnProperty.call(obj,name))return obj[name];
-  const wanted=new Set(names.map(keyNorm));
-  for(const [k,v] of Object.entries(obj))if(wanted.has(keyNorm(k)))return v;
-  return undefined;
-}
-function unwrap(x){let v=maybeJson(x);for(let i=0;i<6;i++){if(v&&typeof v==="object"){const p=field(v,"payload");if(p!==undefined){const n=maybeJson(p);if(n!==v){v=n;continue}}const d=field(v,"data");if(d!==undefined){const n=maybeJson(d);if(n!==v){v=n;continue}}}break}return v??{}}
-function arrayField(x,key){
-  const seen=new Set(),names=[key,key+"s",key+"List",key+"Collection"];
-  function walk(v,depth){
-    v=maybeJson(v);
-    if(v==null||depth>8)return [];
-    if(Array.isArray(v))return key===""?v:[];
-    if(typeof v!=="object")return [];
-    if(seen.has(v))return [];
-    seen.add(v);
-    const direct=field(v,...names);
-    if(direct!==undefined){
-      const d=maybeJson(direct);
-      if(Array.isArray(d))return d;
-      if(d&&typeof d[Symbol.iterator]==="function"&&typeof d!=="string")return Array.from(d);
-      if(d&&typeof d==="object"){
-        const vals=Object.values(d);
-        if(vals.length&&vals.every(z=>z&&typeof z==="object"))return vals;
-      }
-    }
-    for(const child of Object.values(v)){
-      const found=walk(child,depth+1);
-      if(found.length)return found;
-    }
-    return [];
-  }
-  return walk(x,0);
-}
-function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
-function symbolDisplayName(s){return String(field(s,"name","symbolName","symbol","displayName")??"")}
-function symbolIdValue(s){return num(field(s,"id","symbolId"))}
-function normalizeSymbolName(v){return String(v??"").toUpperCase().replace(/[^A-Z0-9]/g,"")}
-function symbolSearchText(s){return [symbolDisplayName(s),field(s,"description"),field(s,"translation"),field(s,"tags")].filter(Boolean).join(" ").toUpperCase()}
-function once(obs){return firstValueFrom(obs.pipe(take(1)))}
-async function rpc(obs,label,ms=10000){try{return await firstValueFrom(obs.pipe(take(1),timeout({first:ms})))}catch(e){throw new Error(label+" failed or timed out: "+(e?.message||e))}}
-function shortJson(v,max=420){try{const x=JSON.stringify(v);return x.length>max?x.slice(0,max)+"…":x}catch{return String(v)}}
-async function getLightSymbolsCompat(){const payload={includeArchivedSymbols:false};let first=await rpc(getLightSymbolList(adapter,payload),"symbol list",10000);let symbols=arrayField(first,"symbol");if(symbols.length)return{response:first,symbols,mode:"standard"};try{const streamed=await firstValueFrom(getLightSymbolList(adapter,payload,true).pipe(filter(msg=>num(field(msg,"payloadType"))===842||arrayField(msg,"symbol").length>0),take(1),timeout({first:10000})));symbols=arrayField(streamed,"symbol");if(symbols.length)return{response:streamed,symbols,mode:"multi-842"};return{response:streamed,symbols,mode:"multi-empty"}}catch(e){return{response:first,symbols:[],mode:"standard-empty; multi failed: "+(e?.message||e)}}}
+function field(obj,...names){if(!obj||typeof obj!=="object")return undefined;for(const n of names)if(Object.prototype.hasOwnProperty.call(obj,n))return obj[n];const wanted=new Set(names.map(keyNorm));for(const [k,v] of Object.entries(obj))if(wanted.has(keyNorm(k)))return v}
+function arrayField(x,key){const names=[key,key+"s",key+"List",key+"Collection"],seen=new Set();function walk(v,d){if(v==null||d>7)return[];if(Array.isArray(v))return key===""?v:[];if(typeof v!=="object"||seen.has(v))return[];seen.add(v);const direct=field(v,...names);if(Array.isArray(direct))return direct;if(direct&&typeof direct==="object"){const vals=Object.values(direct);if(vals.length&&vals.every(z=>z&&typeof z==="object"))return vals}for(const child of Object.values(v)){const f=walk(child,d+1);if(f.length)return f}return[]}return walk(x,0)}
+function rpc(obs,label,ms=12000){return firstValueFrom(obs.pipe(take(1),timeout({first:ms}))).catch(e=>{throw new Error(label+": "+(e?.message||e))})}
+function norm(v){return String(v??"").toUpperCase().replace(/[^A-Z0-9]/g,"")}
+function sname(s){return String(field(s,"name","symbolName","symbol","displayName")??"")}
+function sid(s){return num(field(s,"id","symbolId"))}
 function fmt(v){return Number.isFinite(v)?v.toFixed(Math.max(2,digits)):"—"}
-function dirText(d){return d===1?"LONG":d===-1?"SHORT":"WAIT"}
-function biasText(d){return d===1?"BULL":d===-1?"BEAR":"NEUTRAL"}
-function dirClass(d){return d===1?"long":d===-1?"short":"wait"}
-function setState(id,d){const e=byId(id);e.textContent=dirText(d);e.className="state "+dirClass(d)}
-function showError(msg){const e=byId("errorBox");e.textContent=msg;e.style.display=msg?"block":"none"}
-function setConnection(state,text){byId("connText").textContent=text;byId("connDot").className="dot "+state}
+function bias(v){return v===1?"BULL":v===-1?"BEAR":"NEUTRAL"}
+function dirClass(v){return v==="LONG"||v===1?"long":v==="SHORT"||v===-1?"short":"wait"}
+function setBadge(dot,status,kind,text){byId(dot).className="dot "+kind;byId(status).textContent=text}
+function isoShort(v){if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?"—":d.toISOString().replace(".000Z","Z")}
+function showNotice(msg){const e=byId("notice");e.textContent=msg;e.style.display=msg?"block":"none"}
 
-function decodeTrendbar(tb){const lowRaw=num(field(tb,"low")),dOpen=num(field(tb,"deltaOpen"))||0,dClose=num(field(tb,"deltaClose"))||0,dHigh=num(field(tb,"deltaHigh"))||0,minute=num(field(tb,"utcTimestampInMinutes"));return{t:minute*60000,open:(lowRaw+dOpen)/100000,high:(lowRaw+dHigh)/100000,low:lowRaw/100000,close:(lowRaw+dClose)/100000,volume:num(field(tb,"volume"))||0}}
-function trendbars(res,periodMs){const now=Date.now();return arrayField(res,"trendbar").map(decodeTrendbar).filter(b=>Number.isFinite(b.t)&&Number.isFinite(b.close)&&b.t+periodMs<=now+1000).sort((a,b)=>a.t-b.t)}
-function ema(bars,p){const o=Array(bars.length).fill(NaN);if(!bars.length)return o;let e=bars[0].close,k=2/(p+1);o[0]=e;for(let i=1;i<bars.length;i++){e=bars[i].close*k+e*(1-k);o[i]=e}return o}
-function trueRanges(bars){const o=Array(bars.length).fill(NaN);for(let i=0;i<bars.length;i++){const r=bars[i].high-bars[i].low;o[i]=i===0?r:Math.max(r,Math.abs(bars[i].high-bars[i-1].close),Math.abs(bars[i].low-bars[i-1].close))}return o}
-function wilder(values,p){const o=Array(values.length).fill(NaN);if(!values.length)return o;let s=values[0]||0;o[0]=s;for(let i=1;i<values.length;i++){const v=Number.isFinite(values[i])?values[i]:0;s=(s*(p-1)+v)/p;o[i]=s}return o}
-function indicators(bars){const tr=trueRanges(bars),atr=wilder(tr,14),e20=ema(bars,20),e50=ema(bars,50),plus=Array(bars.length).fill(0),minus=Array(bars.length).fill(0);for(let i=1;i<bars.length;i++){const up=bars[i].high-bars[i-1].high,down=bars[i-1].low-bars[i].low;plus[i]=up>down&&up>0?up:0;minus[i]=down>up&&down>0?down:0}const str=wilder(tr,14),sp=wilder(plus,14),sm=wilder(minus,14),dx=Array(bars.length).fill(NaN);for(let i=0;i<bars.length;i++){if(!str[i])continue;const pdi=100*sp[i]/str[i],mdi=100*sm[i]/str[i],den=pdi+mdi;dx[i]=den?100*Math.abs(pdi-mdi)/den:0}return{atr,e20,e50,adx:wilder(dx.map(x=>Number.isFinite(x)?x:0),14)}}
-function lastClosedIndex(bars,closeTime,tfMs){let lo=0,hi=bars.length-1,ans=-1;while(lo<=hi){const m=(lo+hi)>>1;if(bars[m].t+tfMs<=closeTime){ans=m;lo=m+1}else hi=m-1}return ans}
-function highest(bars,end,count){let v=-Infinity;for(let i=end-count+1;i<=end;i++)if(i>=0)v=Math.max(v,bars[i].high);return v}
-function lowest(bars,end,count){let v=Infinity;for(let i=end-count+1;i<=end;i++)if(i>=0)v=Math.min(v,bars[i].low);return v}
-function boolDir(l,s){return l&&!s?1:s&&!l?-1:0}
-function qualityTarget(q){return q>=4?4:q>=2?3:2}
-function bias(close,e20,e50){return e20>e50&&close>e20?1:e20<e50&&close<e20?-1:0}
-function mtfTarget(base,dir,h1,h4,h4adx){const blocked=h1===-dir&&h4===-dir,baseGrade=base>=4?2:base>=3?1:0,align=(h1===dir?1:0)+(h4===dir?1:0),strong=align===2&&h4adx>=trendAdxThreshold?1:0,score=baseGrade+align+strong;return{allowed:!blocked,r:score>=3?4:score>=1?3:2}}
-function primarySession(t){const d=new Date(t),m=d.getUTCHours()*60+d.getUTCMinutes();return(m>=420&&m<720)||(m>=750&&m<1020)}
-function barsSinceSweep(bars,i,isSell,maxAge){for(let age=0;age<=maxAge;age++){const j=i-age;if(j<20)break;const ref=isSell?lowest(bars,j-1,20):highest(bars,j-1,20),ok=isSell?(bars[j].low<ref&&bars[j].close>ref):(bars[j].high>ref&&bars[j].close<ref);if(ok)return age}return 999}
-
-function runRouter(m15,h1,h4,d1){
-if(m15.length<100||h1.length<70||h4.length<70||d1.length<3)throw new Error("Not enough cTrader history returned yet.");
-const mi=indicators(m15),h1i=indicators(h1),h4i=indicators(h4);
-let seq=0,snap=null,active=null,ms=0,impulseSeq=0,impOpen=NaN,impClose=NaN,impHigh=NaN,impLow=NaN,impAtr=NaN,broken=NaN,pullExtreme=NaN;
-const last={mL:-1e9,mS:-1e9,vL:-1e9,vS:-1e9,oL:-1e9,oS:-1e9,pL:-1e9,pS:-1e9,fL:-1e9,fS:-1e9};
-const recent=x=>seq-x<=supportBars;
-const supportCount=dir=>{let c=0;c+=recent(dir===1?last.mL:last.mS)?1:0;c+=recent(dir===1?last.vL:last.vS)?1:0;c+=recent(dir===1?last.oL:last.oS)?1:0;c+=recent(dir===1?last.pL:last.pS)?1:0;c+=recent(dir===1?last.fL:last.fS)?1:0;return c};
-
-for(let i=60;i<m15.length;i++){
-const bar=m15[i],atr=mi.atr[i];if(!Number.isFinite(atr)||atr<=0)continue;
-const closeTime=bar.t+PERIOD_MS.M15,hi1=lastClosedIndex(h1,closeTime,PERIOD_MS.H1),hi4=lastClosedIndex(h4,closeTime,PERIOD_MS.H4),di=lastClosedIndex(d1,closeTime,PERIOD_MS.D1);if(hi1<55||hi4<55||di<0)continue;
-if(active){
-  const stopHit=active.dir===1?bar.low<=active.stop:bar.high>=active.stop;
-  const targetHit=active.dir===1?bar.high>=active.target:bar.low<=active.target;
-  if(stopHit||targetHit)active=null;
-}
-seq++;
-const range=Math.max(bar.high-bar.low,1e-8),bodyFrac=Math.abs(bar.close-bar.open)/range,closeLoc=(bar.close-bar.low)/range,rangeAtr=range/atr,bull=bar.close>bar.open,bear=bar.close<bar.open;
-const hh5=highest(m15,i-1,5),ll5=lowest(m15,i-1,5),hh10=highest(m15,i-1,10),ll10=lowest(m15,i-1,10),hh20=highest(m15,i-1,20),ll20=lowest(m15,i-1,20);
-const bullFvg=bar.low>m15[i-2].high,bearFvg=bar.high<m15[i-2].low,dispLong=bull&&bodyFrac>=.55&&closeLoc>=.68&&rangeAtr>=.80&&bar.close>hh5,dispShort=bear&&bodyFrac>=.55&&closeLoc<=.32&&rangeAtr>=.80&&bar.close<ll5,sellSweepAge=barsSinceSweep(m15,i,true,6),buySweepAge=barsSinceSweep(m15,i,false,6),primary=primarySession(bar.t);
-const h1Bias=bias(h1[hi1].close,h1i.e20[hi1],h1i.e50[hi1]),h4Bias=bias(h4[hi4].close,h4i.e20[hi4],h4i.e50[hi4]),h4Adx=h4i.adx[hi4],strongLong=h1Bias===1&&h4Bias===1,strongShort=h1Bias===-1&&h4Bias===-1,htfLong=h1Bias>=0&&h4Bias>=0,htfShort=h1Bias<=0&&h4Bias<=0,strongTrend=h1Bias!==0&&h1Bias===h4Bias&&h4Adx>=trendAdxThreshold;
-const v1Dir=boolDir(mi.e20[i]>mi.e50[i]&&bar.close>hh10&&bull&&bodyFrac>=.45,mi.e20[i]<mi.e50[i]&&bar.close<ll10&&bear&&bodyFrac>=.45),v1R=qualityTarget((mi.adx[i]>22?1:0)+(strongLong?1:0)+(strongShort?1:0));
-const outDir=boolDir(primary&&((sellSweepAge<=2&&bullFvg)||(strongLong&&dispLong&&bar.low<=mi.e20[i]+.25*atr)),primary&&((buySweepAge<=2&&bearFvg)||(strongShort&&dispShort&&bar.high>=mi.e20[i]-.25*atr))),outR=qualityTarget((bullFvg||bearFvg?1:0)+(dispLong||dispShort?1:0)+(strongLong||strongShort?1:0));
-const sfDir=boolDir(primary&&htfLong&&sellSweepAge<=6&&(dispLong||bullFvg),primary&&htfShort&&buySweepAge<=6&&(dispShort||bearFvg)),sfR=qualityTarget((strongLong||strongShort?1:0)+(bullFvg||bearFvg?1:0)+(rangeAtr>1?1:0));
-const prevDayHigh=d1[di].high,prevDayLow=d1[di].low,spBaseLong=(strongLong&&sellSweepAge<=5&&bullFvg)||(htfLong&&sellSweepAge<=2&&bullFvg)||(primary&&htfLong&&bar.low<=prevDayHigh+.15*atr&&bar.close>prevDayHigh&&bullFvg),spBaseShort=(strongShort&&buySweepAge<=5&&bearFvg)||(htfShort&&buySweepAge<=2&&bearFvg)||(primary&&htfShort&&bar.high>=prevDayLow-.15*atr&&bar.close<prevDayLow&&bearFvg),spBaseR=qualityTarget((primary?1:0)+(strongLong||strongShort?1:0)+(bullFvg||bearFvg?1:0)+(dispLong||dispShort?1:0)),spl=mtfTarget(spBaseR,1,h1Bias,h4Bias,h4Adx),sps=mtfTarget(spBaseR,-1,h1Bias,h4Bias,h4Adx),spDir=boolDir(spBaseLong&&spl.allowed,spBaseShort&&sps.allowed),spR=spDir===1?spl.r:spDir===-1?sps.r:spBaseR;
-let m0591Dir=0,m0591Stop=NaN,m0591R=NaN;const impLong=rangeAtr>=1.20&&bodyFrac>=.55&&closeLoc>=.72&&bar.close>hh20,impShort=rangeAtr>=1.20&&bodyFrac>=.55&&closeLoc<=.28&&bar.close<ll20;
-if(ms===0){if(impLong&&!impShort){ms=1;impulseSeq=seq;impOpen=bar.open;impClose=bar.close;impHigh=bar.high;impLow=bar.low;impAtr=atr;broken=hh20;pullExtreme=bar.low}else if(impShort&&!impLong){ms=-1;impulseSeq=seq;impOpen=bar.open;impClose=bar.close;impHigh=bar.high;impLow=bar.low;impAtr=atr;broken=ll20;pullExtreme=bar.high}}
-else if(seq>impulseSeq){const age=seq-impulseSeq,impBody=Math.abs(impClose-impOpen);if(age>4)ms=0;else if(ms===1){pullExtreme=Math.min(pullExtreme,bar.low);const invalid=bar.low<impLow-.30*impAtr,touched=bar.low<=impClose-.18*impBody&&bar.high>=impClose-.50*impBody,confirm=bar.close>bar.open&&bar.close>broken;if(invalid)ms=0;else if(touched&&confirm){const x=mtfTarget(3,1,h1Bias,h4Bias,h4Adx);if(x.allowed){m0591Dir=1;m0591Stop=pullExtreme-.12*impAtr;m0591R=x.r}ms=0}}else{pullExtreme=Math.max(pullExtreme,bar.high);const invalid=bar.high>impHigh+.30*impAtr,touched=bar.high>=impClose+.18*impBody&&bar.low<=impClose+.50*impBody,confirm=bar.close<bar.open&&bar.close<broken;if(invalid)ms=0;else if(touched&&confirm){const x=mtfTarget(3,-1,h1Bias,h4Bias,h4Adx);if(x.allowed){m0591Dir=-1;m0591Stop=pullExtreme+.12*impAtr;m0591R=x.r}ms=0}}}
-if(m0591Dir===1)last.mL=seq;if(m0591Dir===-1)last.mS=seq;if(v1Dir===1)last.vL=seq;if(v1Dir===-1)last.vS=seq;if(outDir===1)last.oL=seq;if(outDir===-1)last.oS=seq;if(spDir===1)last.pL=seq;if(spDir===-1)last.pS=seq;if(sfDir===1)last.fL=seq;if(sfDir===-1)last.fS=seq;
-const supportLong=supportCount(1),supportShort=supportCount(-1);
-const supportDir=m0591Dir===1?supportLong:m0591Dir===-1?supportShort:0;
-const alignCount=m0591Dir===0?0:(h1Bias===m0591Dir?1:0)+(h4Bias===m0591Dir?1:0);
-const oldRouterSelected0591=strongTrend?(m0591Dir!==0&&m0591Dir===h1Bias):(spDir===0&&m0591Dir!==0&&supportDir>=2);
-const canonicalDir=oldRouterSelected0591&&!primary&&alignCount>=1?m0591Dir:0;
-if(canonicalDir!==0&&!active&&Number.isFinite(m0591Stop)){
-  const entry=bar.close,stop=m0591Stop,risk=Math.abs(entry-stop);
-  if(risk>0)active={dir:canonicalDir,selected:"RR10 Canonical",r:CANONICAL_R,stop,entry,target:entry+canonicalDir*CANONICAL_R*risk,signalTime:closeTime,support:supportDir,alignCount};
-}
-snap={barTime:bar.t,close:bar.close,finalDir:active?.dir??0,selected:active?.selected??"WAIT",selectedR:active?.r??NaN,selectedStop:active?.stop??NaN,entry:active?.entry??NaN,target:active?.target??NaN,signalTime:active?.signalTime??NaN,currentDir:canonicalDir,routerMode:strongTrend?"TREND":"MIXED",h1Bias,h4Bias,h4Adx,supportLong,supportShort,alignCount,techniques:{m0591:{dir:m0591Dir,r:m0591R},v1:{dir:v1Dir,r:v1R},out:{dir:outDir,r:outR},sp:{dir:spDir,r:spR},sf:{dir:sfDir,r:sfR}}};
-}
-if(!snap)throw new Error("Router could not form a valid snapshot from the returned history.");return snap;
-}
-
-function render(){const s=lastSnapshot;byId("bid").textContent=fmt(quote.bid);byId("ask").textContent=fmt(quote.ask);if(!s)return;byId("portfolio").textContent=dirText(s.finalDir);byId("portfolio").className="value "+dirClass(s.finalDir);byId("selected").textContent=s.finalDir?s.selected+" · ACTIVE since "+new Date(s.signalTime).toISOString().replace(".000Z","Z"):"No routed setup";byId("routerMode").textContent=s.routerMode;byId("routerMode").className="value "+(s.routerMode==="TREND"?"trend":"mixed");byId("h1Bias").textContent=biasText(s.h1Bias);byId("h1Bias").className="value "+dirClass(s.h1Bias);byId("h4Bias").textContent=biasText(s.h4Bias);byId("h4Bias").className="value "+dirClass(s.h4Bias);byId("h4Adx").textContent="ADX "+(Number.isFinite(s.h4Adx)?s.h4Adx.toFixed(2):"—");byId("barTime").textContent="M15 closed "+new Date(s.barTime+PERIOD_MS.M15).toISOString().replace(".000Z","Z");byId("supportLong").textContent=s.supportLong;byId("supportShort").textContent=s.supportShort;setState("t0591",s.techniques.m0591.dir);setState("tv1",s.techniques.v1.dir);setState("tout",s.techniques.out.dir);setState("tsp",s.techniques.sp.dir);setState("tsf",s.techniques.sf.dir);byId("r0591").textContent=s.techniques.m0591.dir?s.techniques.m0591.r+"R":"—";byId("rv1").textContent=s.techniques.v1.dir?s.techniques.v1.r+"R":"—";byId("rout").textContent=s.techniques.out.dir?s.techniques.out.r+"R":"—";byId("rsp").textContent=s.techniques.sp.dir?s.techniques.sp.r+"R":"—";byId("rsf").textContent=s.techniques.sf.dir?s.techniques.sf.r+"R":"—";byId("targetR").textContent=s.finalDir?"3R · RR10 canonical":"—";if(s.finalDir&&Number.isFinite(s.entry)&&Number.isFinite(s.selectedStop)&&Number.isFinite(s.target)){byId("entry").textContent=fmt(s.entry);byId("stop").textContent=fmt(s.selectedStop);byId("target").textContent=fmt(s.target)}else{byId("entry").textContent="—";byId("stop").textContent="—";byId("target").textContent="—"}}
-function resampleBars(bars,periodMs){
-  const out=[];let cur=null;
-  for(const b of bars){
-    const t=Math.floor(b.t/periodMs)*periodMs;
-    if(!cur||cur.t!==t){
-      cur={t,open:b.open,high:b.high,low:b.low,close:b.close,volume:b.volume||0};
-      out.push(cur);
-    }else{
-      cur.high=Math.max(cur.high,b.high);
-      cur.low=Math.min(cur.low,b.low);
-      cur.close=b.close;
-      cur.volume+=(b.volume||0);
-    }
+function renderState(){
+  const s=cloudState;if(!s)return;
+  const p=String(s.portfolio||"WAIT").toUpperCase();
+  byId("portfolio").textContent=p;byId("portfolio").className="value "+dirClass(p);
+  byId("routerMode").textContent=s.router_mode||"—";byId("routerMode").className="value "+(s.router_mode==="TREND"?"trend":"mixed");
+  byId("h1Bias").textContent=bias(Number(s.h1_bias));byId("h1Bias").className="value "+dirClass(Number(s.h1_bias));
+  byId("h4Bias").textContent=bias(Number(s.h4_bias));byId("h4Bias").className="value "+dirClass(Number(s.h4_bias));
+  byId("h4Adx").textContent="ADX "+(Number.isFinite(Number(s.h4_adx))?Number(s.h4_adx).toFixed(2):"—");
+  byId("riskPct").textContent=Number(s.risk_pct||5).toFixed(0);byId("targetR").textContent=Number(s.target_r||3).toFixed(0);
+  byId("barTime").textContent=isoShort(s.last_m15_close_utc);byId("generated").textContent=isoShort(s.generated_at_utc);
+  byId("dataAge").textContent=Number.isFinite(Number(s.data_age_minutes))?Number(s.data_age_minutes).toFixed(1)+" min":"—";
+  byId("dataSource").textContent="Decision feed: "+(s.data_source||"—");
+  byId("executionSource").textContent="Quote overlay: "+(s.execution_source||"—");
+  const a=s.active_signal;
+  if(a){
+    byId("entry").textContent=fmt(Number(a.entry));byId("stop").textContent=fmt(Number(a.stop));byId("target").textContent=fmt(Number(a.target));
+    byId("agreement").textContent=String(a.support??"—")+" / "+String(a.align_count??"—");
+    byId("agreement").className="value "+dirClass(p);
+    byId("signalAge").textContent="Active since "+isoShort(a.entry_time_utc);
+  }else{
+    byId("entry").textContent="—";byId("stop").textContent="—";byId("target").textContent="—";byId("agreement").textContent="—";byId("agreement").className="value wait";byId("signalAge").textContent="No active RR10 setup";
   }
-  return out;
+  if(s.stale){
+    setBadge("stateDot","stateStatus","warn","State stale");
+    showNotice("RR10 cloud state is stale. Do not treat WAIT/LONG/SHORT as current until the next successful state update.");
+  }else{
+    setBadge("stateDot","stateStatus","ok","State live");
+    showNotice("");
+  }
+  byId("updated").textContent="Updated "+new Date().toLocaleTimeString();
 }
-const HISTORY_PAGE=500,HISTORY_TARGET=1500,HISTORY_MIN=1200,HISTORY_TIMEOUT_MS=60000,HISTORY_WINDOW_MS=12*86400000;
-let m15History=[];
-function mergeBars(a,b){
-  const m=new Map();
-  for(const x of [...a,...b])if(Number.isFinite(x?.t))m.set(x.t,x);
-  return Array.from(m.values()).sort((x,y)=>x.t-y).slice(-HISTORY_TARGET);
-}
-function cacheKey(){return "casio-rr10-m15-"+String(symbolId??"x")}
-function readHistoryCache(){
+function renderQuote(){byId("bid").textContent=fmt(quote.bid);byId("ask").textContent=fmt(quote.ask)}
+
+async function loadState(){
   try{
-    const raw=localStorage.getItem(cacheKey());
-    if(!raw)return[];
-    const x=JSON.parse(raw);
-    return Array.isArray(x)?x.filter(b=>Number.isFinite(b?.t)&&Number.isFinite(b?.close)).slice(-HISTORY_TARGET):[];
-  }catch{return[]}
-}
-function writeHistoryCache(bars){
-  try{localStorage.setItem(cacheKey(),JSON.stringify(bars.slice(-HISTORY_TARGET)))}catch{}
-}
-async function fetchM15Page(toTimestamp,count=HISTORY_PAGE){
-  const fromTimestamp=Math.max(0,toTimestamp-HISTORY_WINDOW_MS);
-  const payload={symbolId,period:PERIOD.M15,fromTimestamp,toTimestamp,count,type:0};
-  const res=await rpc(getTrendbarList(adapter,payload),"M15 trendbar page",HISTORY_TIMEOUT_MS);
-  const bars=trendbars(res,PERIOD_MS.M15);
-  if(!bars.length)throw new Error("cTrader returned zero closed M15 bars");
-  return bars;
-}
-async function fetchM15History(){
-  if(!m15History.length)m15History=readHistoryCache();
-
-  if(m15History.length>=HISTORY_MIN){
-    byId("sourceText").textContent="Build "+BUILD_ID+" · refreshing recent M15 bars";
-    try{
-      const recent=await fetchM15Page(Date.now(),300);
-      m15History=mergeBars(m15History,recent);
-      writeHistoryCache(m15History);
-      return m15History;
-    }catch(e){
-      const last=m15History[m15History.length-1];
-      const age=last?Date.now()-(last.t+PERIOD_MS.M15):Infinity;
-      if(age<=45*60000){
-        showError("Recent cTrader history refresh delayed; using cached completed bars ("+Math.round(age/60000)+" min old).");
-        return m15History;
-      }
-      throw e;
-    }
-  }
-
-  let bars=m15History,to=bars.length?bars[0].t-1:Date.now(),pageNo=0,lastErr=null;
-  while(bars.length<HISTORY_TARGET&&pageNo<6){
-    pageNo++;
-    byId("sourceText").textContent="Build "+BUILD_ID+" · loading M15 history page "+pageNo+" · "+bars.length+"/"+HISTORY_TARGET;
-    try{
-      const page=await fetchM15Page(to,HISTORY_PAGE);
-      const before=bars.length;
-      bars=mergeBars(bars,page);
-      if(bars.length===before)break;
-      to=page[0].t-1;
-      writeHistoryCache(bars);
-      if(bars.length>=HISTORY_TARGET)break;
-      await sleep(300);
-    }catch(e){
-      lastErr=e;
-      if(pageNo<6){await sleep(1000);continue}
-    }
-  }
-  if(bars.length<HISTORY_MIN){
-    throw new Error("cTrader history incomplete: "+bars.length+" M15 bars loaded; need at least "+HISTORY_MIN+(lastErr?" · "+(lastErr?.message||lastErr):""));
-  }
-  m15History=bars;
-  writeHistoryCache(m15History);
-  return m15History;
-}
-async function refresh(){
-  if(refreshing||!symbolId)return;
-  refreshing=true;byId("refreshBtn").disabled=true;setConnection("busy","Updating");
-  try{
-    const m15=await fetchM15History();
-    const h1=resampleBars(m15,PERIOD_MS.H1);
-    const h4=resampleBars(m15,PERIOD_MS.H4);
-    const d1=resampleBars(m15,PERIOD_MS.D1);
-    lastSnapshot=runRouter(m15,h1,h4,d1);
-    render();
-    byId("sourceText").textContent=symbolName+" · "+m15.length+" cached M15 bars · H1/H4/D1 derived locally";
-    byId("updated").textContent="Updated "+new Date().toLocaleTimeString();
-    showError("");setConnection("ok","Live");
+    const res=await fetch(STATE_URL+"?t="+Date.now(),{cache:"no-store"});
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    const s=await res.json();
+    if(s.engine!=="RR10"||s.schema!=="casio.regime-router.rr10.state.v1")throw new Error("non-canonical state");
+    cloudState=s;renderState();
   }catch(e){
-    console.error(e);
-    showError("Dashboard refresh failed: "+(e?.message||e));
-    setConnection("err","Data error");
-  }finally{
-    refreshing=false;byId("refreshBtn").disabled=false;
+    setBadge("stateDot","stateStatus","err","State error");
+    showNotice("Shared RR10 state unavailable: "+(e?.message||e));
   }
 }
-async function connect(){try{byId("buildId").textContent=BUILD_ID;byId("sourceText").textContent="Build "+BUILD_ID+" · starting cTrader handshake";adapter=createClientAdapter({logger:createLogger(location.href.includes("showLogs"))});setConnection("busy","Connecting");handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();await rpc(registerEvent(adapter),"host registration",10000);handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();setConnection("ok","Connected");byId("sourceText").textContent="Build "+BUILD_ID+" · host connected";await rpc(getAccountInformation(adapter,{}),"account RPC",10000);byId("sourceText").textContent="Build "+BUILD_ID+" · account RPC OK";const requestedSymbol=new URLSearchParams(location.search).get("symbol")||"XAUUSD",requestedNorm=normalizeSymbolName(requestedSymbol);await sleep(250);const list=await getLightSymbolsCompat(),listRes=list.response,symbols=list.symbols;let sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x))===requestedNorm);if(!sym)sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x))==="XAUUSD");if(!sym)sym=symbols.find(x=>normalizeSymbolName(symbolDisplayName(x)).includes("XAUUSD"));if(!sym)sym=symbols.find(x=>symbolSearchText(x).includes("GOLD"));if(!sym){const sample=symbols.slice(0,12).map(symbolDisplayName).filter(Boolean).join(", ");const raw=listRes&&typeof listRes==="object"?Object.keys(listRes).join(", "):typeof listRes;throw new Error("Build "+BUILD_ID+" · symbol mode "+list.mode+" · could not match "+requestedSymbol+" ("+symbols.length+" symbols). payloadType="+(num(field(listRes,"payloadType"))||"?")+" keys="+(raw||"none")+" sample="+(sample||"none")+" raw="+shortJson(listRes));}symbolId=symbolIdValue(sym);symbolName=symbolDisplayName(sym)||requestedSymbol;if(!Number.isFinite(symbolId))throw new Error("Build "+BUILD_ID+" · matched "+symbolName+" but cTrader returned no usable symbol ID. raw="+shortJson(sym));byId("sourceText").textContent="Build "+BUILD_ID+" · "+symbolName+" matched via "+list.mode;const detailRes=await rpc(getSymbol(adapter,{symbolId:[symbolId]}),"symbol details",10000),detail=arrayField(detailRes,"symbol")[0];if(detail)digits=Math.max(0,num(field(detail,"digits"))||2);await rpc(subscribeQuotes(adapter,{symbolId:[symbolId],subscribeToSpotTimestamp:true}),"quote subscription",10000);quoteEvent(adapter).subscribe(qr=>{const q=unwrap(qr);if(num(field(q,"symbolId"))!==symbolId)return;const b=num(field(q,"bid")),a=num(field(q,"ask"));if(Number.isFinite(b))quote.bid=b/100000;if(Number.isFinite(a))quote.ask=a/100000;render()});byId("refreshBtn").disabled=false;byId("refreshBtn").addEventListener("click",refresh);setConnection("ok","Connected");await refresh();setInterval(()=>{const bucket=Math.floor(Date.now()/PERIOD_MS.M15);if(bucket!==lastM15Bucket){lastM15Bucket=bucket;setTimeout(refresh,4000)}},5000);setInterval(refresh,300000)}catch(e){console.error(e);showError("Build "+BUILD_ID+" · "+(e?.message||e));setConnection("err","Data setup error");byId("sourceText").textContent="Build "+BUILD_ID+" · diagnostic failure"}}
-connect();
+
+async function connectQuote(){
+  try{
+    adapter=createClientAdapter({logger:createLogger(location.href.includes("showLogs"))});
+    handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();
+    await rpc(registerEvent(adapter),"host registration",10000);
+    handleConfirmEvent(adapter,{}).pipe(take(1)).subscribe();
+    let first=await rpc(getLightSymbolList(adapter,{includeArchivedSymbols:false}),"symbol list",12000);
+    let symbols=arrayField(first,"symbol");
+    if(!symbols.length){
+      try{symbols=await firstValueFrom(getLightSymbolList(adapter,{includeArchivedSymbols:false},true).pipe(filter(x=>arrayField(x,"symbol").length>0),take(1),timeout({first:12000}))).then(x=>arrayField(x,"symbol"))}catch{}
+    }
+    let sym=symbols.find(x=>norm(sname(x))==="XAUUSD")||symbols.find(x=>norm(sname(x)).includes("XAUUSD"))||symbols.find(x=>sname(x).toUpperCase().includes("GOLD"));
+    if(!sym)throw new Error("XAUUSD not found");
+    symbolId=sid(sym);if(!Number.isFinite(symbolId))throw new Error("no symbol ID");
+    const detail=await rpc(getSymbol(adapter,{symbolId:[symbolId]}),"symbol details",12000);
+    const d=arrayField(detail,"symbol")[0];if(d)digits=Math.max(0,num(field(d,"digits"))||2);
+    await rpc(subscribeQuotes(adapter,{symbolId:[symbolId],subscribeToSpotTimestamp:true}),"quote subscription",12000);
+    quoteEvent(adapter).subscribe(qr=>{if(num(field(qr,"symbolId"))!==symbolId)return;const b=num(field(qr,"bid")),a=num(field(qr,"ask"));if(Number.isFinite(b))quote.bid=b/100000;if(Number.isFinite(a))quote.ask=a/100000;renderQuote()});
+    byId("symbolText").textContent=sname(sym)+" · live cTrader quote";
+    setBadge("quoteDot","quoteStatus","ok","Quote live");
+  }catch(e){
+    byId("symbolText").textContent="Cloud RR10 remains available without quote overlay";
+    setBadge("quoteDot","quoteStatus","warn","Quote optional");
+  }
+}
+
+byId("refreshBtn").addEventListener("click",()=>{loadState();connectQuote()});
+loadState();
+connectQuote();
+setInterval(loadState,30000);
 </script>
 </body>
 </html>
