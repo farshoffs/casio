@@ -5,24 +5,21 @@ on:
     branches: [main]
     paths:
       - 'casio/live_signal.py'
-      - 'casio/v3_m5_engine.py'
-      - 'casio/v3_core.py'
+      - 'casio/regime_router_engine.py'
       - 'casio/sync_market_data.py'
       - 'scripts/fetch_dukascopy.mjs'
       - '.github/workflows/live-signal.yml'
   workflow_dispatch:
   schedule:
-    # Canonical strategy evaluates native M5 entries. The execution policy has a
-    # 6-bar (30-minute) entry cooldown, so the existing 15-minute runner can
-    # replay every closed M5 bar since the prior run without missing two valid
-    # executable entries inside one cadence. GitHub scheduling can still delay.
+    # RR10 evaluates confirmed M15 closes. Run two minutes after each nominal
+    # quarter-hour close so the source feed has time to publish the completed bar.
     - cron: '2,17,32,47 * * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: casio-v3-live-signal
+  group: casio-rr10-live-signal
   cancel-in-progress: true
 
 jobs:
@@ -69,7 +66,7 @@ jobs:
           # The persistent historical file is being progressively backfilled from
           # 2020. Never let a stale checkpoint make the live job download years of
           # data or join a multi-year gap. Until the backfill reaches current data,
-          # live signals use an independent rolling 30-day current window.
+          # live signals use an independent rolling current window.
           repo_is_current = pd.notna(latest) and latest >= now - pd.Timedelta(days=7)
           if repo_is_current:
               start = latest - pd.Timedelta(days=5)
