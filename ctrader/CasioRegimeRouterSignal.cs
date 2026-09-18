@@ -81,6 +81,15 @@ namespace cAlgo.Robots
 
         protected override void OnStart()
         {
+            Print("CASIO RR10 runtime environment: {0}", Application.EnvironmentType);
+            if (Application.EnvironmentType == EnvironmentType.Cloud && EmailEnabled)
+            {
+                Print("CASIO RR10 EMAIL UNAVAILABLE: this instance is running in cTrader Cloud.");
+                Print("cTrader Cloud does not support Notifications.SendEmail(). Start this cBot LOCALLY on cTrader Desktop/Mac for SMTP email.");
+                Stop();
+                return;
+            }
+
             if (!SymbolName.ToUpperInvariant().Contains("XAUUSD"))
             {
                 Print("CASIO Regime Router must run on XAUUSD. Current symbol: {0}", SymbolName);
@@ -339,7 +348,7 @@ namespace cAlgo.Robots
             try
             {
                 Notifications.SendEmail(SenderEmail.Trim(), RecipientEmail.Trim(), subject, body);
-                Print("CASIO RR10 email request accepted ({0}): {1}", context, subject);
+                Print("CASIO RR10 SendEmail() invoked locally ({0}): {1}", context, subject);
                 return true;
             }
             catch (Exception ex)
