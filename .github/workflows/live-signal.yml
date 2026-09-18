@@ -1,28 +1,25 @@
-name: CASIO v3 Live Signal Email
+name: CASIO RR10 Regime Router Email
 
 on:
   push:
-    branches: [main]
+    branches: [feature/regime-router-dashboard-research]
     paths:
       - 'casio/live_signal.py'
-      - 'casio/v3_m5_engine.py'
-      - 'casio/v3_core.py'
+      - 'casio/regime_router_engine.py'
       - 'casio/sync_market_data.py'
       - 'scripts/fetch_dukascopy.mjs'
       - '.github/workflows/live-signal.yml'
   workflow_dispatch:
   schedule:
-    # Canonical strategy evaluates native M5 entries. The execution policy has a
-    # 6-bar (30-minute) entry cooldown, so the existing 15-minute runner can
-    # replay every closed M5 bar since the prior run without missing two valid
-    # executable entries inside one cadence. GitHub scheduling can still delay.
+    # RR10 evaluates confirmed M15 closes. Run two minutes after each nominal
+    # quarter-hour close so the source feed has time to publish the completed bar.
     - cron: '2,17,32,47 * * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: casio-v3-live-signal
+  group: casio-rr10-live-signal
   cancel-in-progress: true
 
 jobs:
@@ -31,6 +28,7 @@ jobs:
     timeout-minutes: 12
     env:
       CASIO_GAS_WEBHOOK_URL: ${{ secrets.CASIO_GAS_WEBHOOK_URL }}
+      CASIO_GAS_RELAY_SECRET: ${{ secrets.CASIO_GAS_RELAY_SECRET }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,12 +67,12 @@ jobs:
           # The persistent historical file is being progressively backfilled from
           # 2020. Never let a stale checkpoint make the live job download years of
           # data or join a multi-year gap. Until the backfill reaches current data,
-          # live signals use an independent rolling 30-day current window.
+          # live signals use an independent rolling current window.
           repo_is_current = pd.notna(latest) and latest >= now - pd.Timedelta(days=7)
           if repo_is_current:
               start = latest - pd.Timedelta(days=5)
           else:
-              start = now - pd.Timedelta(days=30)
+              start = now - pd.Timedelta(days=14)
 
           print(f'start={start.isoformat()}')
           print(f'use_repo_data={str(bool(repo_is_current)).lower()}')
@@ -86,7 +84,9 @@ jobs:
           node scripts/fetch_dukascopy.mjs \
             --from '${{ steps.window.outputs.start }}' \
             --output tmp/latest_xauusd_m5.csv \
-            --price-type bid
+            --price-type bid \
+            --batch-size 1 \
+            --batch-pause-ms 1500
 
       - name: Build current live dataset
         shell: bash
@@ -104,24 +104,24 @@ jobs:
               --output tmp/live_xauusd_m5.csv
           fi
 
-      - name: Evaluate latest canonical CASIO v3 M5 entry
+      - name: Evaluate latest canonical RR10 M15 entry
         run: |
           python -m casio.live_signal \
             --data tmp/live_xauusd_m5.csv \
             --output tmp/casio_live_signal.json \
-            --max-age-minutes 35
+            --max-age-minutes 12
 
       - name: Send email through Google Apps Script
         shell: bash
         run: |
           if [ ! -f tmp/casio_live_signal.json ]; then
-            echo '## CASIO v3 canonical live signal' >> "$GITHUB_STEP_SUMMARY"
-            echo 'No fresh executable LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
+            echo '## CASIO RR10 canonical regime-router signal' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No fresh RR10 LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
             echo "Persistent data current: ${{ steps.window.outputs.use_repo_data }}" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          echo '## CASIO v3 canonical live signal' >> "$GITHUB_STEP_SUMMARY"
+          echo '## CASIO RR10 canonical regime-router signal' >> "$GITHUB_STEP_SUMMARY"
           cat tmp/casio_live_signal.json >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
 
@@ -130,8 +130,19 @@ jobs:
             exit 0
           fi
 
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          src = Path("tmp/casio_live_signal.json")
+          payload = json.loads(src.read_text(encoding="utf-8"))
+          if payload.get("engine") != "RR10" or payload.get("schema") != "casio.regime-router.rr10":
+              raise SystemExit("Refusing to email a non-RR10 payload")
+          payload["relay_secret"] = os.environ.get("CASIO_GAS_RELAY_SECRET", "")
+          Path("tmp/casio_live_signal_post.json").write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+          PY
+
           RESPONSE=$(curl -sS -L --retry 3 --retry-delay 2 \
             -H 'Content-Type: application/json' \
-            --data-binary @tmp/casio_live_signal.json \
+            --data-binary @tmp/casio_live_signal_post.json \
             "$CASIO_GAS_WEBHOOK_URL")
           echo "Apps Script response: $RESPONSE" >> "$GITHUB_STEP_SUMMARY"
