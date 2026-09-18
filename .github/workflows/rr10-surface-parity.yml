@@ -1,0 +1,97 @@
+name: CASIO RR10 Surface Parity
+
+on:
+  push:
+    branches: [feature/regime-router-dashboard-research]
+    paths:
+      - 'casio/regime_router_engine.py'
+      - 'casio/live_signal.py'
+      - 'casio/rr10_integrity_backtest.py'
+      - 'pine/CASIO_REGIME_ROUTER_RR10.pine'
+      - 'tradingview/casio_regime_router_dashboard_v1.pine'
+      - 'ctrader/CasioRegimeRouterSignal.cs'
+      - 'ctrader-web-plugin/regime-router-dashboard/index.html'
+      - 'integrations/apps-script-regime-signal/Code.gs'
+      - 'integrations/vercel-regime-signal/api/signal.js'
+      - '.github/workflows/live-signal.yml'
+      - '.github/workflows/rr10-fxpro-integrity.yml'
+      - '.github/workflows/rr10-surface-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/regime-router-dashboard-research
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python syntax
+        run: |
+          python -m py_compile \
+            casio/regime_router_engine.py \
+            casio/live_signal.py \
+            casio/rr10_integrity_backtest.py
+
+      - name: Relay JavaScript syntax
+        run: |
+          node --check integrations/vercel-regime-signal/api/signal.js
+          cp integrations/apps-script-regime-signal/Code.gs /tmp/Code.js
+          node --check /tmp/Code.js
+
+      - name: Assert one canonical RR10 ruleset
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          engine = read('casio/regime_router_engine.py')
+          live = read('casio/live_signal.py')
+          pine = read('pine/CASIO_REGIME_ROUTER_RR10.pine')
+          legacy_pine = read('tradingview/casio_regime_router_dashboard_v1.pine')
+          ctrader = read('ctrader-web-plugin/regime-router-dashboard/index.html')
+          cbot = read('ctrader/CasioRegimeRouterSignal.cs')
+          gas = read('integrations/apps-script-regime-signal/Code.gs')
+          vercel = read('integrations/vercel-regime-signal/api/signal.js')
+          integrity = read('casio/rr10_integrity_backtest.py')
+
+          checks = {
+              'python engine id': 'ENGINE_ID = "RR10"' in engine,
+              'python fixed 3R default': 'target_r: float = 3.0' in engine,
+              'python support 2': 'support_bars: int = 2' in engine,
+              'python canonical gate': 'old_router_selected_0591' in engine and 'and not primary' in engine and 'align_count >= 1' in engine,
+              'live email imports canonical engine': 'from .regime_router_engine import latest_signal' in live,
+              'two TradingView paths identical': pine == legacy_pine,
+              'Pine fixed 3R': 'const float TARGET_R = 3.0' in pine,
+              'Pine fixed 5% risk': 'const float RISK_FRACTION = 0.05' in pine,
+              'Pine 0.005% commission': 'commission_value=0.005' in pine,
+              'Pine MYR conversion': 'strategy.convert_to_symbol' in pine,
+              'Pine canonical gate': 'oldRouterSelected0591' in pine and 'canonicalDir' in pine,
+              'Pine RR10 schema': 'casio.regime-router.rr10' in pine,
+              'cTrader dashboard RR10': 'const BUILD_ID="RR10"' in ctrader and 'CANONICAL_R=3' in ctrader,
+              'cTrader dashboard canonical gate': 'oldRouterSelected0591' in ctrader and 'canonicalDir' in ctrader,
+              'cBot fixed 3R': 'private const double CanonicalTargetR = 3.0;' in cbot,
+              'cBot fixed 5% risk': 'private const double RiskPercent = 5.0;' in cbot,
+              'cBot canonical gate': 'oldRouterSelected0591' in cbot and 'canonicalDir' in cbot,
+              'cBot no V1 live selection': 'Select(wanted, "V1 Legacy M15"' not in cbot,
+              'cBot no structural live selection': 'Select(spDir, "Structural Portfolio MTF"' not in cbot,
+              'Apps Script RR10 only': "const CASIO_ENGINE = 'RR10';" in gas and 'non_canonical_engine' in gas,
+              'Vercel RR10 only': "const ENGINE = 'RR10';" in vercel and 'non_canonical_engine' in vercel,
+              'integrity RR 2-5': 'DEFAULT_RRS = (2.0, 3.0, 4.0, 5.0)' in integrity,
+              'integrity RM100': 'START_EQUITY_RM = 100.0' in integrity,
+              'integrity 5%': 'RISK_FRACTION = 0.05' in integrity,
+          }
+          failed = [name for name, ok in checks.items() if not ok]
+          if failed:
+              raise SystemExit('RR10 parity failure: ' + ', '.join(failed))
+          print('RR10 parity guard passed: all live surfaces are canonical.')
+          PY
