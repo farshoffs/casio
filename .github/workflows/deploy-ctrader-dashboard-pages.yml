@@ -7,13 +7,6 @@ on:
     paths:
       - ctrader-web-plugin/regime-router-dashboard/index.html
       - .github/workflows/deploy-ctrader-dashboard-pages.yml
-  workflow_run:
-    workflows:
-      - Check cTrader web plugin
-    types:
-      - completed
-    branches:
-      - feature/regime-router-dashboard-research
   workflow_dispatch:
 
 permissions:
@@ -22,20 +15,17 @@ permissions:
   id-token: write
 
 concurrency:
-  group: ctrader-dashboard-pages
+  group: ctrader-dashboard-pages-v2
   cancel-in-progress: true
 
 jobs:
   build-and-deploy:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -52,7 +42,7 @@ jobs:
 
       - name: Build self-contained RR10 dashboard
         env:
-          BUILD_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          BUILD_SHA: ${{ github.sha }}
         run: |
           python - <<'PY'
           from pathlib import Path
