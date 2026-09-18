@@ -50,7 +50,9 @@ jobs:
                   raise SystemExit(f"expected import missing: {old}")
               js = js.replace(old, new)
 
-          Path("/tmp/casio-app.mjs").write_text(js, encoding="utf-8")
+          build_dir = Path("ctrader-web-plugin/regime-router-dashboard/.build")
+          build_dir.mkdir(parents=True, exist_ok=True)
+          (build_dir / "casio-app.mjs").write_text(js, encoding="utf-8")
           dist = Path("ctrader-web-plugin/regime-router-dashboard/dist")
           dist.mkdir(parents=True, exist_ok=True)
           html_dist = html[:m.start()] + '<script src="./bundle.js"></script>' + html[m.end():]
@@ -72,6 +74,7 @@ jobs:
         if: steps.bundle.outputs.exit_code != '0'
         run: |
           cp /tmp/esbuild.log ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
+          rm -rf ctrader-web-plugin/regime-router-dashboard/.build
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
@@ -103,6 +106,7 @@ jobs:
         if: steps.bundle.outputs.exit_code == '0'
         run: |
           rm -f ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
+          rm -rf ctrader-web-plugin/regime-router-dashboard/.build
           if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard/dist ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt; then
             echo "Bundled output unchanged."
             exit 0
