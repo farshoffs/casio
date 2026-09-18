@@ -20,11 +20,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install pinned browser dependencies
         run: |
-          npm install --no-save             esbuild@0.25.9             @spotware-web-team/sdk@0.0.20             @spotware-web-team/sdk-external-api@0.0.5             rxjs@7.8.2             @veksa/logger@1.0.6
+          npm install --no-save             esbuild@0.25.9             @spotware-web-team/sdk@0.0.20             @spotware-web-team/sdk-external-api@0.0.6             rxjs@7.8.2             @veksa/logger@1.0.14
 
       - name: Extract and retarget module imports
         run: |
@@ -57,6 +57,7 @@ jobs:
           dist.mkdir(parents=True, exist_ok=True)
           import os
           build_id = os.environ.get("GITHUB_SHA", "dev")[:12]
+          html = html.replace("__BUILD_ID__", build_id)
           html_dist = html[:m.start()] + f'<script src="./bundle.js?v={build_id}"></script>' + html[m.end():]
           (dist / "index.html").write_text(html_dist, encoding="utf-8")
           PY
@@ -109,7 +110,7 @@ jobs:
         run: |
           rm -f ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt
           rm -rf ctrader-web-plugin/regime-router-dashboard/.build
-          if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard/dist ctrader-web-plugin/regime-router-dashboard/BUILD_ERROR.txt; then
+          if git diff --quiet -- ctrader-web-plugin/regime-router-dashboard; then
             echo "Bundled output unchanged."
             exit 0
           fi
