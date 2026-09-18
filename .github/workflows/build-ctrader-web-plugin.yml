@@ -41,7 +41,7 @@ jobs:
           js = m.group(1)
           replacements = {
               'https://esm.sh/@spotware-web-team/sdk-external-api@0.0.5': '@spotware-web-team/sdk-external-api',
-              'https://esm.sh/@spotware-web-team/sdk@0.0.9': '@spotware-web-team/sdk',
+              'https://esm.sh/@spotware-web-team/sdk@0.0.20': '@spotware-web-team/sdk',
               'https://esm.sh/rxjs@7.8.2': 'rxjs',
               'https://esm.sh/@veksa/logger@1.0.6': '@veksa/logger',
           }
@@ -58,7 +58,7 @@ jobs:
           import os
           build_id = os.environ.get("GITHUB_SHA", "dev")[:12]
           html = html.replace("__BUILD_ID__", build_id)
-          html_dist = html[:m.start()] + '<script src="./bundle-RR5A.js"></script>' + html[m.end():]
+          html_dist = html[:m.start()] + '<script src="./bundle-RR10.js"></script>' + html[m.end():]
           (dist / "index.html").write_text(html_dist, encoding="utf-8")
           PY
 
@@ -67,7 +67,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          npx esbuild ctrader-web-plugin/regime-router-dashboard/.build/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle-RR5A.js             > /tmp/esbuild.log 2>&1
+          npx esbuild ctrader-web-plugin/regime-router-dashboard/.build/casio-app.mjs             --bundle             --format=iife             --platform=browser             --target=es2020             --minify             --outfile=ctrader-web-plugin/regime-router-dashboard/dist/bundle-RR10.js             > /tmp/esbuild.log 2>&1
           CODE=$?
           cat /tmp/esbuild.log
           echo "exit_code=$CODE" >> "$GITHUB_OUTPUT"
@@ -95,11 +95,11 @@ jobs:
           from pathlib import Path
           dist = Path("ctrader-web-plugin/regime-router-dashboard/dist")
           html = (dist / "index.html").read_text(encoding="utf-8")
-          js = (dist / "bundle-RR5A.js").read_text(encoding="utf-8")
+          js = (dist / "bundle-RR10.js").read_text(encoding="utf-8")
           if "esm.sh" in html or "esm.sh" in js:
               raise SystemExit("external esm.sh dependency remains in bundle")
-          if "bundle-RR5A.js" not in html:
-              raise SystemExit("bundle-RR5A.js is not referenced by dist/index.html")
+          if "bundle-RR10.js" not in html:
+              raise SystemExit("bundle-RR10.js is not referenced by dist/index.html")
           if len(js) < 10000:
               raise SystemExit("bundle unexpectedly small")
           print(f"Bundled dashboard: {len(js):,} bytes")
