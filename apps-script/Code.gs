@@ -75,7 +75,8 @@ function doGet(e) {
   return jsonResponse_({
     ok: true,
     service: 'casio-email-marketdata',
-    schemas: CASIO_SCHEMAS.concat([CASIO_MARKET_SCHEMA]),
+    schemas: [RR10_STATE_SCHEMA, CASIO_MARKET_SCHEMA],
+    liveOwner: 'TradingView FxPro RR10',
     recipient: props.getProperty('CASIO_EMAIL') || DEFAULT_EMAIL,
     marketSheetConfigured: Boolean(props.getProperty(MARKET_SHEET_ID_PROPERTY))
   });
@@ -111,27 +112,12 @@ function doPost(e) {
       });
     }
 
-    validateSignal_(payload);
-
-    const dedupeKey = ['casio', payload.bar_time, payload.mode, payload.direction, payload.entry].join(':');
-    const cache = CacheService.getScriptCache();
-    if (cache.get(dedupeKey)) {
-      return jsonResponse_({ ok: true, accepted: true, duplicate: true });
-    }
-    cache.put(dedupeKey, '1', 21600);
-
-    enqueueSignal_(payload);
-    ensureQueueTrigger_();
-
     return jsonResponse_({
-      ok: true,
-      accepted: true,
-      queued: true,
-      duplicate: false,
-      schema: payload.schema,
-      mode: payload.mode,
-      direction: payload.direction,
-      bar_time: payload.bar_time
+      ok: false,
+      accepted: false,
+      error: 'legacy_live_signal_retired',
+      live_owner: 'TradingView FxPro RR10',
+      required_schema: RR10_STATE_SCHEMA
     });
   } catch (err) {
     console.error(err && err.stack ? err.stack : err);
