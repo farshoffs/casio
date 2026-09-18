@@ -1,7 +1,7 @@
 //@version=6
 strategy("CASIO Regime Router RR10 — Canonical", overlay=true, max_labels_count=500, initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent, commission_value=0.005, process_orders_on_close=true)
 
-// RR10 is the single canonical live ruleset and TradingView FxPro is the single live state owner.
+// RR10 is the single canonical live ruleset.
 // Chart timeframe: 15 minutes. All higher-timeframe context uses completed bars only.
 // Fixed target: 3R. Entry/SL/TP stay frozen until SL or TP.
 
@@ -9,6 +9,8 @@ const float TARGET_R = 3.0
 const int SUPPORT_BARS = 2
 const float TREND_ADX = 18.0
 const float RISK_FRACTION = 0.05
+string webhookSecret = input.string("", "Webhook secret")
+bool showDashboard = input.bool(true, "Show RR10 dashboard", group="Dashboard")
 
 f_bias(float c, float e20, float e50) =>
     e20 > e50 and c > e20 ? 1 : e20 < e50 and c < e20 ? -1 : 0
@@ -30,7 +32,6 @@ f_mtf_target(int base, int dir, int h1b, int h4b, float h4adx) =>
     [not blocked, r]
 
 bool isM15 = timeframe.isminutes and timeframe.multiplier == 15
-bool isFxProXau = syminfo.prefix == "FXPRO" and syminfo.ticker == "XAUUSD"
 int utcMinute = hour(time, "UTC") * 60 + minute(time, "UTC")
 bool primary = (utcMinute >= 420 and utcMinute < 720) or (utcMinute >= 750 and utcMinute < 1020)
 
@@ -222,9 +223,6 @@ var float activeEntry = na
 var float activeStop = na
 var float activeTarget = na
 var int activeSignalTime = na
-var int activeSupport = na
-var int activeAlign = na
-var string activeRouterMode = ""
 
 bool closedNow = false
 string closeReason = ""
@@ -240,12 +238,9 @@ if barstate.isconfirmed and activeDir != 0
         activeStop := na
         activeTarget := na
         activeSignalTime := na
-        activeSupport := na
-        activeAlign := na
-        activeRouterMode := ""
 
 bool newSignal = false
-if barstate.isconfirmed and isM15 and isFxProXau and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
+if barstate.isconfirmed and isM15 and activeDir == 0 and canonicalDir != 0 and not na(m0591Stop)
     float risk = math.abs(close - m0591Stop)
     if risk > 0
         activeDir := canonicalDir
@@ -253,9 +248,6 @@ if barstate.isconfirmed and isM15 and isFxProXau and activeDir == 0 and canonica
         activeStop := m0591Stop
         activeTarget := close + canonicalDir * TARGET_R * risk
         activeSignalTime := time_close
-        activeSupport := supportDir
-        activeAlign := alignCount
-        activeRouterMode := strongTrend ? "TREND" : "MIXED"
         float riskCashAccount = strategy.equity * RISK_FRACTION
         float riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
         float riskPerUnit = risk * syminfo.pointvalue
@@ -270,19 +262,70 @@ plot(activeDir != 0 ? activeEntry : na, "RR10 Entry", color=color.gray, linewidt
 plot(activeDir != 0 ? activeStop : na, "RR10 Stop", color=color.red, linewidth=2, style=plot.style_linebr)
 plot(activeDir != 0 ? activeTarget : na, "RR10 Target", color=color.green, linewidth=2, style=plot.style_linebr)
 
-bgcolor(not isFxProXau ? color.new(color.red, 85) : not isM15 ? color.new(color.orange, 85) : na, title="Wrong feed/timeframe warning")
+bgcolor(not isM15 ? color.new(color.orange, 85) : na, title="Wrong timeframe warning")
 
-f_json_float(float v) =>
-    na(v) ? "null" : str.tostring(v)
+// Lightweight TradingView dashboard. Display-only: it does not alter RR10 decisions.
+f_bias_text(int b) =>
+    b == 1 ? "BULL" : b == -1 ? "BEAR" : "NEUTRAL"
 
-f_json_int(int v) =>
-    na(v) ? "null" : str.tostring(v)
+f_price(float v) =>
+    na(v) ? "—" : str.tostring(v, format.mintick)
 
-if barstate.isconfirmed and isM15 and isFxProXau
-    string portfolio = activeDir == 1 ? "LONG" : activeDir == -1 ? "SHORT" : "WAIT"
-    string transition = newSignal ? "signal" : closedNow ? "exit" : "state"
-    string statePayload = '{"schema":"casio.regime-router.rr10.state.v1","event":"state","transition":"' + transition + '","engine":"RR10","source":"tradingview-fxpro-rr10","feed":"' + syminfo.tickerid + '","symbol":"' + syminfo.ticker + '","timeframe":"15","portfolio":"' + portfolio + '","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","active_router_mode":"' + activeRouterMode + '","entry":' + f_json_float(activeEntry) + ',"stop":' + f_json_float(activeStop) + ',"target":' + f_json_float(activeTarget) + ',"target_r":3,"risk_pct":5,"support":' + f_json_int(activeSupport) + ',"align_count":' + f_json_int(activeAlign) + ',"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + f_json_float(h4Adx) + ',"signal_time":' + f_json_int(activeSignalTime) + ',"bar_time":' + str.tostring(time_close) + ',"generated_at_ms":' + str.tostring(timenow) + ',"close_reason":"' + closeReason + '"}'
-    alert(statePayload, alert.freq_once_per_bar_close)
+f_state_color(int d) =>
+    d == 1 ? color.rgb(38, 208, 124) : d == -1 ? color.rgb(255, 91, 105) : color.rgb(145, 163, 184)
+
+var table rr10Dash = table.new(position.top_right, 2, 11, bgcolor=color.rgb(9, 17, 29), frame_color=color.rgb(38, 58, 87), frame_width=1, border_color=color.rgb(38, 58, 87), border_width=1)
+
+if barstate.islast
+    if showDashboard
+        string dashState = activeDir == 1 ? "LONG" : activeDir == -1 ? "SHORT" : "WAIT"
+        string dashRouter = strongTrend ? "TREND" : "MIXED"
+        string dashGate = primary ? "SESSION BLOCK" : "SESSION OPEN"
+        color stateColor = f_state_color(activeDir)
+        color h1Color = f_state_color(h1Bias)
+        color h4Color = f_state_color(h4Bias)
+        color routerColor = strongTrend ? color.rgb(91, 145, 255) : color.rgb(245, 185, 69)
+        color gateColor = primary ? color.rgb(245, 185, 69) : color.rgb(38, 208, 124)
+
+        table.cell(rr10Dash, 0, 0, "CASIO RR10", text_color=color.white, bgcolor=color.rgb(24, 68, 135), text_size=size.small)
+        table.cell(rr10Dash, 1, 0, "M15 · 3R", text_color=color.white, bgcolor=color.rgb(24, 68, 135), text_size=size.small)
+
+        table.cell(rr10Dash, 0, 1, "PORTFOLIO", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 1, dashState, text_color=stateColor, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 2, "ROUTER", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 2, dashRouter, text_color=routerColor, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 3, "H1 BIAS", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 3, f_bias_text(h1Bias), text_color=h1Color, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 4, "H4 BIAS / ADX", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 4, f_bias_text(h4Bias) + " / " + str.tostring(h4Adx, "#.00"), text_color=h4Color, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 5, "CONFIRM", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 5, str.tostring(supportLong) + "L / " + str.tostring(supportShort) + "S", text_color=color.white, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 6, "GATE", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 6, dashGate, text_color=gateColor, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 7, "ENTRY", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 7, f_price(activeEntry), text_color=color.white, text_size=size.small)
+
+        table.cell(rr10Dash, 0, 8, "STOP", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 8, f_price(activeStop), text_color=color.rgb(255, 91, 105), text_size=size.small)
+
+        table.cell(rr10Dash, 0, 9, "TARGET", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 9, f_price(activeTarget), text_color=color.rgb(38, 208, 124), text_size=size.small)
+
+        table.cell(rr10Dash, 0, 10, "RISK MODEL", text_color=color.rgb(143, 163, 189), text_size=size.small)
+        table.cell(rr10Dash, 1, 10, "5% · 1:3", text_color=color.white, text_size=size.small)
+    else
+        table.clear(rr10Dash)
+
+if newSignal
+    string action = activeDir == 1 ? "LONG" : "SHORT"
+    string payload = '{"schema":"casio.regime-router.rr10","event":"signal","engine":"RR10","secret":"' + webhookSecret + '","source":"tradingview-rr10","symbol":"' + syminfo.ticker + '","timeframe":"15","direction":"' + (activeDir == 1 ? "long" : "short") + '","action":"' + action + '","technique":"RR10 Canonical","router_mode":"' + (strongTrend ? "TREND" : "MIXED") + '","entry":' + str.tostring(activeEntry) + ',"entry_estimate":' + str.tostring(activeEntry) + ',"stop":' + str.tostring(activeStop) + ',"target":' + str.tostring(activeTarget) + ',"target_estimate":' + str.tostring(activeTarget) + ',"rr":3,"target_r":3,"risk_pct":5,"h1_bias":' + str.tostring(h1Bias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"h4_adx":' + str.tostring(h4Adx) + ',"signal_time":' + str.tostring(activeSignalTime) + ',"bar_time":' + str.tostring(activeSignalTime) + '}'
+    alert(payload, alert.freq_once_per_bar_close)
 
 alertcondition(newSignal and activeDir == 1, "RR10 LONG", "RR10 canonical LONG")
 alertcondition(newSignal and activeDir == -1, "RR10 SHORT", "RR10 canonical SHORT")
