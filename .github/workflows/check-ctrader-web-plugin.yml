@@ -31,22 +31,22 @@ jobs:
           js = m.group(1)
           Path("/tmp/casio-dashboard.mjs").write_text(js, encoding="utf-8")
           required = [
-              "RR10 Canonical",
-              "CANONICAL_R=3",
-              "oldRouterSelected0591",
-              "trendAdxThreshold=18",
-              "supportBars=2",
-              "getTrendbarList",
-              "fetchM15History",
-              "resampleBars",
+              "RR10-XD1",
+              "rr10-live-state/rr10-state.json",
+              "casio.regime-router.rr10.state.v1",
+              "getLightSymbolList",
+              "getSymbol",
               "subscribeQuotes",
+              "quoteEvent",
+              "One RR10 decision state shared by every device",
           ]
           for token in required:
               if token not in js:
-                  raise SystemExit(f"missing required dashboard token: {token}")
+                  raise SystemExit(f"missing required cross-device token: {token}")
           forbidden = [
               "createNewOrder", "modifyOrder", "closePosition", "cancelOrder",
-              "getServerData", "getTrendbarListCompat"
+              "getServerData", "getTrendbarList", "getTrendbarListCompat",
+              "oldRouterSelected0591", "fetchM15History", "resampleBars"
           ]
           for token in forbidden:
               if token in js:
