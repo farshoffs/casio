@@ -1,10 +1,12 @@
-name: CASIO Regime Signal Bridge Check
+name: CASIO Retired Relay Guard
 
 on:
   push:
     branches: [feature/regime-router-dashboard-research]
     paths:
       - 'integrations/vercel-regime-signal/**'
+      - 'integrations/apps-script-regime-signal/Code.gs'
+      - 'apps-script/Code.gs'
       - '.github/workflows/regime-signal-bridge-check.yml'
   workflow_dispatch:
 
@@ -18,12 +20,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Syntax check Vercel handler
-        run: node --check integrations/vercel-regime-signal/api/signal.js
-      - name: Run webhook smoke test
-        run: node integrations/vercel-regime-signal/test.mjs
-      - name: Audit Apps Script receiver entry points
+      - name: Syntax checks
         run: |
-          grep -F 'function doPost(e)' integrations/apps-script-regime-signal/Code.gs
-          grep -F 'function doGet()' integrations/apps-script-regime-signal/Code.gs
-          grep -F "const CASIO_SHEET_NAME = 'Signals';" integrations/apps-script-regime-signal/Code.gs
+          node --check integrations/vercel-regime-signal/api/signal.js
+          cp integrations/apps-script-regime-signal/Code.gs /tmp/Code.js
+          node --check /tmp/Code.js
+      - name: Assert one live relay path
+        run: |
+          grep -F "retired: true" integrations/vercel-regime-signal/api/signal.js
+          grep -F "status(410)" integrations/vercel-regime-signal/api/signal.js
+          grep -F "const RR10_STATE_SCHEMA = 'casio.regime-router.rr10.state.v1';" integrations/apps-script-regime-signal/Code.gs
+          grep -F "function handleRr10State_(p)" integrations/apps-script-regime-signal/Code.gs
+          grep -F "function rr10StateResponse_(callback)" integrations/apps-script-regime-signal/Code.gs
+          grep -F "legacy_live_signal_retired" integrations/apps-script-regime-signal/Code.gs
+          cmp -s apps-script/Code.gs integrations/apps-script-regime-signal/Code.gs
+          echo "Only TradingView FxPro RR10 -> Apps Script remains a live signal relay."
