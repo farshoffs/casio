@@ -1,0 +1,52 @@
+name: Compare cTrader SDK transport versions
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/regime-router-dashboard-research
+    paths:
+      - .github/workflows/compare-ctrader-sdk-versions.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install exact SDK pairs
+        run: |
+          npm install --no-save             sdk9@npm:@spotware-web-team/sdk@0.0.9             sdk20@npm:@spotware-web-team/sdk@0.0.20             ext5@npm:@spotware-web-team/sdk-external-api@0.0.5             ext6@npm:@spotware-web-team/sdk-external-api@0.0.6             rxjs@7.8.2
+      - name: Compare exported functions and request flow
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          function pkg(name){return JSON.parse(fs.readFileSync('node_modules/'+name+'/package.json','utf8'))}
+          console.log('VERSIONS', {
+            sdk9:pkg('sdk9').version,
+            sdk20:pkg('sdk20').version,
+            ext5:pkg('ext5').version,
+            ext6:pkg('ext6').version,
+          });
+          for (const [label,path] of [
+            ['sdk9','node_modules/sdk9/dist/index.mjs'],
+            ['sdk20','node_modules/sdk20/dist/index.mjs'],
+            ['ext5','node_modules/ext5/dist/index.mjs'],
+            ['ext6','node_modules/ext6/dist/index.mjs'],
+          ]) {
+            const s=fs.readFileSync(path,'utf8');
+            console.log('\n==== '+label+' ====');
+            for (const needle of ['var getServerData','var getLightSymbolList','var getTrendbarList','var sendRequest','var createClientAdapter']) {
+              const i=s.indexOf(needle);
+              console.log('\n-- '+needle+' @ '+i+' --');
+              if(i>=0) console.log(s.slice(i, i+2400));
+            }
+            const ex = s.includes('getTrendbarList');
+            console.log('HAS getTrendbarList', ex);
+          }
+          NODE
