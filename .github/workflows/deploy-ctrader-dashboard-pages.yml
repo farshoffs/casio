@@ -40,7 +40,7 @@ jobs:
             rxjs@7.8.2 \
             @veksa/logger@1.0.6
 
-      - name: Build self-contained RR9 dashboard
+      - name: Build self-contained RR10 dashboard
         env:
           BUILD_SHA: ${{ github.sha }}
         run: |
@@ -67,11 +67,13 @@ jobs:
               js = js.replace(old, new)
 
           if "getTrendbarList," in js or "getTrendbarList }" in js:
-              raise SystemExit("RR9 imported the unsupported getTrendbarList API")
+              raise SystemExit("RR10 imported the unsupported getTrendbarList API")
           if "getServerData" not in js or "getTrendbarListCompat" not in js:
-              raise SystemExit("RR9 trendbar compatibility path is missing")
+              raise SystemExit("RR10 trendbar compatibility path is missing")
           if 'const PERIOD={M15:11,H1:15,H4:18,D1:22};' not in js:
-              raise SystemExit("RR9 must use plugin ProtoTimeframe values for M15/H1/H4/D1")
+              raise SystemExit("RR10 must use plugin ProtoTimeframe values for M15/H1/H4/D1")
+          if 'CANONICAL_R=3' not in js or 'oldRouterSelected0591' not in js:
+              raise SystemExit("RR10 canonical routing gate is missing")
 
           build = Path(".pages-build")
           public = Path("public")
@@ -94,9 +96,9 @@ jobs:
             --minify \
             --outfile=public/bundle.js
 
-          mkdir -p public/rr9
-          cp public/index.html public/rr9/index.html
-          cp public/bundle.js public/rr9/bundle.js
+          mkdir -p public/rr10
+          cp public/index.html public/rr10/index.html
+          cp public/bundle.js public/rr10/bundle.js
 
       - name: Guard deployed build
         run: |
@@ -105,12 +107,12 @@ jobs:
 
           html = Path("public/index.html").read_text(encoding="utf-8")
           js = Path("public/bundle.js").read_text(encoding="utf-8")
-          rr9_html = Path("public/rr9/index.html").read_text(encoding="utf-8")
-          rr9_js = Path("public/rr9/bundle.js").read_text(encoding="utf-8")
+          rr10_html = Path("public/rr10/index.html").read_text(encoding="utf-8")
+          rr10_js = Path("public/rr10/bundle.js").read_text(encoding="utf-8")
 
           checks = {
-              "versioned RR9 route": "RR9" in rr9_html and "RR9" in rr9_js,
-              "RR9 visible": "RR9" in html and "RR9" in js,
+              "versioned RR10 route": "RR10" in rr10_html and "RR10" in rr10_js,
+              "RR10 visible": "RR10" in html and "RR10" in js,
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
               "official symbol API": "Could not match" in js or "could not match" in js,
@@ -119,7 +121,7 @@ jobs:
           failed = [name for name, ok in checks.items() if not ok]
           if failed:
               raise SystemExit("Pages build guard failed: " + ", ".join(failed))
-          print("RR9 Pages guard passed")
+          print("RR10 Pages guard passed")
           PY
 
       - name: Configure Pages

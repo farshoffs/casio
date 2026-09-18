@@ -1,4 +1,4 @@
-name: CASIO v3 Live Signal Email
+name: CASIO RR10 Regime Router Email
 
 on:
   push:
@@ -106,24 +106,24 @@ jobs:
               --output tmp/live_xauusd_m5.csv
           fi
 
-      - name: Evaluate latest canonical CASIO v3 M5 entry
+      - name: Evaluate latest canonical RR10 M15 entry
         run: |
           python -m casio.live_signal \
             --data tmp/live_xauusd_m5.csv \
             --output tmp/casio_live_signal.json \
-            --max-age-minutes 35
+            --max-age-minutes 12
 
       - name: Send email through Google Apps Script
         shell: bash
         run: |
           if [ ! -f tmp/casio_live_signal.json ]; then
-            echo '## CASIO v3 canonical live signal' >> "$GITHUB_STEP_SUMMARY"
-            echo 'No fresh executable LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
+            echo '## CASIO RR10 canonical regime-router signal' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No fresh RR10 LONG/SHORT setup. No email sent.' >> "$GITHUB_STEP_SUMMARY"
             echo "Persistent data current: ${{ steps.window.outputs.use_repo_data }}" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          echo '## CASIO v3 canonical live signal' >> "$GITHUB_STEP_SUMMARY"
+          echo '## CASIO RR10 canonical regime-router signal' >> "$GITHUB_STEP_SUMMARY"
           cat tmp/casio_live_signal.json >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
 
