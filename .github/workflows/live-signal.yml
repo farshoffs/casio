@@ -74,7 +74,7 @@ jobs:
           if repo_is_current:
               start = latest - pd.Timedelta(days=5)
           else:
-              start = now - pd.Timedelta(days=30)
+              start = now - pd.Timedelta(days=14)
 
           print(f'start={start.isoformat()}')
           print(f'use_repo_data={str(bool(repo_is_current)).lower()}')
@@ -86,7 +86,9 @@ jobs:
           node scripts/fetch_dukascopy.mjs \
             --from '${{ steps.window.outputs.start }}' \
             --output tmp/latest_xauusd_m5.csv \
-            --price-type bid
+            --price-type bid \
+            --batch-size 1 \
+            --batch-pause-ms 1500
 
       - name: Build current live dataset
         shell: bash

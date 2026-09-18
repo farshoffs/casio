@@ -40,7 +40,7 @@ jobs:
             rxjs@7.8.2 \
             @veksa/logger@1.0.6
 
-      - name: Build self-contained RR8 dashboard
+      - name: Build self-contained RR9 dashboard
         env:
           BUILD_SHA: ${{ github.sha }}
         run: |
@@ -67,11 +67,11 @@ jobs:
               js = js.replace(old, new)
 
           if "getTrendbarList," in js or "getTrendbarList }" in js:
-              raise SystemExit("RR8 imported the unsupported getTrendbarList API")
+              raise SystemExit("RR9 imported the unsupported getTrendbarList API")
           if "getServerData" not in js or "getTrendbarListCompat" not in js:
-              raise SystemExit("RR8 trendbar compatibility path is missing")
+              raise SystemExit("RR9 trendbar compatibility path is missing")
           if 'const PERIOD={M15:11,H1:15,H4:18,D1:22};' not in js:
-              raise SystemExit("RR8 must use plugin ProtoTimeframe values for M15/H1/H4/D1")
+              raise SystemExit("RR9 must use plugin ProtoTimeframe values for M15/H1/H4/D1")
 
           build = Path(".pages-build")
           public = Path("public")
@@ -94,9 +94,9 @@ jobs:
             --minify \
             --outfile=public/bundle.js
 
-          mkdir -p public/rr8
-          cp public/index.html public/rr8/index.html
-          cp public/bundle.js public/rr8/bundle.js
+          mkdir -p public/rr9
+          cp public/index.html public/rr9/index.html
+          cp public/bundle.js public/rr9/bundle.js
 
       - name: Guard deployed build
         run: |
@@ -105,12 +105,12 @@ jobs:
 
           html = Path("public/index.html").read_text(encoding="utf-8")
           js = Path("public/bundle.js").read_text(encoding="utf-8")
-          rr8_html = Path("public/rr8/index.html").read_text(encoding="utf-8")
-          rr8_js = Path("public/rr8/bundle.js").read_text(encoding="utf-8")
+          rr9_html = Path("public/rr9/index.html").read_text(encoding="utf-8")
+          rr9_js = Path("public/rr9/bundle.js").read_text(encoding="utf-8")
 
           checks = {
-              "versioned RR8 route": "RR8" in rr8_html and "RR8" in rr8_js,
-              "RR8 visible": "RR8" in html and "RR8" in js,
+              "versioned RR9 route": "RR9" in rr9_html and "RR9" in rr9_js,
+              "RR9 visible": "RR9" in html and "RR9" in js,
               "cache-busted bundle": "bundle.js?v=" in html,
               "self-contained": "esm.sh" not in html and "esm.sh" not in js,
               "official symbol API": "Could not match" in js or "could not match" in js,
@@ -119,7 +119,7 @@ jobs:
           failed = [name for name, ok in checks.items() if not ok]
           if failed:
               raise SystemExit("Pages build guard failed: " + ", ".join(failed))
-          print("RR8 Pages guard passed")
+          print("RR9 Pages guard passed")
           PY
 
       - name: Configure Pages
