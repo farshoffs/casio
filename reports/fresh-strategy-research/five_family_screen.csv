@@ -1,0 +1,6 @@
+family,variant,trades,win_rate_pct,expectancy_r,profit_factor,avg_trades_per_month,min_completed_month_trades,pct_completed_months_ge8,profitable_years,total_years,worst_annual_end_rm,worst_annual_max_dd_pct,status
+MTF EMA Pullback Reclaim,H4 agreement + 2R,6847,34.8182,0.044545,1.06834,59.6195,33,100.0,6,10,2.0675,99.2663,secondary
+HTF Range RSI Mean Reversion,H1 ADX<20 + RSI15 + 1.5R,223,40.3587,0.008969,1.01504,1.9735,0,0.0,4,10,60.0266,39.9734,reject primary
+Tick-Volume Momentum Continuation,vol z>=2 + H1 trend + 2.5R,2784,30.6034,0.071121,1.10248,24.3363,10,100.0,7,10,21.0970,94.9440,keep
+Exhaustion Snapback Reversal,3bar>=2ATR + H1 ADX<22 + 2.5R,203,33.0049,0.155172,1.23162,1.7788,0,0.0,4,10,73.7882,51.2325,portfolio only
+MTF ADX DI Momentum Rotation,H1 ADX>=22 + H4 agree + 2R,2456,35.6270,0.068811,1.10689,21.2832,10,100.0,6,10,21.2373,87.9548,keep
