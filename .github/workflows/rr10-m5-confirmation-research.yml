@@ -27,7 +27,7 @@ jobs:
       - name: Install research dependencies
         run: python -m pip install --disable-pip-version-check numpy pandas
       - name: Run conditional M5 research
-        run: python casio/rr10_m5_confirmation_research.py
+        run: python -m casio.rr10_m5_confirmation_research
       - name: Commit research outputs
         run: |
           git config user.name "github-actions[bot]"
