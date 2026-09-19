@@ -1,0 +1,38 @@
+{
+  "source": "OctaFX / Octa Markets MT4 secondary M5",
+  "m5_start": "2016-01-03T23:05:00+00:00",
+  "m5_end": "2026-01-30T21:55:00+00:00",
+  "m5_rows": 701154,
+  "m15_rows": 234859,
+  "selected_development_candidate": "B30_MICRO0591",
+  "policies": {
+    "IMMEDIATE": [
+      null,
+      0
+    ],
+    "A15_STRUCTURE": [
+      "A",
+      15
+    ],
+    "A30_STRUCTURE": [
+      "A",
+      30
+    ],
+    "B15_MICRO0591": [
+      "B",
+      15
+    ],
+    "B30_MICRO0591": [
+      "B",
+      30
+    ],
+    "C15_EITHER": [
+      "C",
+      15
+    ],
+    "C30_EITHER": [
+      "C",
+      30
+    ]
+  }
+}
