@@ -1,0 +1,114 @@
+{
+  "data": {
+    "m15_sha256": "b0ea989c3f9f2b9d86c066eff1a65c1359eee080f9cc92839daffa8f847626bd",
+    "m5_sha256": "c74a2b4f669a005c45190a8c6eada8a9fd8bb7bb7aaaf04198a4044696d480fa",
+    "m15_rows": 229303,
+    "m5_rows": 687746
+  },
+  "conditional_15m": {
+    "baseline": {
+      "2017_2023": {
+        "trades": 540,
+        "wr": 24.6296,
+        "expectancy_r": -0.014815,
+        "pf": 0.980344,
+        "trades_per_30d": 6.4956,
+        "max_dd_pct": 93.259
+      },
+      "2020_2023": {
+        "trades": 295,
+        "wr": 23.7288,
+        "expectancy_r": -0.050847,
+        "pf": 0.933333,
+        "trades_per_30d": 6.0575,
+        "max_dd_pct": 89.3089
+      },
+      "2024_2026": {
+        "trades": 244,
+        "wr": 40.5738,
+        "expectancy_r": 0.622951,
+        "pf": 2.048276,
+        "trades_per_30d": 7.379,
+        "max_dd_pct": 35.505
+      }
+    },
+    "A": {
+      "2017_2023": {
+        "trades": 455,
+        "wr": 26.3736,
+        "expectancy_r": 0.054945,
+        "pf": 1.0746,
+        "trades_per_30d": 5.4731,
+        "max_dd_pct": 79.667
+      },
+      "2020_2023": {
+        "trades": 242,
+        "wr": 26.4463,
+        "expectancy_r": 0.057851,
+        "pf": 1.0787,
+        "trades_per_30d": 4.9692,
+        "max_dd_pct": 75.3165
+      },
+      "2024_2026": {
+        "trades": 218,
+        "wr": 40.8257,
+        "expectancy_r": 0.633028,
+        "pf": 2.0698,
+        "trades_per_30d": 6.5927,
+        "max_dd_pct": 31.1453
+      }
+    },
+    "B": {
+      "2017_2023": {
+        "trades": 443,
+        "wr": 26.4108,
+        "expectancy_r": 0.056433,
+        "pf": 1.0767,
+        "trades_per_30d": 5.3288,
+        "max_dd_pct": 82.0678
+      },
+      "2020_2023": {
+        "trades": 241,
+        "wr": 26.971,
+        "expectancy_r": 0.078838,
+        "pf": 1.108,
+        "trades_per_30d": 4.9487,
+        "max_dd_pct": 75.3165
+      },
+      "2024_2026": {
+        "trades": 208,
+        "wr": 41.3462,
+        "expectancy_r": 0.653846,
+        "pf": 2.1148,
+        "trades_per_30d": 6.2903,
+        "max_dd_pct": 30.1663
+      }
+    },
+    "C": {
+      "2017_2023": {
+        "trades": 458,
+        "wr": 26.4192,
+        "expectancy_r": 0.056769,
+        "pf": 1.0772,
+        "trades_per_30d": 5.5092,
+        "max_dd_pct": 79.667
+      },
+      "2020_2023": {
+        "trades": 245,
+        "wr": 26.5306,
+        "expectancy_r": 0.061224,
+        "pf": 1.0833,
+        "trades_per_30d": 5.0308,
+        "max_dd_pct": 75.3165
+      },
+      "2024_2026": {
+        "trades": 218,
+        "wr": 40.8257,
+        "expectancy_r": 0.633028,
+        "pf": 2.0698,
+        "trades_per_30d": 6.5927,
+        "max_dd_pct": 31.1453
+      }
+    }
+  }
+}
