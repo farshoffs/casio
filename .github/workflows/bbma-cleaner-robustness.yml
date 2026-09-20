@@ -1,0 +1,50 @@
+name: BBMA Cleaner Robustness Research
+
+on:
+  push:
+    branches:
+      - research/bbma-cleaner-robustness-20260920
+    paths:
+      - 'casio/bbma_cleaner_robustness.py'
+      - '.github/workflows/bbma-cleaner-robustness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  robustness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Prepare overlapping 2024-2025 feeds
+        run: |
+          mkdir -p tmp reports/bbma-cleaner-robustness
+          awk -F, 'NR==1 || ($1 >= "2023-10-01T00:00:00Z" && $1 < "2026-01-01T00:00:00Z")' data/xauusd_m5_secondary_octafx_mt4.csv > tmp/octafx.csv
+          awk -F, 'NR==1 || ($1 >= "2023-10-01T00:00:00Z" && $1 < "2026-01-01T00:00:00Z")' data/xauusd_m5_dukascopy_research.csv > tmp/dukascopy.csv
+          wc -l tmp/octafx.csv tmp/dukascopy.csv
+      - name: Run zero-cost cross-feed
+        run: |
+          python -m casio.bbma_cleaner_robustness tmp/dukascopy.csv --start 2024-01-01 --end 2026-01-01 | tee reports/bbma-cleaner-robustness/dukascopy_zero.txt
+          python -m casio.bbma_cleaner_robustness tmp/octafx.csv --start 2024-01-01 --end 2026-01-01 | tee reports/bbma-cleaner-robustness/octafx_zero.txt
+      - name: Run cost stress
+        run: |
+          for c in 0.05 0.10; do
+            python -m casio.bbma_cleaner_robustness tmp/dukascopy.csv --start 2024-01-01 --end 2026-01-01 --cost "$c" | tee "reports/bbma-cleaner-robustness/dukascopy_cost_${c}.txt"
+            python -m casio.bbma_cleaner_robustness tmp/octafx.csv --start 2024-01-01 --end 2026-01-01 --cost "$c" | tee "reports/bbma-cleaner-robustness/octafx_cost_${c}.txt"
+          done
+      - name: Run next-open execution stress
+        run: |
+          python -m casio.bbma_cleaner_robustness tmp/dukascopy.csv --start 2024-01-01 --end 2026-01-01 --next-open | tee reports/bbma-cleaner-robustness/dukascopy_nextopen.txt
+          python -m casio.bbma_cleaner_robustness tmp/octafx.csv --start 2024-01-01 --end 2026-01-01 --next-open | tee reports/bbma-cleaner-robustness/octafx_nextopen.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bbma-cleaner-robustness
+          path: reports/bbma-cleaner-robustness/
+          retention-days: 30
