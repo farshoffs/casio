@@ -71,10 +71,14 @@ def masks(x,name):
     h4L=x.h4_trend_long.fillna(False).astype(bool); h4S=x.h4_trend_short.fillna(False).astype(bool)
     if name=="strict_trend":
         return m5L&h1L&m15L&h4L, m5S&h1S&m15S&h4S
+    h1zlL=x.h1_zl_long.fillna(False).astype(bool); h1zlS=x.h1_zl_short.fillna(False).astype(bool)
+    m15zlL=x.m15_zl_long.fillna(False).astype(bool); m15zlS=x.m15_zl_short.fillna(False).astype(bool)
+    baseL=m5L&~h1S&~m15S&h4L; baseS=m5S&~h1L&~m15L&h4S
+    if name=="h1_zero_loss":
+        return baseL&h1zlL, baseS&h1zlS
+    if name=="m15_zero_loss":
+        return baseL&m15zlL, baseS&m15zlS
     if name=="h1_m15_zero_loss":
-        h1zlL=x.h1_zl_long.fillna(False).astype(bool); h1zlS=x.h1_zl_short.fillna(False).astype(bool)
-        m15zlL=x.m15_zl_long.fillna(False).astype(bool); m15zlS=x.m15_zl_short.fillna(False).astype(bool)
-        baseL=m5L&~h1S&~m15S&h4L; baseS=m5S&~h1L&~m15L&h4S
         return baseL&h1zlL&m15zlL, baseS&h1zlS&m15zlS
     raise ValueError(name)
 
@@ -130,7 +134,7 @@ for feed,path in feeds.items():
     d=read_csv(path)
     d=d[(d.index>=START)&(d.index<END)]
     x=add_context(d)
-    for variant in ["strict_trend","h1_m15_zero_loss"]:
+    for variant in ["strict_trend","h1_zero_loss","m15_zero_loss","h1_m15_zero_loss"]:
         L,S=masks(x,variant)
         for cost in [0.0,0.10,0.25,0.50]:
             t=replay(x,L,S,p,cost)
