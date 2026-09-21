@@ -498,7 +498,10 @@ if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
             strategy.close_all(comment=closeReason)
         if showSignals
             float closeMarkerPrice = closeReason == "SL" ? activeStop : closeReason == "TP2" ? activeTp2 : closeReason == "TP" ? activeTp1 : close
-            label.new(bar_index, closeMarkerPrice, activeEngine + " " + closeReason, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124), force_overlay=true)
+            bool protectedStopExit = closeReason == "SL" and activeProtected
+            string closeLabel = protectedStopExit ? activeEngine + " LOCK +0.25R" : activeEngine + " " + closeReason
+            color closeColor = protectedStopExit ? color.rgb(38, 208, 124) : closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124)
+            label.new(bar_index, closeMarkerPrice, closeLabel, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=closeColor, force_overlay=true)
         activeDir := 0
         activeEngine := "WAIT"
         activeSetup := "WAIT"
@@ -579,7 +582,7 @@ plot(showBbmaBands ? ma5l : na, "MA5 Low", color=color.new(color.orange, 45), fo
 plot(showBbmaBands ? ema50 : na, "EMA50", color=color.new(color.purple, 45), force_overlay=true)
 
 plot(showTradeLevels and activeDir != 0 ? activeEntry : na, "Active Entry", color=color.white, linewidth=2, style=plot.style_linebr, force_overlay=true)
-plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active SL", color=color.red, linewidth=2, style=plot.style_linebr, force_overlay=true)
+plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active Stop", color=activeProtected ? color.lime : color.red, linewidth=2, style=plot.style_linebr, force_overlay=true)
 plot(showTradeLevels and activeDir != 0 ? activeTp1 : na, "Active TP1", color=color.lime, linewidth=2, style=plot.style_linebr, force_overlay=true)
 plot(showTradeLevels and activeDir != 0 and activeEngine == "BBMA" ? activeTp2 : na, "Active TP2", color=color.aqua, linewidth=2, style=plot.style_linebr, force_overlay=true)
 
