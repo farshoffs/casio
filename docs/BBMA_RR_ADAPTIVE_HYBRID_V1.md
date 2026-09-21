@@ -150,10 +150,11 @@ The RR10 adaptive gate for a new candidate uses only the **previously completed*
 
 ## Backtest notes
 
-The script uses TradingView's broker emulator and enables Bar Magnifier. Results can differ from the Python research replay because of:
+The script uses TradingView's standard broker emulator and does not require Bar Magnifier. Results can differ from the Python research replay because of:
 
 - broker/feed candle differences;
 - TradingView intrabar reconstruction;
+- standard detailization is used; Premium Bar Magnifier is not required;
 - contract/point-value sizing;
 - spread, slippage, swap and commission assumptions.
 
