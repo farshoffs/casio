@@ -1,5 +1,5 @@
 //@version=6
-strategy("CASIO BBMA–RR Adaptive Hybrid v1", overlay=true, max_labels_count=500, max_lines_count=500,
+strategy("CASIO BBMA–RR Adaptive Hybrid v1", overlay=true, scale=scale.none, max_labels_count=500, max_lines_count=500,
      initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent,
      commission_value=0.0, process_orders_on_close=true, calc_on_order_fills=true, use_bar_magnifier=false)
 
@@ -475,7 +475,7 @@ if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
         if activeRemaining > 0.5 and tp1Hit
             activeRemaining := 0.5
             if showSignals
-                label.new(bar_index, activeDir == 1 ? high : low, "BBMA TP1 +3R\n50% runner", style=label.style_label_left, textcolor=color.white, color=color.rgb(38, 208, 124))
+                label.new(bar_index, activeTp1, "BBMA TP1 +3R\n50% runner", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=color.rgb(38, 208, 124))
         if activeRemaining <= 0.5 and tp2Hit
             planClosed := true
             closeReason := "TP2"
@@ -497,7 +497,8 @@ if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
         if placeOrders and strategy.position_size != 0
             strategy.close_all(comment=closeReason)
         if showSignals
-            label.new(bar_index, activeDir == 1 ? low : high, activeEngine + " " + closeReason, style=label.style_label_left, textcolor=color.white, color=closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124))
+            float closeMarkerPrice = closeReason == "SL" ? activeStop : closeReason == "TP2" ? activeTp2 : closeReason == "TP" ? activeTp1 : close
+            label.new(bar_index, closeMarkerPrice, activeEngine + " " + closeReason, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124))
         activeDir := 0
         activeEngine := "WAIT"
         activeSetup := "WAIT"
