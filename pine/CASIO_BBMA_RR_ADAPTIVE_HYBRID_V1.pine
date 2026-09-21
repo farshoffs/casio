@@ -1,0 +1,650 @@
+//@version=6
+strategy("CASIO BBMA–RR Adaptive Hybrid v1", overlay=true, max_labels_count=500, max_lines_count=500,
+     initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent,
+     commission_value=0.0, process_orders_on_close=true, calc_on_order_fills=true, use_bar_magnifier=true)
+
+// CASIO BBMA–RR Adaptive Hybrid v1
+// Chart timeframe: XAUUSD M5.
+// Base engine: BBMA Cleaner Core.
+// Exception engine: canonical RR10, enabled only in TREND mode with support >= 2 and
+// rolling shadow expectancy > 0 over the last 16 completed qualifying RR10 trades.
+// One live position only. RR10 never pre-empts an open BBMA position.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+string groupRun = "Run mode"
+string runMode = input.string("LIVE + BACKTEST", "Mode", options=["LIVE + BACKTEST", "LIVE SIGNALS ONLY"], group=groupRun)
+int backtestStart = input.time(timestamp("GMT+0", 2017, 1, 1, 0, 0), "Backtest start", group=groupRun)
+int backtestEnd = input.time(timestamp("GMT+0", 2035, 1, 1, 0, 0), "Backtest end", group=groupRun)
+float riskPct = input.float(5.0, "Risk per entry (%)", minval=0.1, maxval=20.0, step=0.1, group=groupRun)
+
+string groupBBMA = "BBMA Cleaner Core"
+int bbmaCooldownBars = input.int(36, "Cooldown (M5 bars)", minval=0, group=groupBBMA)
+int bbmaMaxTradesDay = input.int(3, "Maximum entries / day", minval=1, maxval=10, group=groupBBMA)
+float bbmaMinRiskAtr = input.float(1.0, "Minimum structural stop / M5 ATR", minval=0.1, step=0.1, group=groupBBMA)
+float bbmaMaxRiskAtr = input.float(1.8, "Maximum structural stop / M5 ATR", minval=0.2, step=0.1, group=groupBBMA)
+float bbmaStopBufferAtr = input.float(0.15, "Swing stop ATR buffer", minval=0.0, step=0.05, group=groupBBMA)
+float bbmaProtectTriggerR = input.float(0.50, "Protection trigger (R)", minval=0.1, step=0.05, group=groupBBMA)
+float bbmaProtectLockR = input.float(0.25, "Protected stop (R)", minval=0.0, step=0.05, group=groupBBMA)
+float bbmaTp1R = input.float(3.0, "TP1 R (50%)", minval=0.5, step=0.25, group=groupBBMA)
+float bbmaTp2R = input.float(4.0, "TP2 R (50%)", minval=1.0, step=0.25, group=groupBBMA)
+int bbmaDirectionMemory = input.int(12, "CSAK/CSM → re-entry memory", minval=2, maxval=30, group=groupBBMA)
+int bbmaCsmMemory = input.int(4, "CSM recent bars (HTF)", minval=1, maxval=12, group=groupBBMA)
+
+string groupRR = "RR10 adaptive exception"
+int rrShadowWindow = input.int(16, "Shadow expectancy window", minval=8, maxval=40, group=groupRR)
+float rrTargetR = input.float(3.0, "RR10 target R", minval=1.0, step=0.5, group=groupRR)
+int rrMinSupport = input.int(2, "Minimum confirmations", minval=1, maxval=5, group=groupRR)
+float rrTrendAdx = input.float(18.0, "H4 TREND ADX", minval=5.0, step=0.5, group=groupRR)
+
+string groupDisplay = "Dashboard / live"
+bool showDashboard = input.bool(true, "Show dashboard", group=groupDisplay)
+bool showBbmaBands = input.bool(false, "Show M5 BBMA bands", group=groupDisplay)
+bool showTradeLevels = input.bool(true, "Show active Entry / SL / TP", group=groupDisplay)
+bool showSignals = input.bool(true, "Show BUY / SELL labels", group=groupDisplay)
+string webhookSecret = input.string("", "Webhook secret", group=groupDisplay)
+
+bool isM5 = timeframe.isminutes and timeframe.multiplier == 5
+bool inDate = time >= backtestStart and time < backtestEnd
+bool placeOrders = runMode == "LIVE + BACKTEST" and inDate and isM5
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Common helpers
+// ─────────────────────────────────────────────────────────────────────────────
+f_adx() =>
+    [pdi, mdi, a] = ta.dmi(14, 14)
+    a
+
+f_bias(float c, float e20, float e50) =>
+    e20 > e50 and c > e20 ? 1 : e20 < e50 and c < e20 ? -1 : 0
+
+f_quality(int q) =>
+    q >= 4 ? 4 : q >= 2 ? 3 : 2
+
+f_mtf_target(int base, int dir, int h1b, int h4b, float h4adx) =>
+    bool blocked = h1b == -dir and h4b == -dir
+    int baseGrade = base >= 4 ? 2 : base >= 3 ? 1 : 0
+    int align = (h1b == dir ? 1 : 0) + (h4b == dir ? 1 : 0)
+    int strong = align == 2 and h4adx >= rrTrendAdx ? 1 : 0
+    int score = baseGrade + align + strong
+    [not blocked, score >= 3 ? 4 : score >= 1 ? 3 : 2]
+
+f_price(float v) =>
+    na(v) ? "—" : str.tostring(v, format.mintick)
+
+f_dir_text(int d) =>
+    d == 1 ? "LONG" : d == -1 ? "SHORT" : "WAIT"
+
+f_dir_color(int d) =>
+    d == 1 ? color.rgb(38, 208, 124) : d == -1 ? color.rgb(255, 91, 105) : color.rgb(145, 163, 184)
+
+f_qty(float entryPrice, float stopPrice) =>
+    float riskCashAccount = strategy.equity * riskPct / 100.0
+    float riskCashSymbol = strategy.convert_to_symbol(riskCashAccount)
+    float riskPerUnit = math.abs(entryPrice - stopPrice) * syminfo.pointvalue
+    riskPerUnit > 0 ? riskCashSymbol / riskPerUnit : na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BBMA deterministic state
+// BB(20,2), LWMA 5/10 High/Low, EMA50.
+// CSAK = close across MA5/10 + Mid BB.
+// CSM = close outside outer BB.
+// Re-entry = post-CSAK/CSM retest of directional MA5/10.
+// ─────────────────────────────────────────────────────────────────────────────
+f_bbma_closed() =>
+    float basis = ta.sma(close, 20)
+    float dev = ta.stdev(close, 20) * 2.0
+    float upper = basis + dev
+    float lower = basis - dev
+    float ma5h = ta.wma(high, 5)
+    float ma5l = ta.wma(low, 5)
+    float ma10h = ta.wma(high, 10)
+    float ma10l = ta.wma(low, 10)
+    float ema50 = ta.ema(close, 50)
+    float atrx = ta.atr(14)
+    bool csakL = close > ma5h and close > ma10h and close > basis
+    bool csakS = close < ma5l and close < ma10l and close < basis
+    bool csmL = close > upper
+    bool csmS = close < lower
+    int dirAgeL0 = ta.barssince(csakL or csmL)
+    int dirAgeS0 = ta.barssince(csakS or csmS)
+    int csmAgeL0 = ta.barssince(csmL)
+    int csmAgeS0 = ta.barssince(csmS)
+    float buyZone = math.max(ma5l, ma10l)
+    float sellZone = math.min(ma5h, ma10h)
+    bool reL = dirAgeL0 >= 1 and dirAgeL0 <= bbmaDirectionMemory and low <= buyZone + 0.12 * atrx and close > buyZone and close > open
+    bool reS = dirAgeS0 >= 1 and dirAgeS0 <= bbmaDirectionMemory and high >= sellZone - 0.12 * atrx and close < sellZone and close < open
+    bool zlL = ma5l > basis and ma10l > basis and basis > ema50
+    bool zlS = ma5h < basis and ma10h < basis and basis < ema50
+    bool majorL = close > ema50 and ema50 > ema50[1]
+    bool majorS = close < ema50 and ema50 < ema50[1]
+    [reL[1], reS[1], csmAgeL0[1], csmAgeS0[1], zlL[1], zlS[1], majorL[1], majorS[1], csakL[1], csakS[1], csmL[1], csmS[1]]
+
+float bbBasis = ta.sma(close, 20)
+float bbDev = ta.stdev(close, 20) * 2.0
+float bbUpper = bbBasis + bbDev
+float bbLower = bbBasis - bbDev
+float ma5h = ta.wma(high, 5)
+float ma5l = ta.wma(low, 5)
+float ma10h = ta.wma(high, 10)
+float ma10l = ta.wma(low, 10)
+float ema50 = ta.ema(close, 50)
+float atr5 = ta.atr(14)
+
+bool m5CsakLong = close > ma5h and close > ma10h and close > bbBasis
+bool m5CsakShort = close < ma5l and close < ma10l and close < bbBasis
+bool m5CsmLong = close > bbUpper
+bool m5CsmShort = close < bbLower
+int m5DirAgeLong0 = ta.barssince(m5CsakLong or m5CsmLong)
+int m5DirAgeShort0 = ta.barssince(m5CsakShort or m5CsmShort)
+int m5DirAgeLong = na(m5DirAgeLong0) ? 10000 : m5DirAgeLong0
+int m5DirAgeShort = na(m5DirAgeShort0) ? 10000 : m5DirAgeShort0
+float m5BuyZone = math.max(ma5l, ma10l)
+float m5SellZone = math.min(ma5h, ma10h)
+bool m5ReLong = m5DirAgeLong >= 1 and m5DirAgeLong <= bbmaDirectionMemory and low <= m5BuyZone + 0.12 * atr5 and close > m5BuyZone and close > open
+bool m5ReShort = m5DirAgeShort >= 1 and m5DirAgeShort <= bbmaDirectionMemory and high >= m5SellZone - 0.12 * atr5 and close < m5SellZone and close < open
+
+[h1ReLong, h1ReShort, h1CsmAgeLong0, h1CsmAgeShort0, h1ZlLong, h1ZlShort, h1MajorLong, h1MajorShort, h1CsakLong, h1CsakShort, h1CsmLongClosed, h1CsmShortClosed] =
+    request.security(syminfo.tickerid, "60", f_bbma_closed(), lookahead=barmerge.lookahead_on)
+[m15ReLong, m15ReShort, m15CsmAgeLong0, m15CsmAgeShort0, m15ZlLong, m15ZlShort, m15MajorLong, m15MajorShort, m15CsakLong, m15CsakShort, m15CsmLongClosed, m15CsmShortClosed] =
+    request.security(syminfo.tickerid, "15", f_bbma_closed(), lookahead=barmerge.lookahead_on)
+[h4ReLong, h4ReShort, h4CsmAgeLong0, h4CsmAgeShort0, h4ZlLong, h4ZlShort, h4MajorLong, h4MajorShort, h4CsakLong, h4CsakShort, h4CsmLongClosed, h4CsmShortClosed] =
+    request.security(syminfo.tickerid, "240", f_bbma_closed(), lookahead=barmerge.lookahead_on)
+
+int h1CsmAgeLong = na(h1CsmAgeLong0) ? 10000 : h1CsmAgeLong0
+int h1CsmAgeShort = na(h1CsmAgeShort0) ? 10000 : h1CsmAgeShort0
+int m15CsmAgeLong = na(m15CsmAgeLong0) ? 10000 : m15CsmAgeLong0
+int m15CsmAgeShort = na(m15CsmAgeShort0) ? 10000 : m15CsmAgeShort0
+
+bool h1CsmRecentLong = h1CsmAgeLong <= bbmaCsmMemory
+bool h1CsmRecentShort = h1CsmAgeShort <= bbmaCsmMemory
+bool m15CsmRecentLong = m15CsmAgeLong <= bbmaCsmMemory
+bool m15CsmRecentShort = m15CsmAgeShort <= bbmaCsmMemory
+
+// Frozen Cleaner Core families.
+bool rrrCsmLong = h1ReLong and m15ReLong and m5ReLong and (h1CsmRecentLong or m15CsmRecentLong)
+bool rrrCsmShort = h1ReShort and m15ReShort and m5ReShort and (h1CsmRecentShort or m15CsmRecentShort)
+bool csmCsmReLong = h1CsmRecentLong and m15CsmRecentLong and m5ReLong
+bool csmCsmReShort = h1CsmRecentShort and m15CsmRecentShort and m5ReShort
+bool h1ReM15CsmM5ReLong = h1ReLong and m15CsmRecentLong and m5ReLong
+bool h1ReM15CsmM5ReShort = h1ReShort and m15CsmRecentShort and m5ReShort
+
+bool bbmaRawLong = h4MajorLong and (rrrCsmLong or csmCsmReLong or h1ReM15CsmM5ReLong)
+bool bbmaRawShort = h4MajorShort and h1ZlShort and (rrrCsmShort or csmCsmReShort or h1ReM15CsmM5ReShort)
+string bbmaSetupLong = rrrCsmLong ? "RRR_CSM" : csmCsmReLong ? "CSM_CSM_RE" : h1ReM15CsmM5ReLong ? "H1_RE_M15_CSM_M5_RE" : "WAIT"
+string bbmaSetupShort = rrrCsmShort ? "RRR_CSM" : csmCsmReShort ? "CSM_CSM_RE" : h1ReM15CsmM5ReShort ? "H1_RE_M15_CSM_M5_RE" : "WAIT"
+
+float bbmaLongStop = ta.lowest(low, 7) - bbmaStopBufferAtr * atr5
+float bbmaShortStop = ta.highest(high, 7) + bbmaStopBufferAtr * atr5
+float bbmaLongRisk = close - bbmaLongStop
+float bbmaShortRisk = bbmaShortStop - close
+float bbmaLongRiskAtr = atr5 > 0 ? bbmaLongRisk / atr5 : na
+float bbmaShortRiskAtr = atr5 > 0 ? bbmaShortRisk / atr5 : na
+bool bbmaLongRiskOk = bbmaLongRisk > 0 and bbmaLongRiskAtr >= bbmaMinRiskAtr and bbmaLongRiskAtr <= bbmaMaxRiskAtr
+bool bbmaShortRiskOk = bbmaShortRisk > 0 and bbmaShortRiskAtr >= bbmaMinRiskAtr and bbmaShortRiskAtr <= bbmaMaxRiskAtr
+
+var int bbmaLastEntryBar = -1000000
+var int bbmaDayKey = na
+var int bbmaTradesToday = 0
+int todayKey = year(time, "UTC") * 10000 + month(time, "UTC") * 100 + dayofmonth(time, "UTC")
+if na(bbmaDayKey) or todayKey != bbmaDayKey
+    bbmaDayKey := todayKey
+    bbmaTradesToday := 0
+
+bool bbmaCadenceOk = bar_index - bbmaLastEntryBar >= bbmaCooldownBars and bbmaTradesToday < bbmaMaxTradesDay
+bool bbmaSignalLong = barstate.isconfirmed and bbmaRawLong and bbmaLongRiskOk and bbmaCadenceOk
+bool bbmaSignalShort = barstate.isconfirmed and bbmaRawShort and bbmaShortRiskOk and bbmaCadenceOk
+int bbmaDir = bbmaSignalLong and not bbmaSignalShort ? 1 : bbmaSignalShort and not bbmaSignalLong ? -1 : 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RR10 canonical module evaluated only at completed M15 bars.
+// On an M5 chart, minute 10 is the final M5 child of each M15 bar.
+// lookahead_off exposes the completed M15 value on that child bar.
+// ─────────────────────────────────────────────────────────────────────────────
+bool isM15ClosingChild = minute(time, "UTC") % 15 == 10
+
+float rO = request.security(syminfo.tickerid, "15", open, lookahead=barmerge.lookahead_off)
+float rH = request.security(syminfo.tickerid, "15", high, lookahead=barmerge.lookahead_off)
+float rL = request.security(syminfo.tickerid, "15", low, lookahead=barmerge.lookahead_off)
+float rC = request.security(syminfo.tickerid, "15", close, lookahead=barmerge.lookahead_off)
+float rAtr = request.security(syminfo.tickerid, "15", ta.atr(14), lookahead=barmerge.lookahead_off)
+float rE20 = request.security(syminfo.tickerid, "15", ta.ema(close, 20), lookahead=barmerge.lookahead_off)
+float rE50 = request.security(syminfo.tickerid, "15", ta.ema(close, 50), lookahead=barmerge.lookahead_off)
+float rHh5 = request.security(syminfo.tickerid, "15", ta.highest(high[1], 5), lookahead=barmerge.lookahead_off)
+float rLl5 = request.security(syminfo.tickerid, "15", ta.lowest(low[1], 5), lookahead=barmerge.lookahead_off)
+float rHh10 = request.security(syminfo.tickerid, "15", ta.highest(high[1], 10), lookahead=barmerge.lookahead_off)
+float rLl10 = request.security(syminfo.tickerid, "15", ta.lowest(low[1], 10), lookahead=barmerge.lookahead_off)
+float rHh20 = request.security(syminfo.tickerid, "15", ta.highest(high[1], 20), lookahead=barmerge.lookahead_off)
+float rLl20 = request.security(syminfo.tickerid, "15", ta.lowest(low[1], 20), lookahead=barmerge.lookahead_off)
+bool rBullFvg = request.security(syminfo.tickerid, "15", low > high[2], lookahead=barmerge.lookahead_off)
+bool rBearFvg = request.security(syminfo.tickerid, "15", high < low[2], lookahead=barmerge.lookahead_off)
+int rSellSweepAge0 = request.security(syminfo.tickerid, "15", ta.barssince(low < ta.lowest(low[1], 20) and close > ta.lowest(low[1], 20)), lookahead=barmerge.lookahead_off)
+int rBuySweepAge0 = request.security(syminfo.tickerid, "15", ta.barssince(high > ta.highest(high[1], 20) and close < ta.highest(high[1], 20)), lookahead=barmerge.lookahead_off)
+int rSellSweepAge = na(rSellSweepAge0) ? 999 : rSellSweepAge0
+int rBuySweepAge = na(rBuySweepAge0) ? 999 : rBuySweepAge0
+int rM15Time = request.security(syminfo.tickerid, "15", time, lookahead=barmerge.lookahead_off)
+
+float rrH1Close = request.security(syminfo.tickerid, "60", close[1], lookahead=barmerge.lookahead_on)
+float rrH1E20 = request.security(syminfo.tickerid, "60", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+float rrH1E50 = request.security(syminfo.tickerid, "60", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+float rrH4Close = request.security(syminfo.tickerid, "240", close[1], lookahead=barmerge.lookahead_on)
+float rrH4E20 = request.security(syminfo.tickerid, "240", ta.ema(close, 20)[1], lookahead=barmerge.lookahead_on)
+float rrH4E50 = request.security(syminfo.tickerid, "240", ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+float rrH4Adx = request.security(syminfo.tickerid, "240", f_adx()[1], lookahead=barmerge.lookahead_on)
+float rrPrevDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+float rrPrevDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+
+int rrH1Bias = f_bias(rrH1Close, rrH1E20, rrH1E50)
+int rrH4Bias = f_bias(rrH4Close, rrH4E20, rrH4E50)
+bool rrStrongLong = rrH1Bias == 1 and rrH4Bias == 1
+bool rrStrongShort = rrH1Bias == -1 and rrH4Bias == -1
+bool rrHtfLong = rrH1Bias >= 0 and rrH4Bias >= 0
+bool rrHtfShort = rrH1Bias <= 0 and rrH4Bias <= 0
+bool rrStrongTrend = rrH1Bias != 0 and rrH1Bias == rrH4Bias and rrH4Adx >= rrTrendAdx
+
+int rrUtcMinute = hour(rM15Time, "UTC") * 60 + minute(rM15Time, "UTC")
+bool rrPrimary = (rrUtcMinute >= 420 and rrUtcMinute < 720) or (rrUtcMinute >= 750 and rrUtcMinute < 1020)
+
+float rrRange = math.max(rH - rL, syminfo.mintick)
+float rrBodyFrac = math.abs(rC - rO) / rrRange
+float rrCloseLoc = (rC - rL) / rrRange
+float rrRangeAtr = rAtr > 0 ? rrRange / rAtr : na
+bool rrBull = rC > rO
+bool rrBear = rC < rO
+bool rrDispLong = rrBull and rrBodyFrac >= 0.55 and rrCloseLoc >= 0.68 and rrRangeAtr >= 0.80 and rC > rHh5
+bool rrDispShort = rrBear and rrBodyFrac >= 0.55 and rrCloseLoc <= 0.32 and rrRangeAtr >= 0.80 and rC < rLl5
+
+bool rrV1Long = rE20 > rE50 and rC > rHh10 and rrBull and rrBodyFrac >= 0.45
+bool rrV1Short = rE20 < rE50 and rC < rLl10 and rrBear and rrBodyFrac >= 0.45
+int rrV1Dir = rrV1Long and not rrV1Short ? 1 : rrV1Short and not rrV1Long ? -1 : 0
+
+bool rrOutLong = rrPrimary and ((rSellSweepAge <= 2 and rBullFvg) or (rrStrongLong and rrDispLong and rL <= rE20 + 0.25 * rAtr))
+bool rrOutShort = rrPrimary and ((rBuySweepAge <= 2 and rBearFvg) or (rrStrongShort and rrDispShort and rH >= rE20 - 0.25 * rAtr))
+int rrOutDir = rrOutLong and not rrOutShort ? 1 : rrOutShort and not rrOutLong ? -1 : 0
+
+bool rrSfLong = rrPrimary and rrHtfLong and rSellSweepAge <= 6 and (rrDispLong or rBullFvg)
+bool rrSfShort = rrPrimary and rrHtfShort and rBuySweepAge <= 6 and (rrDispShort or rBearFvg)
+int rrSfDir = rrSfLong and not rrSfShort ? 1 : rrSfShort and not rrSfLong ? -1 : 0
+
+bool rrSpBaseLong = (rrStrongLong and rSellSweepAge <= 5 and rBullFvg) or (rrHtfLong and rSellSweepAge <= 2 and rBullFvg) or (rrPrimary and rrHtfLong and rL <= rrPrevDayHigh + 0.15 * rAtr and rC > rrPrevDayHigh and rBullFvg)
+bool rrSpBaseShort = (rrStrongShort and rBuySweepAge <= 5 and rBearFvg) or (rrHtfShort and rBuySweepAge <= 2 and rBearFvg) or (rrPrimary and rrHtfShort and rH >= rrPrevDayLow - 0.15 * rAtr and rC < rrPrevDayLow and rBearFvg)
+int rrSpBaseR = f_quality((rrPrimary ? 1 : 0) + ((rrStrongLong or rrStrongShort) ? 1 : 0) + ((rBullFvg or rBearFvg) ? 1 : 0) + ((rrDispLong or rrDispShort) ? 1 : 0))
+[rrSplAllowed, rrSplR] = f_mtf_target(rrSpBaseR, 1, rrH1Bias, rrH4Bias, rrH4Adx)
+[rrSpsAllowed, rrSpsR] = f_mtf_target(rrSpBaseR, -1, rrH1Bias, rrH4Bias, rrH4Adx)
+bool rrSpLong = rrSpBaseLong and rrSplAllowed
+bool rrSpShort = rrSpBaseShort and rrSpsAllowed
+int rrSpDir = rrSpLong and not rrSpShort ? 1 : rrSpShort and not rrSpLong ? -1 : 0
+
+var int rrSeq = 0
+var int rrMs = 0
+var int rrImpulseSeq = na
+var float rrImpOpen = na
+var float rrImpClose = na
+var float rrImpHigh = na
+var float rrImpLow = na
+var float rrImpAtr = na
+var float rrBroken = na
+var float rrPullExtreme = na
+
+var int rrLastML = -1000000000
+var int rrLastMS = -1000000000
+var int rrLastVL = -1000000000
+var int rrLastVS = -1000000000
+var int rrLastOL = -1000000000
+var int rrLastOS = -1000000000
+var int rrLastPL = -1000000000
+var int rrLastPS = -1000000000
+var int rrLastFL = -1000000000
+var int rrLastFS = -1000000000
+
+int rrCanonicalDir = 0
+float rrCanonicalStop = na
+int rrSupportDir = 0
+
+if barstate.isconfirmed and isM15ClosingChild and isM5 and not na(rAtr)
+    rrSeq += 1
+    int rr0591Dir = 0
+    float rr0591Stop = na
+    bool rrImpLong = rrRangeAtr >= 1.20 and rrBodyFrac >= 0.55 and rrCloseLoc >= 0.72 and rC > rHh20
+    bool rrImpShort = rrRangeAtr >= 1.20 and rrBodyFrac >= 0.55 and rrCloseLoc <= 0.28 and rC < rLl20
+
+    if rrMs == 0
+        if rrImpLong and not rrImpShort
+            rrMs := 1
+            rrImpulseSeq := rrSeq
+            rrImpOpen := rO
+            rrImpClose := rC
+            rrImpHigh := rH
+            rrImpLow := rL
+            rrImpAtr := rAtr
+            rrBroken := rHh20
+            rrPullExtreme := rL
+        else if rrImpShort and not rrImpLong
+            rrMs := -1
+            rrImpulseSeq := rrSeq
+            rrImpOpen := rO
+            rrImpClose := rC
+            rrImpHigh := rH
+            rrImpLow := rL
+            rrImpAtr := rAtr
+            rrBroken := rLl20
+            rrPullExtreme := rH
+    else if rrSeq > rrImpulseSeq
+        int rrAge = rrSeq - rrImpulseSeq
+        float rrImpBody = math.abs(rrImpClose - rrImpOpen)
+        if rrAge > 4
+            rrMs := 0
+        else if rrMs == 1
+            rrPullExtreme := math.min(rrPullExtreme, rL)
+            bool invalid = rL < rrImpLow - 0.30 * rrImpAtr
+            bool touched = rL <= rrImpClose - 0.18 * rrImpBody and rH >= rrImpClose - 0.50 * rrImpBody
+            bool confirm = rC > rO and rC > rrBroken
+            if invalid
+                rrMs := 0
+            else if touched and confirm
+                [allowedLong, ignoredLongR] = f_mtf_target(3, 1, rrH1Bias, rrH4Bias, rrH4Adx)
+                if allowedLong
+                    rr0591Dir := 1
+                    rr0591Stop := rrPullExtreme - 0.12 * rrImpAtr
+                rrMs := 0
+        else
+            rrPullExtreme := math.max(rrPullExtreme, rH)
+            bool invalid = rH > rrImpHigh + 0.30 * rrImpAtr
+            bool touched = rH >= rrImpClose + 0.18 * rrImpBody and rL <= rrImpClose + 0.50 * rrImpBody
+            bool confirm = rC < rO and rC < rrBroken
+            if invalid
+                rrMs := 0
+            else if touched and confirm
+                [allowedShort, ignoredShortR] = f_mtf_target(3, -1, rrH1Bias, rrH4Bias, rrH4Adx)
+                if allowedShort
+                    rr0591Dir := -1
+                    rr0591Stop := rrPullExtreme + 0.12 * rrImpAtr
+                rrMs := 0
+
+    if rr0591Dir == 1
+        rrLastML := rrSeq
+    if rr0591Dir == -1
+        rrLastMS := rrSeq
+    if rrV1Dir == 1
+        rrLastVL := rrSeq
+    if rrV1Dir == -1
+        rrLastVS := rrSeq
+    if rrOutDir == 1
+        rrLastOL := rrSeq
+    if rrOutDir == -1
+        rrLastOS := rrSeq
+    if rrSpDir == 1
+        rrLastPL := rrSeq
+    if rrSpDir == -1
+        rrLastPS := rrSeq
+    if rrSfDir == 1
+        rrLastFL := rrSeq
+    if rrSfDir == -1
+        rrLastFS := rrSeq
+
+    int supportLong = (rrSeq - rrLastML <= 2 ? 1 : 0) + (rrSeq - rrLastVL <= 2 ? 1 : 0) + (rrSeq - rrLastOL <= 2 ? 1 : 0) + (rrSeq - rrLastPL <= 2 ? 1 : 0) + (rrSeq - rrLastFL <= 2 ? 1 : 0)
+    int supportShort = (rrSeq - rrLastMS <= 2 ? 1 : 0) + (rrSeq - rrLastVS <= 2 ? 1 : 0) + (rrSeq - rrLastOS <= 2 ? 1 : 0) + (rrSeq - rrLastPS <= 2 ? 1 : 0) + (rrSeq - rrLastFS <= 2 ? 1 : 0)
+    rrSupportDir := rr0591Dir == 1 ? supportLong : rr0591Dir == -1 ? supportShort : 0
+    int alignCount = rr0591Dir == 0 ? 0 : (rrH1Bias == rr0591Dir ? 1 : 0) + (rrH4Bias == rr0591Dir ? 1 : 0)
+    bool oldRouterSelected0591 = rrStrongTrend ? (rr0591Dir != 0 and rr0591Dir == rrH1Bias) : (rrSpDir == 0 and rr0591Dir != 0 and rrSupportDir >= 2)
+    bool canonical = oldRouterSelected0591 and not rrPrimary and alignCount >= 1 and not na(rr0591Stop)
+    if canonical
+        rrCanonicalDir := rr0591Dir
+        rrCanonicalStop := rr0591Stop
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RR10 shadow stream and adaptive gate
+// Only TREND + support>=2 canonical trades enter the qualifying shadow stream.
+// The gate for a new candidate uses PREVIOUS completed shadow results only.
+// ─────────────────────────────────────────────────────────────────────────────
+var float[] rrShadowR = array.new_float()
+var bool rrShadowActive = false
+var int rrShadowDir = 0
+var float rrShadowEntry = na
+var float rrShadowStop = na
+var float rrShadowTarget = na
+var int rrShadowEntryBar = na
+
+if barstate.isconfirmed and rrShadowActive and bar_index > rrShadowEntryBar
+    bool shadowStopHit = rrShadowDir == 1 ? low <= rrShadowStop : high >= rrShadowStop
+    bool shadowTargetHit = rrShadowDir == 1 ? high >= rrShadowTarget : low <= rrShadowTarget
+    if shadowStopHit or shadowTargetHit
+        float shadowResult = shadowStopHit ? -1.0 : rrTargetR
+        array.push(rrShadowR, shadowResult)
+        if array.size(rrShadowR) > rrShadowWindow
+            array.shift(rrShadowR)
+        rrShadowActive := false
+        rrShadowDir := 0
+        rrShadowEntry := na
+        rrShadowStop := na
+        rrShadowTarget := na
+        rrShadowEntryBar := na
+
+float rrShadowSum = 0.0
+if array.size(rrShadowR) > 0
+    for i = 0 to array.size(rrShadowR) - 1
+        rrShadowSum += array.get(rrShadowR, i)
+float rrShadowExpectancy = array.size(rrShadowR) > 0 ? rrShadowSum / array.size(rrShadowR) : na
+bool rrShadowReady = array.size(rrShadowR) >= rrShadowWindow
+bool rrAdaptiveGate = rrShadowReady and rrShadowExpectancy > 0
+
+bool rrQualifyingSignal = rrCanonicalDir != 0 and rrStrongTrend and rrSupportDir >= rrMinSupport and not rrShadowActive
+bool rrActualEligible = rrQualifyingSignal and rrAdaptiveGate
+
+if barstate.isconfirmed and rrQualifyingSignal
+    float riskShadow = math.abs(rC - rrCanonicalStop)
+    if riskShadow > 0
+        rrShadowActive := true
+        rrShadowDir := rrCanonicalDir
+        rrShadowEntry := rC
+        rrShadowStop := rrCanonicalStop
+        rrShadowTarget := rC + rrCanonicalDir * rrTargetR * riskShadow
+        rrShadowEntryBar := bar_index
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hybrid router and lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
+var int activeDir = 0
+var string activeEngine = "WAIT"
+var string activeSetup = "WAIT"
+var float activeEntry = na
+var float activeInitialStop = na
+var float activeStop = na
+var float activeRisk = na
+var float activeTp1 = na
+var float activeTp2 = na
+var float activeRemaining = 0.0
+var bool activeProtected = false
+var int activeEntryBar = na
+
+bool flat = activeDir == 0
+bool newLong = false
+bool newShort = false
+bool planClosed = false
+string closeReason = ""
+
+// Conservative manual lifecycle for dashboard/live plan.
+// Protection changes apply after the trigger bar closes.
+if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
+    bool stopHit = activeDir == 1 ? low <= activeStop : high >= activeStop
+    bool tp2Hit = activeDir == 1 ? high >= activeTp2 : low <= activeTp2
+    bool tp1Hit = activeDir == 1 ? high >= activeTp1 : low <= activeTp1
+
+    if stopHit
+        planClosed := true
+        closeReason := "SL"
+    else if activeEngine == "BBMA"
+        if activeRemaining > 0.5 and tp1Hit
+            activeRemaining := 0.5
+            if showSignals
+                label.new(bar_index, activeDir == 1 ? high : low, "BBMA TP1 +3R\n50% runner", style=label.style_label_left, textcolor=color.white, color=color.rgb(38, 208, 124))
+        if activeRemaining <= 0.5 and tp2Hit
+            planClosed := true
+            closeReason := "TP2"
+        bool oppositeBbma = activeDir == 1 ? (m5CsmShort or m5CsakShort) : (m5CsmLong or m5CsakLong)
+        if not planClosed and oppositeBbma
+            planClosed := true
+            closeReason := "OPPOSITE CSM/CSAK"
+        if not planClosed and not activeProtected
+            bool protectTouched = activeDir == 1 ? high >= activeEntry + bbmaProtectTriggerR * activeRisk : low <= activeEntry - bbmaProtectTriggerR * activeRisk
+            if protectTouched
+                activeProtected := true
+                activeStop := activeEntry + activeDir * bbmaProtectLockR * activeRisk
+    else
+        if tp1Hit
+            planClosed := true
+            closeReason := "TP"
+
+    if planClosed
+        if placeOrders and strategy.position_size != 0
+            strategy.close_all(comment=closeReason)
+        if showSignals
+            label.new(bar_index, activeDir == 1 ? low : high, activeEngine + " " + closeReason, style=label.style_label_left, textcolor=color.white, color=closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124))
+        activeDir := 0
+        activeEngine := "WAIT"
+        activeSetup := "WAIT"
+        activeEntry := na
+        activeInitialStop := na
+        activeStop := na
+        activeRisk := na
+        activeTp1 := na
+        activeTp2 := na
+        activeRemaining := 0.0
+        activeProtected := false
+        activeEntryBar := na
+
+// RR10 takes priority only if flat and adaptive gate is open.
+// It never pre-empts an existing BBMA position.
+if barstate.isconfirmed and flat and isM5 and inDate
+    if rrActualEligible
+        float rrRisk = math.abs(rC - rrCanonicalStop)
+        if rrRisk > 0
+            activeDir := rrCanonicalDir
+            activeEngine := "RR10"
+            activeSetup := "TREND / SHADOW+"
+            activeEntry := rC
+            activeInitialStop := rrCanonicalStop
+            activeStop := rrCanonicalStop
+            activeRisk := rrRisk
+            activeTp1 := rC + rrCanonicalDir * rrTargetR * rrRisk
+            activeTp2 := activeTp1
+            activeRemaining := 1.0
+            activeEntryBar := bar_index
+            if placeOrders
+                float qtyRR = f_qty(activeEntry, activeStop)
+                if not na(qtyRR) and qtyRR > 0
+                    strategy.entry("HYBRID", activeDir == 1 ? strategy.long : strategy.short, qty=qtyRR, comment="RR10")
+                    strategy.exit("HYBRID-RR-X", "HYBRID", stop=activeStop, limit=activeTp1)
+            newLong := activeDir == 1
+            newShort := activeDir == -1
+    else if bbmaDir != 0
+        float bStop = bbmaDir == 1 ? bbmaLongStop : bbmaShortStop
+        float bRisk = math.abs(close - bStop)
+        if bRisk > 0
+            activeDir := bbmaDir
+            activeEngine := "BBMA"
+            activeSetup := bbmaDir == 1 ? bbmaSetupLong : bbmaSetupShort
+            activeEntry := close
+            activeInitialStop := bStop
+            activeStop := bStop
+            activeRisk := bRisk
+            activeTp1 := close + bbmaDir * bbmaTp1R * bRisk
+            activeTp2 := close + bbmaDir * bbmaTp2R * bRisk
+            activeRemaining := 1.0
+            activeProtected := false
+            activeEntryBar := bar_index
+            bbmaLastEntryBar := bar_index
+            bbmaTradesToday += 1
+            if placeOrders
+                float qtyB = f_qty(activeEntry, activeStop)
+                if not na(qtyB) and qtyB > 0
+                    strategy.entry("HYBRID", activeDir == 1 ? strategy.long : strategy.short, qty=qtyB, comment="BBMA")
+                    strategy.exit("HYBRID-B-TP1", "HYBRID", stop=activeStop, limit=activeTp1, qty_percent=50)
+                    strategy.exit("HYBRID-B-TP2", "HYBRID", stop=activeStop, limit=activeTp2, qty_percent=50)
+            newLong := activeDir == 1
+            newShort := activeDir == -1
+
+// Keep broker-emulator protective orders synchronized after BBMA protection moves.
+if placeOrders and activeDir != 0 and activeEngine == "BBMA" and strategy.position_size != 0
+    strategy.exit("HYBRID-B-TP1", "HYBRID", stop=activeStop, limit=activeTp1, qty_percent=50)
+    strategy.exit("HYBRID-B-TP2", "HYBRID", stop=activeStop, limit=activeTp2, qty_percent=50)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visuals
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showBbmaBands ? bbUpper : na, "BB Upper", color=color.new(color.gray, 65))
+plot(showBbmaBands ? bbBasis : na, "BB Mid", color=color.new(color.gray, 75))
+plot(showBbmaBands ? bbLower : na, "BB Lower", color=color.new(color.gray, 65))
+plot(showBbmaBands ? ma5h : na, "MA5 High", color=color.new(color.orange, 45))
+plot(showBbmaBands ? ma5l : na, "MA5 Low", color=color.new(color.orange, 45))
+plot(showBbmaBands ? ema50 : na, "EMA50", color=color.new(color.purple, 45))
+
+plot(showTradeLevels and activeDir != 0 ? activeEntry : na, "Active Entry", color=color.white, linewidth=2, style=plot.style_linebr)
+plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active SL", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(showTradeLevels and activeDir != 0 ? activeTp1 : na, "Active TP1", color=color.lime, linewidth=2, style=plot.style_linebr)
+plot(showTradeLevels and activeDir != 0 and activeEngine == "BBMA" ? activeTp2 : na, "Active TP2", color=color.aqua, linewidth=2, style=plot.style_linebr)
+
+plotshape(showSignals and newLong, title="HYBRID BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.rgb(38, 208, 124), textcolor=color.white, size=size.tiny)
+plotshape(showSignals and newShort, title="HYBRID SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.rgb(255, 91, 105), textcolor=color.white, size=size.tiny)
+
+bgcolor(not isM5 ? color.new(color.orange, 84) : na, title="Use M5 warning")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard
+// ─────────────────────────────────────────────────────────────────────────────
+var table dash = table.new(position.top_right, 2, 16, bgcolor=color.rgb(9, 17, 29), frame_color=color.rgb(38, 58, 87), frame_width=1, border_color=color.rgb(38, 58, 87), border_width=1)
+
+if barstate.islast
+    if showDashboard
+        color stateColor = f_dir_color(activeDir)
+        color gateColor = rrAdaptiveGate ? color.rgb(38, 208, 124) : color.rgb(245, 185, 69)
+        string shadowText = str.tostring(array.size(rrShadowR)) + "/" + str.tostring(rrShadowWindow) + (na(rrShadowExpectancy) ? "" : " · " + str.tostring(rrShadowExpectancy, "#.000") + "R")
+        float wr = strategy.closedtrades > 0 ? strategy.wintrades * 100.0 / strategy.closedtrades : na
+
+        table.cell(dash, 0, 0, "CASIO HYBRID v1", text_color=color.white, bgcolor=color.rgb(24, 68, 135))
+        table.cell(dash, 1, 0, "M5 · LIVE/BT", text_color=color.white, bgcolor=color.rgb(24, 68, 135))
+        table.cell(dash, 0, 1, "STATE", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 1, f_dir_text(activeDir), text_color=stateColor)
+        table.cell(dash, 0, 2, "ENGINE", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 2, activeEngine, text_color=activeEngine == "RR10" ? color.rgb(91, 145, 255) : activeEngine == "BBMA" ? color.rgb(197, 130, 255) : color.gray)
+        table.cell(dash, 0, 3, "SETUP", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 3, activeSetup, text_color=color.white)
+        table.cell(dash, 0, 4, "RR10 GATE", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 4, rrAdaptiveGate ? "OPEN" : "CLOSED", text_color=gateColor)
+        table.cell(dash, 0, 5, "SHADOW", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 5, shadowText, text_color=color.white)
+        table.cell(dash, 0, 6, "RR MODE / SUPPORT", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 6, (rrStrongTrend ? "TREND" : "MIXED") + " / " + str.tostring(rrSupportDir), text_color=rrStrongTrend ? color.rgb(91, 145, 255) : color.rgb(245, 185, 69))
+        table.cell(dash, 0, 7, "ENTRY", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 7, f_price(activeEntry), text_color=color.white)
+        table.cell(dash, 0, 8, "SL", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 8, f_price(activeStop), text_color=color.rgb(255, 91, 105))
+        table.cell(dash, 0, 9, "TP1", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 9, f_price(activeTp1), text_color=color.rgb(38, 208, 124))
+        table.cell(dash, 0, 10, "TP2", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 10, activeEngine == "BBMA" ? f_price(activeTp2) : "—", text_color=color.aqua)
+        table.cell(dash, 0, 11, "PROTECTION", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 11, activeEngine == "BBMA" ? (activeProtected ? "+0.25R LOCK" : "WAIT +0.50R") : "—", text_color=activeProtected ? color.lime : color.white)
+        table.cell(dash, 0, 12, "BT CLOSED", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 12, str.tostring(strategy.closedtrades), text_color=color.white)
+        table.cell(dash, 0, 13, "BT WIN RATE", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 13, na(wr) ? "—" : str.tostring(wr, "#.00") + "%", text_color=color.white)
+        table.cell(dash, 0, 14, "BT NET", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 14, str.tostring(strategy.netprofit, "#.00") + " MYR", text_color=strategy.netprofit >= 0 ? color.lime : color.red)
+        table.cell(dash, 0, 15, "RISK", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 15, str.tostring(riskPct, "#.0") + "% / trade", text_color=color.white)
+    else
+        table.clear(dash, 0, 0, 1, 15)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live alerts
+// Create one TradingView alert using "Any alert() function call".
+// ─────────────────────────────────────────────────────────────────────────────
+if newLong or newShort
+    string direction = newLong ? "long" : "short"
+    string payload = '{"schema":"casio.bbma-rr-hybrid.v1","event":"signal","secret":"' + webhookSecret + '","engine":"' + activeEngine + '","setup":"' + activeSetup + '","symbol":"' + syminfo.ticker + '","timeframe":"5","direction":"' + direction + '","entry":' + str.tostring(activeEntry) + ',"stop":' + str.tostring(activeStop) + ',"tp1":' + str.tostring(activeTp1) + ',"tp2":' + str.tostring(activeTp2) + ',"risk_pct":' + str.tostring(riskPct) + ',"rr_shadow_n":' + str.tostring(array.size(rrShadowR)) + ',"rr_shadow_expectancy":' + (na(rrShadowExpectancy) ? "null" : str.tostring(rrShadowExpectancy)) + ',"rr_gate":' + (rrAdaptiveGate ? "true" : "false") + ',"bar_time":' + str.tostring(time_close) + '}'
+    alert(payload, alert.freq_once_per_bar_close)
+
+alertcondition(newLong, "CASIO HYBRID BUY", "CASIO BBMA–RR Adaptive Hybrid v1 BUY")
+alertcondition(newShort, "CASIO HYBRID SELL", "CASIO BBMA–RR Adaptive Hybrid v1 SELL")
