@@ -179,3 +179,8 @@ Before production promotion:
 4. run independent-feed robustness;
 5. run spread/slippage stress;
 6. confirm live alert payloads and lot-size behavior with the intended broker.
+
+
+## Management revision
+
+The BBMA +0.25R profit-lock rule has been removed. BBMA trades now keep the original structural stop unchanged until the trade exits through the initial SL, TP1/TP2 management, or an opposite CSM/CSAK exit. Future win-rate reporting should not count small protected-stop exits as wins.
