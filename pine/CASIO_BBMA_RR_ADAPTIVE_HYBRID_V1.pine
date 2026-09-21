@@ -582,8 +582,12 @@ plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active SL", color=co
 plot(showTradeLevels and activeDir != 0 ? activeTp1 : na, "Active TP1", color=color.lime, linewidth=2, style=plot.style_linebr)
 plot(showTradeLevels and activeDir != 0 and activeEngine == "BBMA" ? activeTp2 : na, "Active TP2", color=color.aqua, linewidth=2, style=plot.style_linebr)
 
-plotshape(showSignals and newLong, title="HYBRID BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.rgb(38, 208, 124), textcolor=color.white, size=size.tiny)
-plotshape(showSignals and newShort, title="HYBRID SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.rgb(255, 91, 105), textcolor=color.white, size=size.tiny)
+// Price-anchored signal labels. yloc.price keeps the marker fixed to the exact entry
+// price when the chart is zoomed or vertically rescaled.
+if showSignals and newLong
+    label.new(bar_index, activeEntry, "BUY\n" + activeEngine + "\n" + f_price(activeEntry), yloc=yloc.price, style=label.style_label_up, color=color.rgb(38, 208, 124), textcolor=color.white, size=size.small)
+if showSignals and newShort
+    label.new(bar_index, activeEntry, "SELL\n" + activeEngine + "\n" + f_price(activeEntry), yloc=yloc.price, style=label.style_label_down, color=color.rgb(255, 91, 105), textcolor=color.white, size=size.small)
 
 bgcolor(not isM5 ? color.new(color.orange, 84) : na, title="Use M5 warning")
 
