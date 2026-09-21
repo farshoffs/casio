@@ -15,8 +15,8 @@ strategy("CASIO BBMA–RR Adaptive Hybrid v1", overlay=true, max_labels_count=50
 // ─────────────────────────────────────────────────────────────────────────────
 string groupRun = "Run mode"
 string runMode = input.string("LIVE + BACKTEST", "Mode", options=["LIVE + BACKTEST", "LIVE SIGNALS ONLY"], group=groupRun)
-int backtestStart = input.time(timestamp("GMT+0", 2017, 1, 1, 0, 0), "Backtest start", group=groupRun)
-int backtestEnd = input.time(timestamp("GMT+0", 2035, 1, 1, 0, 0), "Backtest end", group=groupRun)
+int backtestStart = input.time(1483228800000, "Backtest start", group=groupRun)
+int backtestEnd = input.time(2051222400000, "Backtest end", group=groupRun)
 float riskPct = input.float(5.0, "Risk per entry (%)", minval=0.1, maxval=20.0, step=0.1, group=groupRun)
 
 string groupBBMA = "BBMA Cleaner Core"
@@ -145,12 +145,9 @@ float m5SellZone = math.min(ma5h, ma10h)
 bool m5ReLong = m5DirAgeLong >= 1 and m5DirAgeLong <= bbmaDirectionMemory and low <= m5BuyZone + 0.12 * atr5 and close > m5BuyZone and close > open
 bool m5ReShort = m5DirAgeShort >= 1 and m5DirAgeShort <= bbmaDirectionMemory and high >= m5SellZone - 0.12 * atr5 and close < m5SellZone and close < open
 
-[h1ReLong, h1ReShort, h1CsmAgeLong0, h1CsmAgeShort0, h1ZlLong, h1ZlShort, h1MajorLong, h1MajorShort, h1CsakLong, h1CsakShort, h1CsmLongClosed, h1CsmShortClosed] =
-    request.security(syminfo.tickerid, "60", f_bbma_closed(), lookahead=barmerge.lookahead_on)
-[m15ReLong, m15ReShort, m15CsmAgeLong0, m15CsmAgeShort0, m15ZlLong, m15ZlShort, m15MajorLong, m15MajorShort, m15CsakLong, m15CsakShort, m15CsmLongClosed, m15CsmShortClosed] =
-    request.security(syminfo.tickerid, "15", f_bbma_closed(), lookahead=barmerge.lookahead_on)
-[h4ReLong, h4ReShort, h4CsmAgeLong0, h4CsmAgeShort0, h4ZlLong, h4ZlShort, h4MajorLong, h4MajorShort, h4CsakLong, h4CsakShort, h4CsmLongClosed, h4CsmShortClosed] =
-    request.security(syminfo.tickerid, "240", f_bbma_closed(), lookahead=barmerge.lookahead_on)
+[h1ReLong, h1ReShort, h1CsmAgeLong0, h1CsmAgeShort0, h1ZlLong, h1ZlShort, h1MajorLong, h1MajorShort, h1CsakLong, h1CsakShort, h1CsmLongClosed, h1CsmShortClosed] = request.security(syminfo.tickerid, "60", f_bbma_closed(), lookahead=barmerge.lookahead_on)
+[m15ReLong, m15ReShort, m15CsmAgeLong0, m15CsmAgeShort0, m15ZlLong, m15ZlShort, m15MajorLong, m15MajorShort, m15CsakLong, m15CsakShort, m15CsmLongClosed, m15CsmShortClosed] = request.security(syminfo.tickerid, "15", f_bbma_closed(), lookahead=barmerge.lookahead_on)
+[h4ReLong, h4ReShort, h4CsmAgeLong0, h4CsmAgeShort0, h4ZlLong, h4ZlShort, h4MajorLong, h4MajorShort, h4CsakLong, h4CsakShort, h4CsmLongClosed, h4CsmShortClosed] = request.security(syminfo.tickerid, "240", f_bbma_closed(), lookahead=barmerge.lookahead_on)
 
 int h1CsmAgeLong = na(h1CsmAgeLong0) ? 10000 : h1CsmAgeLong0
 int h1CsmAgeShort = na(h1CsmAgeShort0) ? 10000 : h1CsmAgeShort0
