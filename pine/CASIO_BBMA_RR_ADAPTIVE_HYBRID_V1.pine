@@ -1,7 +1,7 @@
 //@version=6
 strategy("CASIO BBMA–RR Adaptive Hybrid v1", overlay=true, max_labels_count=500, max_lines_count=500,
      initial_capital=100, currency="MYR", pyramiding=0, commission_type=strategy.commission.percent,
-     commission_value=0.0, process_orders_on_close=true, calc_on_order_fills=true, use_bar_magnifier=true)
+     commission_value=0.0, process_orders_on_close=true, calc_on_order_fills=true, use_bar_magnifier=false)
 
 // CASIO BBMA–RR Adaptive Hybrid v1
 // Chart timeframe: XAUUSD M5.
