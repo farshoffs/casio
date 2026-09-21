@@ -582,12 +582,17 @@ plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active SL", color=co
 plot(showTradeLevels and activeDir != 0 ? activeTp1 : na, "Active TP1", color=color.lime, linewidth=2, style=plot.style_linebr)
 plot(showTradeLevels and activeDir != 0 and activeEngine == "BBMA" ? activeTp2 : na, "Active TP2", color=color.aqua, linewidth=2, style=plot.style_linebr)
 
-// Price-anchored signal labels. yloc.price keeps the marker fixed to the exact entry
-// price when the chart is zoomed or vertically rescaled.
+// Absolute-price signal markers.
+// With location.absolute, the numeric series value IS the marker's Y price.
+// This prevents the marker from drifting relative to the actual entry level.
+plotshape(showSignals and newLong ? activeEntry : na, title="HYBRID BUY @ ENTRY", text="BUY", style=shape.triangleup, location=location.absolute, color=color.rgb(38, 208, 124), textcolor=color.white, size=size.small)
+plotshape(showSignals and newShort ? activeEntry : na, title="HYBRID SELL @ ENTRY", text="SELL", style=shape.triangledown, location=location.absolute, color=color.rgb(255, 91, 105), textcolor=color.white, size=size.small)
+
+// Optional compact text labels, also pinned to price, for engine + exact entry.
 if showSignals and newLong
-    label.new(bar_index, activeEntry, "BUY\n" + activeEngine + "\n" + f_price(activeEntry), yloc=yloc.price, style=label.style_label_up, color=color.rgb(38, 208, 124), textcolor=color.white, size=size.small)
+    label.new(bar_index, activeEntry, activeEngine + "  " + f_price(activeEntry), xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=color.rgb(38, 208, 124), size=size.tiny)
 if showSignals and newShort
-    label.new(bar_index, activeEntry, "SELL\n" + activeEngine + "\n" + f_price(activeEntry), yloc=yloc.price, style=label.style_label_down, color=color.rgb(255, 91, 105), textcolor=color.white, size=size.small)
+    label.new(bar_index, activeEntry, activeEngine + "  " + f_price(activeEntry), xloc=xloc.bar_index, yloc=yloc.price, style=label.style_none, textcolor=color.rgb(255, 91, 105), size=size.tiny)
 
 bgcolor(not isM5 ? color.new(color.orange, 84) : na, title="Use M5 warning")
 
