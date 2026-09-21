@@ -25,8 +25,6 @@ int bbmaMaxTradesDay = input.int(3, "Maximum entries / day", minval=1, maxval=10
 float bbmaMinRiskAtr = input.float(1.0, "Minimum structural stop / M5 ATR", minval=0.1, step=0.1, group=groupBBMA)
 float bbmaMaxRiskAtr = input.float(1.8, "Maximum structural stop / M5 ATR", minval=0.2, step=0.1, group=groupBBMA)
 float bbmaStopBufferAtr = input.float(0.15, "Swing stop ATR buffer", minval=0.0, step=0.05, group=groupBBMA)
-float bbmaProtectTriggerR = input.float(0.50, "Protection trigger (R)", minval=0.1, step=0.05, group=groupBBMA)
-float bbmaProtectLockR = input.float(0.25, "Protected stop (R)", minval=0.0, step=0.05, group=groupBBMA)
 float bbmaTp1R = input.float(3.0, "TP1 R (50%)", minval=0.5, step=0.25, group=groupBBMA)
 float bbmaTp2R = input.float(4.0, "TP2 R (50%)", minval=1.0, step=0.25, group=groupBBMA)
 int bbmaDirectionMemory = input.int(12, "CSAK/CSM → re-entry memory", minval=2, maxval=30, group=groupBBMA)
@@ -452,7 +450,6 @@ var float activeRisk = na
 var float activeTp1 = na
 var float activeTp2 = na
 var float activeRemaining = 0.0
-var bool activeProtected = false
 var int activeEntryBar = na
 
 bool flat = activeDir == 0
@@ -462,7 +459,6 @@ bool planClosed = false
 string closeReason = ""
 
 // Conservative manual lifecycle for dashboard/live plan.
-// Protection changes apply after the trigger bar closes.
 if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
     bool stopHit = activeDir == 1 ? low <= activeStop : high >= activeStop
     bool tp2Hit = activeDir == 1 ? high >= activeTp2 : low <= activeTp2
@@ -483,11 +479,6 @@ if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
         if not planClosed and oppositeBbma
             planClosed := true
             closeReason := "OPPOSITE CSM/CSAK"
-        if not planClosed and not activeProtected
-            bool protectTouched = activeDir == 1 ? high >= activeEntry + bbmaProtectTriggerR * activeRisk : low <= activeEntry - bbmaProtectTriggerR * activeRisk
-            if protectTouched
-                activeProtected := true
-                activeStop := activeEntry + activeDir * bbmaProtectLockR * activeRisk
     else
         if tp1Hit
             planClosed := true
@@ -498,10 +489,8 @@ if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
             strategy.close_all(comment=closeReason)
         if showSignals
             float closeMarkerPrice = closeReason == "SL" ? activeStop : closeReason == "TP2" ? activeTp2 : closeReason == "TP" ? activeTp1 : close
-            bool protectedStopExit = closeReason == "SL" and activeProtected
-            string closeLabel = protectedStopExit ? activeEngine + " LOCK +0.25R" : activeEngine + " " + closeReason
-            color closeColor = protectedStopExit ? color.rgb(38, 208, 124) : closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124)
-            label.new(bar_index, closeMarkerPrice, closeLabel, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=closeColor, force_overlay=true)
+            color closeColor = closeReason == "SL" ? color.rgb(255, 91, 105) : color.rgb(38, 208, 124)
+            label.new(bar_index, closeMarkerPrice, activeEngine + " " + closeReason, xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, textcolor=color.white, color=closeColor, force_overlay=true)
         activeDir := 0
         activeEngine := "WAIT"
         activeSetup := "WAIT"
@@ -512,7 +501,6 @@ if barstate.isconfirmed and activeDir != 0 and bar_index > activeEntryBar
         activeTp1 := na
         activeTp2 := na
         activeRemaining := 0.0
-        activeProtected := false
         activeEntryBar := na
 
 // RR10 takes priority only if flat and adaptive gate is open.
@@ -553,8 +541,7 @@ if barstate.isconfirmed and flat and isM5 and inDate
             activeTp1 := close + bbmaDir * bbmaTp1R * bRisk
             activeTp2 := close + bbmaDir * bbmaTp2R * bRisk
             activeRemaining := 1.0
-            activeProtected := false
-            activeEntryBar := bar_index
+                activeEntryBar := bar_index
             bbmaLastEntryBar := bar_index
             bbmaTradesToday += 1
             if placeOrders
@@ -566,7 +553,7 @@ if barstate.isconfirmed and flat and isM5 and inDate
             newLong := activeDir == 1
             newShort := activeDir == -1
 
-// Keep broker-emulator protective orders synchronized after BBMA protection moves.
+// Keep BBMA broker-emulator exits synchronized with the fixed initial stop and targets.
 if placeOrders and activeDir != 0 and activeEngine == "BBMA" and strategy.position_size != 0
     strategy.exit("HYBRID-B-TP1", "HYBRID", stop=activeStop, limit=activeTp1, qty_percent=50)
     strategy.exit("HYBRID-B-TP2", "HYBRID", stop=activeStop, limit=activeTp2, qty_percent=50)
@@ -582,7 +569,7 @@ plot(showBbmaBands ? ma5l : na, "MA5 Low", color=color.new(color.orange, 45), fo
 plot(showBbmaBands ? ema50 : na, "EMA50", color=color.new(color.purple, 45), force_overlay=true)
 
 plot(showTradeLevels and activeDir != 0 ? activeEntry : na, "Active Entry", color=color.white, linewidth=2, style=plot.style_linebr, force_overlay=true)
-plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active Stop", color=activeProtected ? color.lime : color.red, linewidth=2, style=plot.style_linebr, force_overlay=true)
+plot(showTradeLevels and activeDir != 0 ? activeStop : na, "Active SL", color=color.red, linewidth=2, style=plot.style_linebr, force_overlay=true)
 plot(showTradeLevels and activeDir != 0 ? activeTp1 : na, "Active TP1", color=color.lime, linewidth=2, style=plot.style_linebr, force_overlay=true)
 plot(showTradeLevels and activeDir != 0 and activeEngine == "BBMA" ? activeTp2 : na, "Active TP2", color=color.aqua, linewidth=2, style=plot.style_linebr, force_overlay=true)
 
@@ -634,8 +621,8 @@ if barstate.islast
         table.cell(dash, 1, 9, f_price(activeTp1), text_color=color.rgb(38, 208, 124))
         table.cell(dash, 0, 10, "TP2", text_color=color.rgb(143, 163, 189))
         table.cell(dash, 1, 10, activeEngine == "BBMA" ? f_price(activeTp2) : "—", text_color=color.aqua)
-        table.cell(dash, 0, 11, "PROTECTION", text_color=color.rgb(143, 163, 189))
-        table.cell(dash, 1, 11, activeEngine == "BBMA" ? (activeProtected ? "+0.25R LOCK" : "WAIT +0.50R") : "—", text_color=activeProtected ? color.lime : color.white)
+        table.cell(dash, 0, 11, "MANAGEMENT", text_color=color.rgb(143, 163, 189))
+        table.cell(dash, 1, 11, activeEngine == "BBMA" ? "NO PROFIT LOCK" : "FIXED 3R", text_color=color.white)
         table.cell(dash, 0, 12, "BT CLOSED", text_color=color.rgb(143, 163, 189))
         table.cell(dash, 1, 12, str.tostring(strategy.closedtrades), text_color=color.white)
         table.cell(dash, 0, 13, "BT WIN RATE", text_color=color.rgb(143, 163, 189))
