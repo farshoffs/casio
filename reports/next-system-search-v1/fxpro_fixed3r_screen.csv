@@ -1,0 +1,10 @@
+technique,trades,avg_trades_per_month,min_month,win_rate_pct,expectancy_r,profit_factor,positive_years_of_10,worst_yearly_dd_pct_at_5pct_risk,decision
+tick_volume_displacement_momentum,2838,24.26,13,27.10,0.084,1.115,7,99.6,"reject standalone; test only with regime gate"
+adx_di_m15_pullback,2777,23.74,13,26.76,0.070,1.096,4,96.8,"reject standalone"
+volatility_compression_breakout,1210,10.34,3,28.43,0.137,1.192,6,90.9,"keep only as retest redesign candidate"
+h1_h4_donchian_breakout,2862,24.46,9,26.90,0.076,1.104,5,94.5,"reject standalone"
+adx_expansion_breakout,4389,37.51,23,25.59,0.024,1.032,3,97.8,"reject"
+local_liquidity_sweep_reversal,1430,12.22,2,24.97,-0.001,0.998,3,90.6,"reject"
+bollinger_range_reversion,1955,16.71,3,25.12,0.005,1.006,3,94.3,"reject"
+previous_day_liquidity_sweep_reversal,1353,11.56,1,24.98,-0.001,0.999,3,95.2,"reject"
+simple_asia_range_breakout,936,8.00,0,25.43,0.017,1.023,5,88.2,"reject simple form"
