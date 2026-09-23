@@ -335,11 +335,11 @@ def make_cards():
         sessions = ["PRIMARY","ALL"] if family in ["displacement_retrace","fvg_ce","sweep_displacement"] else ["ALL"]
         for b in biases:
             for s in sessions:
-                for da in [0.7, 0.9, 1.1, 1.3]:
-                    for bf in [0.65, 0.75, 0.85]:
-                        for rt in [0.50, 0.618, 0.705]:
-                            for wait in [30, 60, 120]:
-                                for lb in ([8,12,20] if family in ["displacement_retrace","sweep_displacement"] else [12]):
+                for da in [0.9, 1.2]:
+                    for bf in [0.70, 0.82]:
+                        for rt in [0.50, 0.705]:
+                            for wait in [30, 90]:
+                                for lb in ([8,20] if family in ["displacement_retrace","sweep_displacement"] else [12]):
                                     name = f"{family}__{b}__{s}__D{da}__B{bf}__R{rt}__W{wait}__L{lb}"
                                     out.append(Card(name,family,b,s,da,bf,rt,wait,lb,0.04))
     return out
