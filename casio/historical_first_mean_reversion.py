@@ -25,8 +25,8 @@ def prep(m5):
 
     mins=f.index.hour*60+f.index.minute; f["mins"]=mins
     asia=(mins>=0)&(mins<6*60); nyor=(mins>=12*60+30)&(mins<13*60+30)
-    ast=f.loc[asia].groupby(day).agg(asia_h=("high","max"),asia_l=("low","min"))
-    nst=f.loc[nyor].groupby(day).agg(ny_h=("high","max"),ny_l=("low","min"))
+    ast=f.loc[asia].groupby(f.loc[asia,"day"]).agg(asia_h=("high","max"),asia_l=("low","min"))
+    nst=f.loc[nyor].groupby(f.loc[nyor,"day"]).agg(ny_h=("high","max"),ny_l=("low","min"))
     f["asia_h"]=day.map(ast.asia_h); f["asia_l"]=day.map(ast.asia_l)
     f["ny_h"]=day.map(nst.ny_h); f["ny_l"]=day.map(nst.ny_l)
     daily=f.groupby(day).agg(dh=("high","max"),dl=("low","min")); prev=daily.shift(1)
