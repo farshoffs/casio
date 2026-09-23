@@ -171,7 +171,7 @@ def signal_masks(f: pd.DataFrame, c: Card):
         sh = dn & was_inside & (f.close < mother_lo) & (f.body_atr >= c.body_min) & (f.adx >= c.adx_min)
 
     elif c.family == "squeeze_break":
-        prev_sq = f.squeeze.shift(1)
+        prev_sq = f["squeeze"].shift(1)
         lo = up & prev_sq & (f.close > f.bb_up) & (f.body_atr >= c.body_min) & volok
         sh = dn & prev_sq & (f.close < f.bb_dn) & (f.body_atr >= c.body_min) & volok
 
