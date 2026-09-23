@@ -1,0 +1,37 @@
+name: Historical First Strict Search
+
+on:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - 'casio/historical_first_strict_search.py'
+      - '.github/workflows/historical-first-strict-search.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run strict historical search
+        run: |
+          python -m casio.historical_first_strict_search \
+            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/historical-first-strict-search
+      - name: Publish summary
+        run: cat reports/historical-first-strict-search/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-strict-search
+          path: reports/historical-first-strict-search/
+          retention-days: 30
