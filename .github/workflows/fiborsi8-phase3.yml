@@ -1,0 +1,37 @@
+name: FiboRSI8 Phase 3 MTF Research
+
+on:
+  push:
+    branches:
+      - research/fiborsi8-backtest-20260923
+    paths:
+      - 'casio/fiborsi8_phase3.py'
+      - '.github/workflows/fiborsi8-phase3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run phase 3
+        run: |
+          python -m casio.fiborsi8_phase3 \
+            --data data/xauusd_m5_dukascopy_research.csv \
+            --output reports/fiborsi8-phase3-2026
+      - name: Publish summary
+        run: cat reports/fiborsi8-phase3-2026/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fiborsi8-phase3-2026
+          path: reports/fiborsi8-phase3-2026/
+          retention-days: 30
