@@ -32,7 +32,7 @@ jobs:
       - name: Run FiboRSI8 2026 backtest
         run: |
           python -m casio.fiborsi8_backtest \
-            --data data/xauusd_m5.csv \
+            --data data/xauusd_m5_dukascopy_research.csv \
             --output reports/fiborsi8-2026
 
       - name: Publish summary
