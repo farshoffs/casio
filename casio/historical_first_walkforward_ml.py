@@ -93,7 +93,8 @@ def add_signals(f):
 
     sig=pd.DataFrame(rows,columns=["i","direction","family"]).drop_duplicates(["i","direction","family"])
     if sig.empty: return sig
-    rr=f.iloc[sig.i.to_numpy()].copy().reset_index().rename(columns={"index":"signal_time"})
+    rr=f.iloc[sig.i.to_numpy()].copy().reset_index()
+    rr=rr.rename(columns={rr.columns[0]:"signal_time"})
     sig=sig.reset_index(drop=True)
     out=pd.concat([sig,rr.reset_index(drop=True)],axis=1)
     return out
