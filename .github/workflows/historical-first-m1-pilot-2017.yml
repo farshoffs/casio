@@ -1,0 +1,60 @@
+name: Historical First M1 Pilot 2017
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - '.github/workflows/historical-first-m1-pilot-2017.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+      - name: Fetch 2017 M1 plus warmup
+        run: |
+          node scripts/fetch_dukascopy_m1.mjs \
+            --from '2016-10-01T00:00:00Z' \
+            --to '2018-01-01T00:00:00Z' \
+            --output tmp/xauusd_m1_pilot.csv \
+            --price-type bid \
+            --batch-size 15 \
+            --batch-pause-ms 100
+      - name: Validate
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          d=pd.read_csv('tmp/xauusd_m1_pilot.csv')
+          t=pd.to_datetime(d.timestamp,utc=True)
+          print(f'rows={len(d):,} coverage={t.min()} -> {t.max()}')
+          if len(d)<250000: raise SystemExit('pilot too small')
+          PY
+      - name: Run M1 pilot
+        run: |
+          python -m casio.historical_first_m1_precision \
+            --data tmp/xauusd_m1_pilot.csv \
+            --output reports/historical-first-m1-pilot
+      - name: Summary
+        run: cat reports/historical-first-m1-pilot/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-m1-pilot-2017
+          path: reports/historical-first-m1-pilot/
+          retention-days: 30
