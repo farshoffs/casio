@@ -1,0 +1,37 @@
+name: Historical First Two Stage
+
+on:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - 'casio/historical_first_two_stage.py'
+      - '.github/workflows/historical-first-two-stage.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run two-stage search
+        run: |
+          python -m casio.historical_first_two_stage \
+            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/historical-first-two-stage
+      - name: Publish summary
+        run: cat reports/historical-first-two-stage/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-two-stage
+          path: reports/historical-first-two-stage/
+          retention-days: 30
