@@ -1,0 +1,46 @@
+name: FiboRSI8 Phase 2 Research
+
+on:
+  push:
+    branches:
+      - research/fiborsi8-backtest-20260923
+    paths:
+      - 'casio/fiborsi8_phase2.py'
+      - '.github/workflows/fiborsi8-phase2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run FiboRSI8 phase 2
+        run: |
+          python -m casio.fiborsi8_phase2 \
+            --data data/xauusd_m5_dukascopy_research.csv \
+            --output reports/fiborsi8-phase2-2026
+
+      - name: Publish summary
+        run: cat reports/fiborsi8-phase2-2026/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiborsi8-phase2-2026
+          path: reports/fiborsi8-phase2-2026/
+          retention-days: 30
