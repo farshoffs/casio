@@ -23,6 +23,7 @@ class CashSpec:
 def cashflow_metrics(tr: pd.DataFrame):
     months=pd.period_range("2017-01","2020-12",freq="M")
     bal=START_RM
+    peak=bal
     max_dd=0.0
     rows=[]
     zero_streak=0
@@ -38,7 +39,6 @@ def cashflow_metrics(tr: pd.DataFrame):
 
     for m in months:
         start_bal=bal
-        peak=bal
         g=groups.get(m,pd.DataFrame())
         wins=losses=0
         month_r=0.0
@@ -55,7 +55,8 @@ def cashflow_metrics(tr: pd.DataFrame):
         trading_positive=month_pnl>1e-9
         withdrawal=max(0.0,pre_withdraw-BASE_RM)
         if withdrawal>0:
-            bal=BASE_RM
+            bal-=withdrawal
+            peak=max(bal, peak-withdrawal)
             total_withdraw+=withdrawal
             zero_streak=0
         else:
