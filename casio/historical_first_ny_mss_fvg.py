@@ -118,7 +118,10 @@ def specs():
 def run(data_path,output_dir):
     out=Path(output_dir);out.mkdir(parents=True,exist_ok=True)
     raw=load_m5_csv(data_path);m5=raw[(raw.index>=pd.Timestamp("2016-01-01",tz="UTC"))&(raw.index<DEV_END)].copy()
-    f=prep(m5);sp=specs();rows=[];yrs=[];alltr=[]
+    f=prep(m5)
+    f["ph6"]=f.high.shift(1).rolling(6).max()
+    f["pl6"]=f.low.shift(1).rolling(6).min()
+    sp=specs();rows=[];yrs=[];alltr=[]
     for src,b,w,slb,mlb,smw,disp,fgw,ew in sp:
         name=f"NYSB__{src}__{b}__{w}__S{slb}__M{mlb}__SM{smw}__D{disp}__F{fgw}__E{ew}"
         tr=replay(m5,find_setups(f,src,b,w,slb,mlb,smw,disp,fgw,ew),name)
