@@ -1,0 +1,37 @@
+name: Historical First NY Cashflow
+
+on:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - 'casio/historical_first_ny_cashflow.py'
+      - '.github/workflows/historical-first-ny-cashflow.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run NY monthly cashflow search
+        run: |
+          python -m casio.historical_first_ny_cashflow \
+            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/historical-first-ny-cashflow
+      - name: Publish summary
+        run: cat reports/historical-first-ny-cashflow/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-ny-cashflow
+          path: reports/historical-first-ny-cashflow/
+          retention-days: 30
