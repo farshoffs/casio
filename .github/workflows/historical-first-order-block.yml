@@ -1,0 +1,37 @@
+name: Historical First Order Block
+
+on:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - 'casio/historical_first_order_block.py'
+      - '.github/workflows/historical-first-order-block.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run order-block retest search
+        run: |
+          python -m casio.historical_first_order_block \
+            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/historical-first-order-block
+      - name: Publish summary
+        run: cat reports/historical-first-order-block/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-order-block
+          path: reports/historical-first-order-block/
+          retention-days: 30
