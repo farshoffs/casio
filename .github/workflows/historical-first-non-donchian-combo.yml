@@ -1,0 +1,37 @@
+name: Historical First Non Donchian Combos
+
+on:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - 'casio/historical_first_non_donchian_combo.py'
+      - '.github/workflows/historical-first-non-donchian-combo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run non-Donchian combinations
+        run: |
+          python -m casio.historical_first_non_donchian_combo \
+            --data data/xauusd_m5_secondary_octafx_mt4.csv \
+            --output reports/historical-first-non-donchian-combo
+      - name: Publish summary
+        run: cat reports/historical-first-non-donchian-combo/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-non-donchian-combo
+          path: reports/historical-first-non-donchian-combo/
+          retention-days: 30
