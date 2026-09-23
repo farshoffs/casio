@@ -1,0 +1,46 @@
+name: FiboRSI8 2026 Backtest Research
+
+on:
+  push:
+    branches:
+      - research/fiborsi8-backtest-20260923
+    paths:
+      - 'casio/fiborsi8_backtest.py'
+      - '.github/workflows/fiborsi8-backtest-2026.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run FiboRSI8 2026 backtest
+        run: |
+          python -m casio.fiborsi8_backtest \
+            --data data/xauusd_m5.csv \
+            --output reports/fiborsi8-2026
+
+      - name: Publish summary
+        run: cat reports/fiborsi8-2026/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiborsi8-2026-backtest
+          path: reports/fiborsi8-2026/
+          retention-days: 30
