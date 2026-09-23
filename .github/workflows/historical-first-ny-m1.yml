@@ -1,0 +1,61 @@
+name: Historical First NY M1 Precision
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/historical-2017-2020
+    paths:
+      - 'casio/historical_first_ny_m1.py'
+      - '.github/workflows/historical-first-ny-m1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+      - name: Download Dukascopy XAUUSD M1 development data
+        run: |
+          node scripts/fetch_dukascopy_m1.mjs \
+            --from '2016-10-01T00:00:00Z' \
+            --to '2021-01-01T00:00:00Z' \
+            --output tmp/xauusd_m1_2016q4_2020.csv \
+            --price-type bid
+      - name: Validate M1 data
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          p='tmp/xauusd_m1_2016q4_2020.csv'
+          d=pd.read_csv(p)
+          t=pd.to_datetime(d.timestamp,utc=True,errors='raise')
+          print(f'M1 rows={len(d):,} coverage={t.min()} -> {t.max()}')
+          if len(d)<800000:
+              raise SystemExit('M1 dataset implausibly small')
+          PY
+      - name: Run NY M1 precision search
+        run: |
+          python -m casio.historical_first_ny_m1 \
+            --data tmp/xauusd_m1_2016q4_2020.csv \
+            --output reports/historical-first-ny-m1
+      - name: Publish summary
+        run: cat reports/historical-first-ny-m1/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: historical-first-ny-m1
+          path: reports/historical-first-ny-m1/
+          retention-days: 30
