@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout research branch
         uses: actions/checkout@v4
+      - name: Install Python dependencies
+        run: python -m pip install --disable-pip-version-check -q numpy pandas
       - name: Run Bermula backtest
         run: python research/bermula_native_backtest.py
       - name: Upload report
