@@ -69,6 +69,25 @@ def build_zones(h4):
                           "low":lo,"high":hi,"mid":(lo+hi)/2,"atr":av})
     return pd.DataFrame(zones)
 
+def build_sr_levels(h4):
+    """All causally confirmed H4 swing S/R levels used only for structural exits."""
+    levels=[]
+    L=PARAMS["h4_pivot_left"]; R=PARAMS["h4_pivot_right"]
+    for i in range(L, len(h4)-R-1):
+        lo=float(h4.low.iloc[i]); hi=float(h4.high.iloc[i])
+        is_low = lo < float(h4.low.iloc[i-L:i].min()) and lo <= float(h4.low.iloc[i+1:i+R+1].min())
+        is_high = hi > float(h4.high.iloc[i-L:i].max()) and hi >= float(h4.high.iloc[i+1:i+R+1].max())
+        confirm_i=i+R+1
+        if confirm_i>=len(h4): continue
+        confirm_time=h4.index[confirm_i]
+        if is_low:
+            levels.append({"id":len(levels),"kind":"support","origin_time":h4.index[i],"confirm_time":confirm_time,
+                           "low":lo,"high":hi,"mid":(lo+hi)/2})
+        if is_high:
+            levels.append({"id":len(levels),"kind":"resistance","origin_time":h4.index[i],"confirm_time":confirm_time,
+                           "low":lo,"high":hi,"mid":(lo+hi)/2})
+    return pd.DataFrame(levels)
+
 def h4_bias_series(zones,h1_index):
     zs=zones.sort_values("confirm_time").to_dict("records")
     out=[]; p=0; highs=[]; lows=[]
@@ -136,10 +155,9 @@ def breakout_events(h1,zones):
     zones["break_down_time"]=pd.to_datetime(break_dn_time,utc=True)
     return pd.DataFrame(events), zones, h1
 
-def nearest_target(zones, entry_time, direction, entry, own_zone_id):
-    known=zones[(zones.confirm_time<=entry_time) & (zones.id!=own_zone_id)]
+def nearest_target(sr_levels, entry_time, direction, entry):
+    known=sr_levels[sr_levels.confirm_time<=entry_time]
     if direction==1:
-        # Nearest known opposing S/R above entry; target its near edge.
         x=known[(known.kind=="resistance") & (known.low>entry)]
         if x.empty: return None,None
         z=x.sort_values("low").iloc[0]
@@ -149,7 +167,7 @@ def nearest_target(zones, entry_time, direction, entry, own_zone_id):
     z=x.sort_values("high",ascending=False).iloc[0]
     return float(z.high), int(z.id)
 
-def make_trades(m5, events, zones):
+def make_trades(m5, events, zones, sr_levels):
     diag={"events":int(len(events)),"pullback_touch":0,"confirmation":0,"target_available":0,"completed":0,"no_pullback_or_invalid":0,"no_confirmation_or_invalid":0,"no_target":0,"bad_rr_geometry":0}
     x=m5.copy()
     x["atr"]=atr(x)
@@ -206,7 +224,7 @@ def make_trades(m5, events, zones):
         if risk<=0:
             diag["bad_rr_geometry"]+=1
             continue
-        target,target_zone=nearest_target(zones,entry_time,direction,entry,int(e.zone_id))
+        target,target_zone=nearest_target(sr_levels,entry_time,direction,entry)
         if target is None:
             diag["no_target"]+=1
             continue
@@ -257,7 +275,7 @@ def metrics(t):
     if t.empty: return {}
     r=t.net_r.astype(float)
     gw=float(r[r>0].sum()); gl=float(-r[r<0].sum())
-    eq=r.cumsum(); dd=eq.cummax()-eq
+    eq=pd.concat([pd.Series([0.0]), r.reset_index(drop=True).cumsum()],ignore_index=True); dd=eq.cummax()-eq
     w,l=streaks(r.to_list())
     return {
         "trades":int(len(t)),"wins":int((r>0).sum()),"losses":int((r<0).sum()),
@@ -271,8 +289,9 @@ def metrics(t):
 def main():
     m5=load(); h1=resample(m5,"1h"); h4=resample(m5,"4h")
     zones=build_zones(h4)
+    sr_levels=build_sr_levels(h4)
     events,zones,h1x=breakout_events(h1,zones)
-    trades,diagnostics=make_trades(m5,events,zones)
+    trades,diagnostics=make_trades(m5,events,zones,sr_levels)
     if not trades.empty:
         trades["year"]=pd.to_datetime(trades.entry_time,utc=True).dt.year
         trades["month"]=pd.to_datetime(trades.entry_time,utc=True).dt.strftime("%Y-%m")
@@ -284,13 +303,14 @@ def main():
         "strategy":"Paul-X Bermula Breakout/Continuation — source-faithful prototype",
         "data":{"start":str(m5.index.min()),"end":str(m5.index.max()),"m5_bars":int(len(m5))},
         "parameters":PARAMS,
-        "zones":int(len(zones)),"breakout_events":int(len(events)),"diagnostics":diagnostics,"overall":overall,
+        "zones":int(len(zones)),"sr_levels":int(len(sr_levels)),"breakout_events":int(len(events)),"diagnostics":diagnostics,"overall":overall,
         "yearly":yearly,"monthly":monthly,"by_direction":by_dir,
         "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. This test uses only the higher-confidence Breakout -> Pullback -> lower-TF confirmation sequence.",
-        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit is the nearest known opposing H4 S/R area; prior historical breaks do not automatically erase that area because the supplied lessons do not establish such an invalidation rule.",
+        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit is the nearest causally confirmed opposing H4 swing S/R area. Entry zones remain the stricter displacement-qualified Bermula zones; the exit map uses ordinary confirmed H4 S/R because the lessons teach S/R for entry and exit.",
     }
     trades.to_csv(OUT/"trades.csv",index=False)
     zones.to_csv(OUT/"zones.csv",index=False)
+    sr_levels.to_csv(OUT/"sr_levels.csv",index=False)
     events.to_csv(OUT/"breakout_events.csv",index=False)
     (OUT/"report.json").write_text(json.dumps(report,indent=2,default=str))
     md=["# Bermula Native Backtest Report","",
