@@ -1,0 +1,30 @@
+name: Bermula Native Backtest
+
+on:
+  push:
+    branches:
+      - research/youtube-playlist-technique
+    paths:
+      - "research/bermula_native_backtest.py"
+      - ".github/workflows/bermula-native-backtest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Run Bermula backtest
+        run: python research/bermula_native_backtest.py
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bermula-native-backtest
+          path: reports/bermula-native/
+          if-no-files-found: error
+          retention-days: 14
