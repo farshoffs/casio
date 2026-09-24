@@ -201,13 +201,19 @@ def run_one(path,label,start=None,end=None):
     m15,A,h1b,h4b,h4ad,vL,vS,sfL,sfS=build_context(m5)
     ev=event_stream(m15,vL,vS,sfL,sfS)
     sh=shadow_outcomes(m5,m15,A,ev)
+    print(f"{label}: m5={len(m5)} m15={len(m15)} events={len(ev)} shadow={len(sh)}", flush=True)
     rt,en=enrich_and_route(sh,h1b,h4b,h4ad)
+    gate_rates=en.groupby("tech").gate.mean().to_dict() if len(en) else {}
+    print(f"{label}: gate_rates={gate_rates} routed={len(rt)} columns={list(rt.columns)}", flush=True)
     startx=m5.index.min(); endx=m5.index.max()+pd.Timedelta(minutes=5)
     s=summarize(rt,startx,endx,label)
     rt.to_csv(OUT/f"{label}_trades.csv",index=False)
     en.to_csv(OUT/f"{label}_shadow.csv",index=False)
     yr=[]
-    for y,g in rt.groupby(rt.entry_time.dt.year):
+    if rt.empty:
+        pd.DataFrame(columns=["feed","year","trades","wr_pct","net_r","pf"]).to_csv(OUT/f"{label}_yearly.csv",index=False)
+        return s
+    for y,g in rt.groupby(rt["entry_time"].dt.year):
         r=g.net_r.to_numpy(float)
         pf=r[r>0].sum()/abs(r[r<0].sum()) if (r<0).any() else np.inf
         yr.append({"feed":label,"year":int(y),"trades":len(g),"wr_pct":100*(g.gross_r>0).mean(),"net_r":r.sum(),"pf":pf})
