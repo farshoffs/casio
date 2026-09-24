@@ -1,0 +1,10 @@
+category,symbol,strategy,trades,win_rate_pct,gross_pf_3r,avg_trades_month,min_trades_month,passes_new_gate,failure
+frequency-qualified,EURUSD,FIBORSI8_23_77_HTF32.5,2947,30.743129,1.331700,25.215517,14,false,PF below 1.50
+frequency-qualified,GBPUSD,FIBORSI8_20_80,1784,28.082960,1.171473,15.301724,8,false,WR and PF below target
+frequency-qualified,GBPUSD,FIBORSI8_23_77_HTF32.5,2867,26.682944,1.091817,24.577586,12,false,WR and PF below target
+frequency-qualified,GBPJPY,TICKVOL_MOMENTUM,2930,26.245734,1.067561,25.025862,12,false,WR and PF below target
+frequency-qualified,EURUSD,ADX_DI_ROTATION,2592,24.112654,0.953228,22.189655,9,false,WR and PF below target
+frequency-qualified,EURUSD,TICKVOL_MOMENTUM,3596,24.054505,0.950201,30.836207,17,false,WR and PF below target
+WR/PF-qualified but sparse,EURUSD+GBPUSD+GBPJPY,MTF deep retrace NY ADX28 bodyATR0.5 BF0.72 LB16 R0.705,111,34.234234,1.561644,0.956897,0,false,frequency far below target
+WR/PF-qualified but sparse,EURUSD+GBPUSD+GBPJPY,MTF deep retrace NY ADX28 bodyATR1.0 BF0.72 LB8 R0.705,108,34.259259,1.563380,0.931034,0,false,frequency far below target
+WR/PF-qualified but sparse,EURUSD+GBPUSD+GBPJPY,MTF deep retrace NY ADX28 bodyATR0.8 BF0.72 LB16 R0.705,100,34.000000,1.545455,0.862069,0,false,frequency far below target
