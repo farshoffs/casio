@@ -1,0 +1,73 @@
+version: 0
+status: evidence_derived_not_backtest_ready
+technique:
+  family: Paul-X Bermula SNR
+  basis:
+    - support_resistance
+    - origin_zones_bermula
+    - displacement_breakout
+    - pullback_retest
+    - lower_timeframe_confirmation
+    - role_reversal
+setup_families:
+  - reversal
+  - breakout_continuation
+direct_rules:
+  R001: "Use support/resistance as the foundational map."
+  R002: "Bermula marks the area where a meaningful rise or fall began."
+  R003: "Reaction at a zone evidences buyer/seller interest."
+  R004: "Breakout should show meaningful/strong displacement."
+  R005: "Breakout setup sequence is breakout -> pullback -> entry."
+  R006: "Entry location requires confirmation."
+  R007: "Confirmation is sought on a lower timeframe."
+  R008: "Broken resistance can become support; broken support can become resistance."
+  R009: "A break that closes back inside may be invalid as breakout in the shown context."
+  R010: "Fresh/untouched zones are preferred."
+  R011: "Higher timeframes provide setup/direction context; lower timeframes refine entries."
+  R012: "The method recognizes reversal and continuation setup families."
+  R013: "Direction/bias is evaluated separately from the entry trigger."
+derived_rules:
+  D001:
+    rule: "Lower-timeframe confirmation often appears to be a nested Bermula/micro-structure sequence inside or around the higher-timeframe zone."
+    confidence: medium
+    needs_resolution: true
+  D002:
+    rule: "A clean breakout followed by return/respect of the broken level is the canonical continuation setup."
+    confidence: high
+unresolved_terms:
+  SMA:
+    status: unresolved
+    warning: "Do not interpret as Simple Moving Average without source proof."
+  FM:
+    status: unresolved
+  facelift:
+    status: unresolved
+  Miss:
+    status: unresolved_confirmation_term
+  Deep:
+    status: unresolved_confirmation_term
+  Accurate:
+    status: unresolved_confirmation_term
+conflicts:
+  breakout_close:
+    evidence_a: "Video 05 says break then close back inside is not breakout."
+    evidence_b: "Video 13 identifies a breakout before candle close in one example."
+    action: "Keep both interpretations as bounded hypotheses until context is resolved."
+casio_test_contract:
+  instrument: XAUUSD
+  mtf_required: true
+  session: New_York
+  dst_aware: true
+  starting_equity_rm: 100
+  risk_pct_current_equity: 5
+  fixed_rr: 3
+  real_sl_only: true
+  protected_or_be_sl: false
+  target_win_rate_pct: [60, 80]
+  minimum_trades_per_month: 8
+implementation_gate:
+  required_before_faithful_backtest:
+    - resolve_zone_boundaries
+    - resolve_lower_tf_confirmation
+    - resolve_breakout_close_conflict
+    - separate_creator_exit_logic_from_fixed_1_3_test
