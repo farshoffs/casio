@@ -329,3 +329,50 @@ The best true minimum-8-per-month WR remains **40.13%**, far below the requested
 No protected stop, BE conversion, partial-win accounting, future-data tuning or 2021+ data was used.
 
 2021–2026 remains sealed.
+
+
+# Additional technique checks
+
+## 13. NY cash-open gap reversal / continuation
+
+Daily structure:
+- previous completed NY cash-session close;
+- current 09:30 New York cash open;
+- first 1/3/5/10/15 minute opening impulse;
+- gap-fade and gap-continuation modes;
+- real stop beyond the completed opening extreme plus ATR buffer;
+- M1 execution;
+- fixed 3R.
+
+Only the loose five-minute gap-fade configuration maintained at least eight completed trades in every month.
+
+Best frequency-valid result:
+- 516 trades.
+- WR **26.74%**.
+- Minimum trades/month **8**.
+- Average 10.75/month.
+- 48/48 months >=8.
+- Expectancy -0.082R.
+- PF 0.902.
+
+Strict passes: 0.
+
+This daily-frequency technique is rejected.
+
+## Updated frontier after VWAP, premarket handoff and NY gap tests
+
+| Technique | Best WR with min >=8 every month |
+|---|---:|
+| M5 time-window deep retracement, 08:30–10:30 | **40.13%** |
+| OR15/key-level sweep | 38.43% |
+| M5 ultra-deep retracement | 35.97% |
+| M15 ultra-deep retracement | 35.91% |
+| M1 exhaustion / mean reversion | 34.27% |
+| M1 liquidity sweep + deep entry | 32.40% |
+| Two-stage M5 touch -> M1 confirmation | 28.60% |
+| M1 ultra-deep displacement | 28.07% |
+| Premarket directional handoff | 27.62% |
+| NY cash-open gap fade | 26.74% |
+| Anchored NY VWAP reclaim/reversion | 26.06% |
+
+The strict-frequency frontier therefore remains **40.13% WR**, with no configuration reaching the requested 60% floor.
