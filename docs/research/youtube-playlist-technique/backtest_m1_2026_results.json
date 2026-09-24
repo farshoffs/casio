@@ -1,0 +1,80 @@
+{
+  "dataset": {
+    "file": "fxpro_xauusd_m1.csv",
+    "sha256": "1054af491d4f6537270c7d88669556131109355674033c8881b5c82806ac1b82",
+    "full_start_utc": "2017-01-02T23:00:00Z",
+    "test_start_utc": "2026-01-01T00:00:00Z",
+    "data_2026_first_bar_utc": "2026-01-01T23:00:00Z",
+    "data_end_utc": "2026-09-24T00:21:00Z",
+    "rows_2026": 258330
+  },
+  "strict_direction": {
+    "qualified_events": 2,
+    "trades": 2,
+    "gross": {
+      "wins": 2,
+      "losses": 0,
+      "win_rate_pct": 100,
+      "net_r": 0.09501100007271798,
+      "expectancy_r": 0.04750550003635899,
+      "avg_planned_rr": 0.04750550003635899,
+      "max_drawdown_r": 0
+    },
+    "net_1bp": {
+      "wins": 1,
+      "losses": 1,
+      "win_rate_pct": 50,
+      "net_r": 0.06961784040796702,
+      "expectancy_r": 0.03480892020398351,
+      "max_drawdown_r": 0.005917349109278916
+    }
+  },
+  "relaxed_direction": {
+    "events": 11,
+    "pullbacks": 10,
+    "m1_confirmations": 10,
+    "trades": 10,
+    "h4_exit": {
+      "gross": {
+        "wins": 6,
+        "losses": 4,
+        "win_rate_pct": 60,
+        "net_r": -3.046402825524896,
+        "expectancy_r": -0.3046402825524896,
+        "profit_factor": 0.238399293618776,
+        "max_drawdown_r": 3.7680318695822264,
+        "avg_planned_rr": 0.25993430674887213
+      },
+      "net_1bp": {
+        "wins": 5,
+        "losses": 5,
+        "win_rate_pct": 50,
+        "net_r": -3.15706435839989,
+        "expectancy_r": -0.315706435839989,
+        "profit_factor": 0.21833168579842901,
+        "max_drawdown_r": 3.808580661359935
+      }
+    },
+    "h1_exit": {
+      "gross": {
+        "wins": 8,
+        "losses": 2,
+        "win_rate_pct": 80,
+        "net_r": -1.486252180898464,
+        "expectancy_r": -0.14862521808984638,
+        "profit_factor": 0.25687390955076805,
+        "max_drawdown_r": 1.6942270569478013,
+        "avg_planned_rr": 0.08184378951694489
+      },
+      "net_1bp": {
+        "wins": 6,
+        "losses": 4,
+        "win_rate_pct": 60,
+        "net_r": -1.5969137137734575,
+        "expectancy_r": -0.15969137137734574,
+        "profit_factor": 0.21114376134421212,
+        "max_drawdown_r": 1.7347758487255098
+      }
+    }
+  }
+}
