@@ -20,7 +20,13 @@ KEYWORDS = [
     "break of structure","bos","choch","support","resistance","zone","supply","demand","liquidity","sweep",
     "breakout","retest","pullback","retracement","fibonacci","fib","rsi","moving average","ema","sma",
     "candle","candlestick","wick","engulf","momentum","session","london","new york","asia","news",
-    "confirmation","confluence","invalid","setup","signal","level","high","low",\n    "sokongan","rintangan","resisten","support","bermula","jatuh","naik","kawasan","tempat","masuk","keluar",\n    "pecah","patah","balik","sentuh","sah","valid","fresh","konfirmasi","reaksi","reaction","tindak balas",\n    "punca","arah","direction","murah","mahal","seller","buyer","penjual","pembeli","pergerakan","gerakan",\n    "strong push","make it move","clean","respect","re-entry","reentry","beli","jual","beli limit","jual limit",\n    "fullback","follback","pull back","weekly","monthly","h4","h1","m15","m5","m3","m1","first left","ftr","sbr","rbs","rss","srr"
+    "confirmation","confluence","invalid","setup","signal","level","high","low",
+    "sokongan","rintangan","resisten","bermula","jatuh","naik","kawasan","tempat","masuk","keluar",
+    "pecah","patah","balik","sentuh","sah","valid","fresh","konfirmasi","reaksi","reaction","tindak balas",
+    "punca","arah","direction","murah","mahal","seller","buyer","penjual","pembeli","pergerakan","gerakan",
+    "strong push","make it move","clean","respect","re-entry","reentry","beli","jual","beli limit","jual limit",
+    "fullback","follback","pull back","weekly","monthly","h4","h1","m15","m5","m3","m1",
+    "first left","ftr","sbr","rbs","rss","srr"
 ]
 RX = re.compile("|".join(re.escape(x) for x in sorted(KEYWORDS,key=len,reverse=True)), re.I)
 
@@ -87,7 +93,7 @@ def excerpts(result):
         key=re.sub(r"\s+"," ",chunk.lower())[:180]
         if not chunk or key in seen: continue
         seen.add(key); hits.append((s.get("start",0),chunk))
-        if len(hits)>=120: break
+        if len(hits)>=140: break
     return hits
 
 def process(v):
