@@ -158,14 +158,16 @@ def breakout_events(h1,zones):
 def nearest_target(sr_levels, entry_time, direction, entry):
     known=sr_levels[sr_levels.confirm_time<=entry_time]
     if direction==1:
-        x=known[(known.kind=="resistance") & (known.low>entry)]
+        # Nearest previously confirmed resistance extreme above entry.
+        x=known[(known.kind=="resistance") & (known.high>entry)]
         if x.empty: return None,None
-        z=x.sort_values("low").iloc[0]
-        return float(z.low), int(z.id)
-    x=known[(known.kind=="support") & (known.high<entry)]
+        z=x.sort_values("high").iloc[0]
+        return float(z.high), int(z.id)
+    # Nearest previously confirmed support extreme below entry.
+    x=known[(known.kind=="support") & (known.low<entry)]
     if x.empty: return None,None
-    z=x.sort_values("high",ascending=False).iloc[0]
-    return float(z.high), int(z.id)
+    z=x.sort_values("low",ascending=False).iloc[0]
+    return float(z.low), int(z.id)
 
 def make_trades(m5, events, zones, sr_levels):
     diag={"events":int(len(events)),"pullback_touch":0,"confirmation":0,"target_available":0,"completed":0,"no_pullback_or_invalid":0,"no_confirmation_or_invalid":0,"no_target":0,"bad_rr_geometry":0}
@@ -306,7 +308,7 @@ def main():
         "zones":int(len(zones)),"sr_levels":int(len(sr_levels)),"breakout_events":int(len(events)),"diagnostics":diagnostics,"overall":overall,
         "yearly":yearly,"monthly":monthly,"by_direction":by_dir,
         "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. This test uses only the higher-confidence Breakout -> Pullback -> lower-TF confirmation sequence.",
-        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit is the nearest causally confirmed opposing H4 swing S/R area. Entry zones remain the stricter displacement-qualified Bermula zones; the exit map uses ordinary confirmed H4 S/R because the lessons teach S/R for entry and exit.",
+        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit is the nearest causally confirmed opposing H4 swing S/R extreme (pivot high for a long, pivot low for a short). Entry zones remain the stricter displacement-qualified Bermula zones. Exact zone boundaries are unresolved in the source set, so the exit uses the objective swing extreme rather than requiring an entire candle-zone to sit beyond entry.",
     }
     trades.to_csv(OUT/"trades.csv",index=False)
     zones.to_csv(OUT/"zones.csv",index=False)
