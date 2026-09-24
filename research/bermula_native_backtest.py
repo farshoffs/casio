@@ -259,7 +259,7 @@ def main():
     m5=load(); h1=resample(m5,"1h"); h4=resample(m5,"4h")
     zones=build_zones(h4)
     events,zones,h1x=breakout_events(h1,zones)
-    trades=make_trades(m5,events,zones)
+    trades,diagnostics=make_trades(m5,events,zones)
     if not trades.empty:
         trades["year"]=pd.to_datetime(trades.entry_time,utc=True).dt.year
         trades["month"]=pd.to_datetime(trades.entry_time,utc=True).dt.strftime("%Y-%m")
@@ -271,7 +271,7 @@ def main():
         "strategy":"Paul-X Bermula Breakout/Continuation — source-faithful prototype",
         "data":{"start":str(m5.index.min()),"end":str(m5.index.max()),"m5_bars":int(len(m5))},
         "parameters":PARAMS,
-        "zones":int(len(zones)),"breakout_events":int(len(events)),"overall":overall,
+        "zones":int(len(zones)),"breakout_events":int(len(events)),"diagnostics":diagnostics,"overall":overall,
         "yearly":yearly,"monthly":monthly,"by_direction":by_dir,
         "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. This test uses only the higher-confidence Breakout -> Pullback -> lower-TF confirmation sequence.",
         "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters.",
