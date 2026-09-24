@@ -139,14 +139,12 @@ def breakout_events(h1,zones):
 def nearest_target(zones, entry_time, direction, entry, own_zone_id):
     known=zones[(zones.confirm_time<=entry_time) & (zones.id!=own_zone_id)]
     if direction==1:
-        # nearest still-unbroken resistance above entry; target its near edge.
+        # Nearest known opposing S/R above entry; target its near edge.
         x=known[(known.kind=="resistance") & (known.low>entry)]
-        x=x[x.break_up_time.isna() | (x.break_up_time>entry_time)]
         if x.empty: return None,None
         z=x.sort_values("low").iloc[0]
         return float(z.low), int(z.id)
     x=known[(known.kind=="support") & (known.high<entry)]
-    x=x[x.break_down_time.isna() | (x.break_down_time>entry_time)]
     if x.empty: return None,None
     z=x.sort_values("high",ascending=False).iloc[0]
     return float(z.high), int(z.id)
@@ -289,7 +287,7 @@ def main():
         "zones":int(len(zones)),"breakout_events":int(len(events)),"diagnostics":diagnostics,"overall":overall,
         "yearly":yearly,"monthly":monthly,"by_direction":by_dir,
         "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. This test uses only the higher-confidence Breakout -> Pullback -> lower-TF confirmation sequence.",
-        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters.",
+        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit is the nearest known opposing H4 S/R area; prior historical breaks do not automatically erase that area because the supplied lessons do not establish such an invalidation rule.",
     }
     trades.to_csv(OUT/"trades.csv",index=False)
     zones.to_csv(OUT/"zones.csv",index=False)
