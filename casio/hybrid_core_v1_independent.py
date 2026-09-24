@@ -107,12 +107,11 @@ def event_stream(m15,vL,vS,sfL,sfS):
 
 def shadow_outcomes(m5,m15,A,ev):
     idx=m5.index
-    ns=idx.view("int64")
     O=m5.open.to_numpy(float); H=m5.high.to_numpy(float); L=m5.low.to_numpy(float)
     out=[]
     for r in ev.itertuples(index=False):
         i=int(r.i); d=int(r.direction)
-        ei=int(np.searchsorted(ns,r.signal_time.value,side="left"))
+        ei=int(idx.searchsorted(r.signal_time,side="left"))
         if ei>=len(idx): continue
         entry=float(O[ei]); aa=float(A.iat[i])
         if not np.isfinite(aa) or aa<=0: continue
