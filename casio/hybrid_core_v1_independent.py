@@ -178,7 +178,7 @@ def enrich_and_route(sh,h1b,h4b,h4ad):
             elig.append((rank,r.tech,r))
         if not elig: continue
         elig.sort(key=lambda x:(x[0],x[1]))
-        r=elig[0][2]; out.append(r); active=r.exit_time+pd.Timedelta(minutes=1)
+        r=elig[0][2]; out.append(r._asdict()); active=r.exit_time+pd.Timedelta(minutes=1)
     return pd.DataFrame(out),sh
 
 def summarize(t,start,end,label):
