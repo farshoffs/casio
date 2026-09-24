@@ -1,0 +1,5 @@
+symbol,family,lookback_bars,wick_fraction_min,RR,session
+XAUUSD,M5 liquidity sweep/reclaim,5,0.2,3.0,ALL
+EURUSD,M5 liquidity sweep/reclaim,30,0.2,3.0,ALL
+GBPUSD,M5 liquidity sweep/reclaim,30,0.2,3.0,ALL
+GBPJPY,M5 liquidity sweep/reclaim,5,0.2,2.5,ALL
