@@ -1,0 +1,5 @@
+candidate,trades,win_rate_pct,net_r,expectancy_r,profit_factor,max_drawdown_r,net_r_1bp
+baseline_3R,694,26.3689,38.0,0.054755,1.07436,25.0,-2.2588
+m1_confirm_3_to_8_min_3R,390,28.7179,58.0,0.148718,1.20863,13.0,35.8843
+m1_confirm_3_to_5_min_3R,184,31.5217,48.0,0.260870,1.38095,11.0,38.4423
+edge_pm10pct_and_confirm_3_to_5_min_3R,125,35.2000,51.0,0.408000,1.62963,6.0,44.8466
