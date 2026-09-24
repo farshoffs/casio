@@ -1,0 +1,31 @@
+name: YouTube Research Ingest
+
+on:
+  push:
+    branches:
+      - research/youtube-playlist-technique
+    paths:
+      - ".github/workflows/youtube-research-ingest.yml"
+      - "scripts/youtube_research_ingest.py"
+      - "docs/research/youtube-playlist-technique/source_manifest.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Fetch bounded evidence excerpts
+        run: python scripts/youtube_research_ingest.py
+      - name: Upload research excerpts
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-rule-excerpts
+          path: .research_artifacts/youtube_rule_excerpts/
+          if-no-files-found: error
+          retention-days: 7
