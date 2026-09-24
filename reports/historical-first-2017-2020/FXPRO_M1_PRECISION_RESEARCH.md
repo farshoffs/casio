@@ -75,7 +75,7 @@ Execution:
 
 ## Development / holdout validation
 
-Parameter neighborhood was searched on 2017–2018, then the rule was checked on 2019–2020 without changing the rule.
+Parameter neighborhood was searched on 2017–2018, then the frozen rule was checked on 2019–2020 without changing the rule. **Audit caveat:** this is a robustness split / semi-holdout, not a pristine final OOS, because the displacement family and nearby parameter region had already been explored in earlier 2017–2020 research. True untouched forward validation remains 2021+.
 
 ### 2017–2018 selection segment
 - Trades: 10
@@ -111,7 +111,7 @@ Yearly:
 | 2019 | 5 | 60.00% | +1.152 | 3.29 | 12.17% | RM129.40 |
 | 2020 | 11 | 63.64% | +1.396 | 4.21 | 11.65% | RM200.21 |
 
-Important: the >=60% WR target is met across the complete development sample and also across the 2019–2020 holdout. 2018 itself is only 40% WR, but remains profitable at fixed 3R.
+Important: the >=60% WR target is met across the complete development sample and across the 2019–2020 robustness split. This must not be represented as final untouched OOS evidence. 2018 itself is only 40% WR, but remains profitable at fixed 3R.
 
 # Neighbor stability
 
@@ -192,7 +192,7 @@ Frozen fallback rule:
 - Withdrawal months 7/24
 - Both years profitable.
 
-2019–2020 holdout router:
+2019–2020 robustness-split router:
 - Used trades 15
 - WR 60.00%
 - DD 11.65%
@@ -238,4 +238,4 @@ However, the user's real objective is still not complete: withdrawal coverage is
 
 The next research problem is therefore no longer basic strategy quality. It is to discover additional **independent, high-precision New York setups** that fill currently empty months while preserving portfolio WR >=60% and DD <=25%.
 
-2021–2026 remains sealed until the development rule is explicitly frozen for forward testing.
+2021–2026 remains sealed. The next legitimate validation step is to freeze the exact v1 rule first, then run it unchanged on 2021+ as true OOS.
