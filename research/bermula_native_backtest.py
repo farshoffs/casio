@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DATA = ROOT / "data/xauusd_m5.csv"
+DATA = ROOT / "data/xauusd_m1.csv"
 OUT = ROOT / "reports/bermula-native"
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -18,8 +18,8 @@ PARAMS = {
     "breakout_close_buffer_atr": 0.05,
     "pullback_expiry_hours": 24,
     "pullback_touch_tolerance_atr": 0.05,
-    "confirmation_window_m5_bars": 12,
-    "confirmation_lookback_m5_bars": 5,
+    "confirmation_window_m1_bars": 60,
+    "confirmation_lookback_m1_bars": 5,
     "confirmation_body_atr": 0.40,
     "stop_buffer_h1_atr": 0.10,
     "round_trip_cost_bps": 1.0,
@@ -169,12 +169,12 @@ def nearest_target(sr_levels, entry_time, direction, entry):
     z=x.sort_values("low",ascending=False).iloc[0]
     return float(z.low), int(z.id)
 
-def make_trades(m5, events, zones, sr_levels):
+def make_trades(m1, events, zones, sr_levels):
     diag={"events":int(len(events)),"pullback_touch":0,"confirmation":0,"target_available":0,"completed":0,"no_pullback_or_invalid":0,"no_confirmation_or_invalid":0,"no_target":0,"bad_rr_geometry":0}
-    x=m5.copy()
+    x=m1.copy()
     x["atr"]=atr(x)
-    prior_hi=x.high.shift(1).rolling(PARAMS["confirmation_lookback_m5_bars"],min_periods=PARAMS["confirmation_lookback_m5_bars"]).max()
-    prior_lo=x.low.shift(1).rolling(PARAMS["confirmation_lookback_m5_bars"],min_periods=PARAMS["confirmation_lookback_m5_bars"]).min()
+    prior_hi=x.high.shift(1).rolling(PARAMS["confirmation_lookback_m1_bars"],min_periods=PARAMS["confirmation_lookback_m1_bars"]).max()
+    prior_lo=x.low.shift(1).rolling(PARAMS["confirmation_lookback_m1_bars"],min_periods=PARAMS["confirmation_lookback_m1_bars"]).min()
     idx=x.index
     rows=[]; busy_until=None
     for _,e in events.sort_values("break_time").iterrows():
@@ -202,7 +202,7 @@ def make_trades(m5, events, zones, sr_levels):
             continue
         diag["pullback_touch"]+=1
         # Lower-TF confirmation: directional micro breakout after the touch.
-        c_end=min(len(idx),touched+PARAMS["confirmation_window_m5_bars"]+1)
+        c_end=min(len(idx),touched+PARAMS["confirmation_window_m1_bars"]+1)
         cj=None
         for j in range(touched,c_end):
             bar=x.iloc[j]; av=float(bar.atr) if np.isfinite(bar.atr) else np.nan
@@ -220,7 +220,7 @@ def make_trades(m5, events, zones, sr_levels):
             diag["no_confirmation_or_invalid"]+=1
             continue
         diag["confirmation"]+=1
-        entry=float(x.close.iloc[cj]); entry_time=idx[cj]+pd.Timedelta(minutes=5)
+        entry=float(x.close.iloc[cj]); entry_time=idx[cj]+pd.Timedelta(minutes=1)
         stop=(zl-PARAMS["stop_buffer_h1_atr"]*h1atr) if direction==1 else (zh+PARAMS["stop_buffer_h1_atr"]*h1atr)
         risk=(entry-stop) if direction==1 else (stop-entry)
         if risk<=0:
@@ -236,7 +236,7 @@ def make_trades(m5, events, zones, sr_levels):
             diag["bad_rr_geometry"]+=1
             continue
         planned_rr=reward/risk
-        # Resolve at M5. Conservative if SL and TP occur in same bar.
+        # Resolve at M1. Conservative if SL and TP occur in same bar.
         exit_time=None; exit_price=None; reason=None
         for k in range(cj+1,len(idx)):
             lo=float(x.low.iloc[k]); hi=float(x.high.iloc[k])
@@ -249,7 +249,7 @@ def make_trades(m5, events, zones, sr_levels):
             elif ht:
                 exit_price=target; reason="target_structure"
             if reason:
-                exit_time=idx[k]+pd.Timedelta(minutes=5); break
+                exit_time=idx[k]+pd.Timedelta(minutes=1); break
         if reason is None: continue
         gross_r=((exit_price-entry)/risk) if direction==1 else ((entry-exit_price)/risk)
         cost_r=(entry*PARAMS["round_trip_cost_bps"]/10000.0)/risk
@@ -302,26 +302,26 @@ def summarize_variant(trades, diagnostics):
     }, trades
 
 def main():
-    m5=load(); h1=resample(m5,"1h"); h4=resample(m5,"4h")
+    m1=load(); h1=resample(m1,"1h"); h4=resample(m1,"4h")
     zones=build_zones(h4)
     sr_h4=build_sr_levels(h4)
     sr_h1=build_sr_levels(h1)
     events,zones,h1x=breakout_events(h1,zones)
 
-    trades_h4,diag_h4=make_trades(m5,events,zones,sr_h4)
-    trades_h1,diag_h1=make_trades(m5,events,zones,sr_h1)
+    trades_h4,diag_h4=make_trades(m1,events,zones,sr_h4)
+    trades_h1,diag_h1=make_trades(m1,events,zones,sr_h1)
     v_h4,trades_h4=summarize_variant(trades_h4,diag_h4)
     v_h1,trades_h1=summarize_variant(trades_h1,diag_h1)
 
     report={
         "strategy":"Paul-X Bermula Breakout/Continuation — source-derived prototype",
-        "data":{"start":str(m5.index.min()),"end":str(m5.index.max()),"m5_bars":int(len(m5))},
+        "data":{"start":str(m1.index.min()),"end":str(m1.index.max()),"m1_bars":int(len(m1))},
         "parameters":PARAMS,
         "zones":int(len(zones)),"h4_sr_levels":int(len(sr_h4)),"h1_sr_levels":int(len(sr_h1)),
         "breakout_events":int(len(events)),
         "variants":{"H4_SNR_exit":v_h4,"H1_SNR_exit":v_h1},
-        "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. Both variants use the identical higher-confidence Breakout -> Pullback -> M5 confirmation entries and identical structural stops.",
-        "assumption_note":"Full H4 pivot candle is used as the Bermula entry zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit timeframe is unresolved in the supplied lessons, so H4 and H1 causal S/R swing-extreme exits are reported separately without selecting a winner."
+        "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. Both variants use the identical higher-confidence Breakout -> Pullback -> M1 confirmation entries and identical structural stops.",
+        "assumption_note":"Full H4 pivot candle is used as the Bermula entry zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M1 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit timeframe is unresolved in the supplied lessons, so H4 and H1 causal S/R swing-extreme exits are reported separately without selecting a winner."
     }
 
     trades_h4.to_csv(OUT/"trades_h4_exit.csv",index=False)
@@ -333,7 +333,7 @@ def main():
     (OUT/"report.json").write_text(json.dumps(report,indent=2,default=str))
 
     md=["# Bermula Native Backtest Report","",
-        f"Data: {report['data']['start']} to {report['data']['end']} ({report['data']['m5_bars']:,} M5 bars)","",
+        f"Data: {report['data']['start']} to {report['data']['end']} ({report['data']['m1_bars']:,} M1 bars)","",
         "## Scope",report["scope_note"],"",report["assumption_note"],""]
     for name,label in [("H4_SNR_exit","H4 S/R exit"),("H1_SNR_exit","H1 S/R exit")]:
         v=report["variants"][name]
