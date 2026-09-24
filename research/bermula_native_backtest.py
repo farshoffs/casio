@@ -152,6 +152,7 @@ def nearest_target(zones, entry_time, direction, entry, own_zone_id):
     return float(z.high), int(z.id)
 
 def make_trades(m5, events, zones):
+    diag={"events":int(len(events)),"pullback_touch":0,"confirmation":0,"target_available":0,"completed":0,"no_pullback_or_invalid":0,"no_confirmation_or_invalid":0,"no_target":0,"bad_rr_geometry":0}
     x=m5.copy()
     x["atr"]=atr(x)
     prior_hi=x.high.shift(1).rolling(PARAMS["confirmation_lookback_m5_bars"],min_periods=PARAMS["confirmation_lookback_m5_bars"]).max()
@@ -178,7 +179,10 @@ def make_trades(m5, events, zones):
                 if float(bar.high) > zh+PARAMS["stop_buffer_h1_atr"]*h1atr: break
                 if float(bar.high)>=zl-tol:
                     touched=j; break
-        if touched is None: continue
+        if touched is None:
+            diag["no_pullback_or_invalid"]+=1
+            continue
+        diag["pullback_touch"]+=1
         # Lower-TF confirmation: directional micro breakout after the touch.
         c_end=min(len(idx),touched+PARAMS["confirmation_window_m5_bars"]+1)
         cj=None
@@ -194,15 +198,25 @@ def make_trades(m5, events, zones):
                 if float(bar.high)>zh+PARAMS["stop_buffer_h1_atr"]*h1atr: break
                 if float(bar.close)<float(prior_lo.iloc[j]) and float(bar.close)<float(bar.open) and body>=PARAMS["confirmation_body_atr"]*av:
                     cj=j; break
-        if cj is None: continue
+        if cj is None:
+            diag["no_confirmation_or_invalid"]+=1
+            continue
+        diag["confirmation"]+=1
         entry=float(x.close.iloc[cj]); entry_time=idx[cj]+pd.Timedelta(minutes=5)
         stop=(zl-PARAMS["stop_buffer_h1_atr"]*h1atr) if direction==1 else (zh+PARAMS["stop_buffer_h1_atr"]*h1atr)
         risk=(entry-stop) if direction==1 else (stop-entry)
-        if risk<=0: continue
+        if risk<=0:
+            diag["bad_rr_geometry"]+=1
+            continue
         target,target_zone=nearest_target(zones,entry_time,direction,entry,int(e.zone_id))
-        if target is None: continue
+        if target is None:
+            diag["no_target"]+=1
+            continue
+        diag["target_available"]+=1
         reward=(target-entry) if direction==1 else (entry-target)
-        if reward<=0: continue
+        if reward<=0:
+            diag["bad_rr_geometry"]+=1
+            continue
         planned_rr=reward/risk
         # Resolve at M5. Conservative if SL and TP occur in same bar.
         exit_time=None; exit_price=None; reason=None
@@ -229,8 +243,9 @@ def make_trades(m5, events, zones):
             "breakout_body_atr":float(e.breakout_body_atr),"gross_r":gross_r,"cost_r":cost_r,"net_r":net_r,
             "exit_reason":reason
         })
+        diag["completed"]+=1
         busy_until=exit_time
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows),diag
 
 def streaks(vals):
     maxw=maxl=curw=curl=0
