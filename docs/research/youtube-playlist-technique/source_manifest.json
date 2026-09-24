@@ -1,0 +1,21 @@
+{
+  "playlist_id": "PLaXZkBcBhVzi7KYG3bcbHCJGqEzdW044O",
+  "playlist_url": "https://youtube.com/playlist?list=PLaXZkBcBhVzi7KYG3bcbHCJGqEzdW044O",
+  "research_branch": "research/youtube-playlist-technique",
+  "status": "awaiting_verified_video_enumeration",
+  "videos": [],
+  "evidence_tags": ["DIRECT", "DERIVED", "HYPOTHESIS", "TESTED"],
+  "current_test_contract": {
+    "instrument": "XAUUSD",
+    "mtf_required": true,
+    "session": "NEW_YORK",
+    "dst_aware": true,
+    "starting_equity_rm": 100,
+    "risk_pct_current_equity": 5,
+    "fixed_rr": 3,
+    "real_stop_only": true,
+    "break_even_or_protected_stop": false,
+    "target_win_rate_pct": [60, 80],
+    "minimum_trades_per_month": 8
+  }
+}
