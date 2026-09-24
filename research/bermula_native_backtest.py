@@ -69,22 +69,22 @@ def build_zones(h4):
                           "low":lo,"high":hi,"mid":(lo+hi)/2,"atr":av})
     return pd.DataFrame(zones)
 
-def build_sr_levels(h4):
-    """All causally confirmed H4 swing S/R levels used only for structural exits."""
+def build_sr_levels(df):
+    """All causally confirmed swing S/R levels used only for structural exits."""
     levels=[]
     L=PARAMS["h4_pivot_left"]; R=PARAMS["h4_pivot_right"]
-    for i in range(L, len(h4)-R-1):
-        lo=float(h4.low.iloc[i]); hi=float(h4.high.iloc[i])
-        is_low = lo < float(h4.low.iloc[i-L:i].min()) and lo <= float(h4.low.iloc[i+1:i+R+1].min())
-        is_high = hi > float(h4.high.iloc[i-L:i].max()) and hi >= float(h4.high.iloc[i+1:i+R+1].max())
+    for i in range(L, len(df)-R-1):
+        lo=float(df.low.iloc[i]); hi=float(df.high.iloc[i])
+        is_low = lo < float(df.low.iloc[i-L:i].min()) and lo <= float(df.low.iloc[i+1:i+R+1].min())
+        is_high = hi > float(df.high.iloc[i-L:i].max()) and hi >= float(df.high.iloc[i+1:i+R+1].max())
         confirm_i=i+R+1
-        if confirm_i>=len(h4): continue
-        confirm_time=h4.index[confirm_i]
+        if confirm_i>=len(df): continue
+        confirm_time=df.index[confirm_i]
         if is_low:
-            levels.append({"id":len(levels),"kind":"support","origin_time":h4.index[i],"confirm_time":confirm_time,
+            levels.append({"id":len(levels),"kind":"support","origin_time":df.index[i],"confirm_time":confirm_time,
                            "low":lo,"high":hi,"mid":(lo+hi)/2})
         if is_high:
-            levels.append({"id":len(levels),"kind":"resistance","origin_time":h4.index[i],"confirm_time":confirm_time,
+            levels.append({"id":len(levels),"kind":"resistance","origin_time":df.index[i],"confirm_time":confirm_time,
                            "low":lo,"high":hi,"mid":(lo+hi)/2})
     return pd.DataFrame(levels)
 
@@ -288,44 +288,62 @@ def metrics(t):
         "long_trades":int((t.direction=="LONG").sum()),"short_trades":int((t.direction=="SHORT").sum())
     }
 
+def summarize_variant(trades, diagnostics):
+    if not trades.empty:
+        trades=trades.copy()
+        trades["year"]=pd.to_datetime(trades.entry_time,utc=True).dt.year
+        trades["month"]=pd.to_datetime(trades.entry_time,utc=True).dt.strftime("%Y-%m")
+    return {
+        "diagnostics": diagnostics,
+        "overall": metrics(trades),
+        "yearly": {str(y):metrics(g) for y,g in trades.groupby("year")} if not trades.empty else {},
+        "monthly": {str(m):metrics(g) for m,g in trades.groupby("month")} if not trades.empty else {},
+        "by_direction": {str(d):metrics(g) for d,g in trades.groupby("direction")} if not trades.empty else {}
+    }, trades
+
 def main():
     m5=load(); h1=resample(m5,"1h"); h4=resample(m5,"4h")
     zones=build_zones(h4)
-    sr_levels=build_sr_levels(h4)
+    sr_h4=build_sr_levels(h4)
+    sr_h1=build_sr_levels(h1)
     events,zones,h1x=breakout_events(h1,zones)
-    trades,diagnostics=make_trades(m5,events,zones,sr_levels)
-    if not trades.empty:
-        trades["year"]=pd.to_datetime(trades.entry_time,utc=True).dt.year
-        trades["month"]=pd.to_datetime(trades.entry_time,utc=True).dt.strftime("%Y-%m")
-    overall=metrics(trades)
-    yearly={str(y):metrics(g) for y,g in trades.groupby("year")} if not trades.empty else {}
-    monthly={str(m):metrics(g) for m,g in trades.groupby("month")} if not trades.empty else {}
-    by_dir={str(d):metrics(g) for d,g in trades.groupby("direction")} if not trades.empty else {}
+
+    trades_h4,diag_h4=make_trades(m5,events,zones,sr_h4)
+    trades_h1,diag_h1=make_trades(m5,events,zones,sr_h1)
+    v_h4,trades_h4=summarize_variant(trades_h4,diag_h4)
+    v_h1,trades_h1=summarize_variant(trades_h1,diag_h1)
+
     report={
-        "strategy":"Paul-X Bermula Breakout/Continuation — source-faithful prototype",
+        "strategy":"Paul-X Bermula Breakout/Continuation — source-derived prototype",
         "data":{"start":str(m5.index.min()),"end":str(m5.index.max()),"m5_bars":int(len(m5))},
         "parameters":PARAMS,
-        "zones":int(len(zones)),"sr_levels":int(len(sr_levels)),"breakout_events":int(len(events)),"diagnostics":diagnostics,"overall":overall,
-        "yearly":yearly,"monthly":monthly,"by_direction":by_dir,
-        "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. This test uses only the higher-confidence Breakout -> Pullback -> lower-TF confirmation sequence.",
-        "assumption_note":"Full H4 pivot candle is used as the Bermula zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit is the nearest causally confirmed opposing H4 swing S/R extreme (pivot high for a long, pivot low for a short). Entry zones remain the stricter displacement-qualified Bermula zones. Exact zone boundaries are unresolved in the source set, so the exit uses the objective swing extreme rather than requiring an entire candle-zone to sit beyond entry.",
+        "zones":int(len(zones)),"h4_sr_levels":int(len(sr_h4)),"h1_sr_levels":int(len(sr_h1)),
+        "breakout_events":int(len(events)),
+        "variants":{"H4_SNR_exit":v_h4,"H1_SNR_exit":v_h1},
+        "scope_note":"Reversal family excluded because the exact creator trigger remains unresolved. Both variants use the identical higher-confidence Breakout -> Pullback -> M5 confirmation entries and identical structural stops.",
+        "assumption_note":"Full H4 pivot candle is used as the Bermula entry zone; H4 structural HH/HL or LH/LL is used for direction; strong breakout and M5 micro-BOS thresholds are deterministic operationalizations, not claimed verbatim creator parameters. Exit timeframe is unresolved in the supplied lessons, so H4 and H1 causal S/R swing-extreme exits are reported separately without selecting a winner."
     }
-    trades.to_csv(OUT/"trades.csv",index=False)
+
+    trades_h4.to_csv(OUT/"trades_h4_exit.csv",index=False)
+    trades_h1.to_csv(OUT/"trades_h1_exit.csv",index=False)
     zones.to_csv(OUT/"zones.csv",index=False)
-    sr_levels.to_csv(OUT/"sr_levels.csv",index=False)
+    sr_h4.to_csv(OUT/"sr_levels_h4.csv",index=False)
+    sr_h1.to_csv(OUT/"sr_levels_h1.csv",index=False)
     events.to_csv(OUT/"breakout_events.csv",index=False)
     (OUT/"report.json").write_text(json.dumps(report,indent=2,default=str))
+
     md=["# Bermula Native Backtest Report","",
         f"Data: {report['data']['start']} to {report['data']['end']} ({report['data']['m5_bars']:,} M5 bars)","",
-        "## Scope",report["scope_note"],"",report["assumption_note"],"",
-        "## Overall",f"```json\n{json.dumps(overall,indent=2)}\n```","",
-        "## Yearly","| Year | Trades | WR % | Net R | Exp R | PF | Max DD R | Avg planned RR |",
-        "|---:|---:|---:|---:|---:|---:|---:|---:|"]
-    for y,m in yearly.items():
-        md.append(f"| {y} | {m.get('trades',0)} | {m.get('win_rate_pct',0):.2f} | {m.get('net_r',0):.2f} | {m.get('expectancy_r',0):.3f} | {(m.get('profit_factor') or 0):.2f} | {m.get('max_drawdown_r',0):.2f} | {m.get('avg_planned_rr',0):.2f} |")
-    md+=["","## Monthly","| Month | Trades | WR % | Net R | Exp R | PF | Max DD R |","|---|---:|---:|---:|---:|---:|---:|"]
-    for mo,m in monthly.items():
-        md.append(f"| {mo} | {m.get('trades',0)} | {m.get('win_rate_pct',0):.2f} | {m.get('net_r',0):.2f} | {m.get('expectancy_r',0):.3f} | {(m.get('profit_factor') or 0):.2f} | {m.get('max_drawdown_r',0):.2f} |")
+        "## Scope",report["scope_note"],"",report["assumption_note"],""]
+    for name,label in [("H4_SNR_exit","H4 S/R exit"),("H1_SNR_exit","H1 S/R exit")]:
+        v=report["variants"][name]
+        md += [f"## {label}","",f"Funnel: `{json.dumps(v['diagnostics'])}`","",
+               f"```json\n{json.dumps(v['overall'],indent=2)}\n```","",
+               "| Year | Trades | WR % | Net R | Exp R | PF | Max DD R | Avg planned RR |",
+               "|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        for y,m in v["yearly"].items():
+            md.append(f"| {y} | {m.get('trades',0)} | {m.get('win_rate_pct',0):.2f} | {m.get('net_r',0):.2f} | {m.get('expectancy_r',0):.3f} | {(m.get('profit_factor') or 0):.2f} | {m.get('max_drawdown_r',0):.2f} | {m.get('avg_planned_rr',0):.2f} |")
+        md += [""]
     (OUT/"REPORT.md").write_text("\n".join(md)+"\n")
     print(json.dumps(report,indent=2,default=str))
 
