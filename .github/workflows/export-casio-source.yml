@@ -1,0 +1,28 @@
+name: Export CASIO research source
+
+on:
+  push:
+    branches:
+      - research/reverse-all-fxpro-m1-20260925
+    paths:
+      - '.github/workflows/export-casio-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: casio-research-source
+          path: |
+            casio/
+            docs/
+            reports/
+            pine/
+            requirements.txt
+          retention-days: 7
