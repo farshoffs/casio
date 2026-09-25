@@ -22,24 +22,39 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt tabulate
       - name: Use latest canonical XAUUSD M5 dataset from main
         run: |
+          set -o pipefail
           mkdir -p tmp reports/bbma-reverse-v1
           git fetch origin main --depth=1
           git show origin/main:data/xauusd_m5.csv > tmp/xauusd_m5_latest.csv
           wc -l tmp/xauusd_m5_latest.csv
           head -2 tmp/xauusd_m5_latest.csv
           tail -2 tmp/xauusd_m5_latest.csv
+      - name: Run original BBMA baseline on same 2026 data
+        run: |
+          set -o pipefail
+          python -m casio.bbma_cleaner_robustness tmp/xauusd_m5_latest.csv \
+            --start 2026-01-01 \
+            --end 2026-10-01 \
+            | tee reports/bbma-reverse-v1/original-2026-console.txt
       - name: Run 2026 YTD reversed BBMA
         run: |
+          set -o pipefail
           python -m casio.bbma_reverse_v1 tmp/xauusd_m5_latest.csv \
             --start 2026-01-01 \
             --end 2026-10-01 \
             --out reports/bbma-reverse-v1/2026-ytd \
             | tee reports/bbma-reverse-v1/2026-ytd-console.txt
+      - name: Run original BBMA baseline on full available data
+        run: |
+          set -o pipefail
+          python -m casio.bbma_cleaner_robustness tmp/xauusd_m5_latest.csv \
+            | tee reports/bbma-reverse-v1/original-full-console.txt
       - name: Run full available reversed BBMA
         run: |
+          set -o pipefail
           python -m casio.bbma_reverse_v1 tmp/xauusd_m5_latest.csv \
             --out reports/bbma-reverse-v1/full-available \
             | tee reports/bbma-reverse-v1/full-available-console.txt
