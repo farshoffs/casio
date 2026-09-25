@@ -10,6 +10,7 @@ indicator("CASIO TradeIndicator FINAL V3", shorttitle="CTI V3", overlay=true, ma
 showZones     = input.bool(true,  "Show H1 supply / demand zones", group="Display")
 showTradeLvls = input.bool(true,  "Show active Entry / SL / TP", group="Display")
 showLabels    = input.bool(true,  "Show signal labels", group="Display")
+showOutcomes  = input.bool(true,  "Show historical TP / SL outcomes", group="Display")
 showDashboard = input.bool(true,  "Show dashboard", group="Display")
 
 showDemandRej = input.bool(true, "Demand Rejection BUY", group="Sleeves")
@@ -139,9 +140,13 @@ if inTrade
     bool stopHit = tradeSide == 1 ? low <= tradeSL : high >= tradeSL
     bool tpHit = tradeSide == 1 ? high >= tradeTP : low <= tradeTP
     if stopHit
+        if showOutcomes
+            label.new(bar_index, tradeSL, "SL  -1R\n" + tradeModule, style=tradeSide == 1 ? label.style_label_down : label.style_label_up, textcolor=color.white, color=color.new(color.red, 10), size=size.tiny)
         inTrade := false
         closedLosses += 1
     else if tpHit
+        if showOutcomes
+            label.new(bar_index, tradeTP, "TP  +3R\n" + tradeModule, style=tradeSide == 1 ? label.style_label_down : label.style_label_up, textcolor=color.white, color=color.new(color.green, 10), size=size.tiny)
         inTrade := false
         closedWins += 1
 
@@ -251,9 +256,13 @@ if new15 and not na(m15Atr)
             bool entryStopHit = tradeSide == 1 ? low <= tradeSL : high >= tradeSL
             bool entryTpHit = tradeSide == 1 ? high >= tradeTP : low <= tradeTP
             if entryStopHit
+                if showOutcomes
+                    label.new(bar_index, tradeSL, "SL  -1R\n" + tradeModule, style=tradeSide == 1 ? label.style_label_down : label.style_label_up, textcolor=color.white, color=color.new(color.red, 10), size=size.tiny)
                 inTrade := false
                 closedLosses += 1
             else if entryTpHit
+                if showOutcomes
+                    label.new(bar_index, tradeTP, "TP  +3R\n" + tradeModule, style=tradeSide == 1 ? label.style_label_down : label.style_label_up, textcolor=color.white, color=color.new(color.green, 10), size=size.tiny)
                 inTrade := false
                 closedWins += 1
             alert("CASIO FINAL V3 | " + candidateModule +
@@ -321,8 +330,9 @@ if barstate.islast
         table.cell(dash, 0, 6, "VOL Z / TOUCH", text_color=dimTxt, bgcolor=cellBg, text_size=size.tiny)
         table.cell(dash, 1, 6, str.tostring(m15VolZ, "#.00") + "  D" + str.tostring(demTouches) + " S" + str.tostring(supRetouches), text_color=color.white, bgcolor=cellBg, text_size=size.tiny)
 
-        table.cell(dash, 0, 7, "W / L*", text_color=dimTxt, bgcolor=cellBg, text_size=size.tiny)
-        table.cell(dash, 1, 7, str.tostring(closedWins) + " / " + str.tostring(closedLosses), text_color=color.white, bgcolor=cellBg, text_size=size.small)
+        table.cell(dash, 0, 7, "W / L / R*", text_color=dimTxt, bgcolor=cellBg, text_size=size.tiny)
+        float histR = closedWins * 3.0 - closedLosses
+        table.cell(dash, 1, 7, str.tostring(closedWins) + " / " + str.tostring(closedLosses) + " / " + str.tostring(histR, "#.0") + "R", text_color=histR >= 0 ? color.lime : color.red, bgcolor=cellBg, text_size=size.small)
     else
         table.clear(dash, 0, 0, 1, 7)
 
