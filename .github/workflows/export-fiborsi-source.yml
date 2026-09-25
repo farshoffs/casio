@@ -1,0 +1,23 @@
+name: Export FiboRSI source
+on:
+  push:
+    branches: [research/export-fiborsi8-source-20260925]
+    paths: ['.github/workflows/export-fiborsi-source.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fiborsi-source
+          path: |
+            casio/fiborsi8_backtest.py
+            casio/fiborsi8_phase2.py
+            casio/fiborsi8_phase3.py
+            casio/fiborsi8_phase4.py
+            casio/fiborsi8_phase5.py
+            reports/fiborsi8-research/
+          retention-days: 7
