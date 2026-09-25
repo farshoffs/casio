@@ -1,5 +1,5 @@
 //@version=6
-indicator("CASIO TradeIndicator FINAL V3", shorttitle="CASIO TI V3", overlay=true, max_labels_count=500)
+indicator("CASIO TradeIndicator FINAL V3", shorttitle="CTI V3", overlay=true, max_labels_count=500)
 
 // CASIO TradeIndicator Portfolio V3 — FINAL FREEZE
 // Port of the frozen FxPro XAUUSD M1 research rules.
@@ -76,14 +76,9 @@ f_h1_prev_state() =>
     int supBreak = not na(lastSupBreak) and not na(supAct) and lastSupBreak >= supAct ? lastSupBreak : na
     int demBreak = not na(lastDemBreak) and not na(demAct) and lastDemBreak >= demAct ? lastDemBreak : na
     bool bullTrend = close > ema20 and ema20 > ema50 and ema20 > ema20[1]
-    [supLower[1], supUpper[1], supId[1], supAct[1], supBreak[1],
-     demLower[1], demUpper[1], demId[1], demAct[1], demBreak[1],
-     close[1], atr[1], ema20[1], ema50[1], bullTrend[1], pdi[1], mdi[1], adx[1]]
+    [supLower[1], supUpper[1], supId[1], supAct[1], supBreak[1], demLower[1], demUpper[1], demId[1], demAct[1], demBreak[1], close[1], atr[1], ema20[1], ema50[1], bullTrend[1], pdi[1], mdi[1], adx[1]]
 
-[h1SupLower, h1SupUpper, h1SupId, h1SupAct, h1SupBreak,
- h1DemLower, h1DemUpper, h1DemId, h1DemAct, h1DemBreak,
- h1Close, h1Atr, h1Ema20, h1Ema50, h1BullTrend, h1Pdi, h1Mdi, h1Adx] =
-    request.security(syminfo.tickerid, "60", f_h1_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[h1SupLower, h1SupUpper, h1SupId, h1SupAct, h1SupBreak, h1DemLower, h1DemUpper, h1DemId, h1DemAct, h1DemBreak, h1Close, h1Atr, h1Ema20, h1Ema50, h1BullTrend, h1Pdi, h1Mdi, h1Adx] = request.security(syminfo.tickerid, "60", f_h1_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 f_h4_prev_state() =>
     float ema20 = f_ema(close, 20)
@@ -102,15 +97,12 @@ f_m15_prev_state() =>
     float bodyFrac = rng != 0 ? math.abs(close - open) / rng : na
     float rangeAtr = atr != 0 ? rng / atr : na
     float volMean = ta.sma(volume, 50)
-    float volStd = ta.stdev(volume, 50, true)
+    float volStd = ta.stdev(volume, 50)
     float volZ = volStd != 0 ? (volume - volMean) / volStd : na
     float prev10Hi = ta.highest(high[1], 10)
-    [open[1], high[1], low[1], close[1], close[2], atr[1], ema10[1], ema20[1],
-     ema10Slope[1], closeLoc[1], bodyFrac[1], rangeAtr[1], volZ[1], prev10Hi[1]]
+    [open[1], high[1], low[1], close[1], close[2], atr[1], ema10[1], ema20[1], ema10Slope[1], closeLoc[1], bodyFrac[1], rangeAtr[1], volZ[1], prev10Hi[1]]
 
-[m15Open, m15High, m15Low, m15Close, m15PrevClose, m15Atr, m15Ema10, m15Ema20,
- m15Ema10Slope, m15CloseLoc, m15BodyFrac, m15RangeAtr, m15VolZ, m15Prev10Hi] =
-    request.security(syminfo.tickerid, "15", f_m15_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+[m15Open, m15High, m15Low, m15Close, m15PrevClose, m15Atr, m15Ema10, m15Ema20, m15Ema10Slope, m15CloseLoc, m15BodyFrac, m15RangeAtr, m15VolZ, m15Prev10Hi] = request.security(syminfo.tickerid, "15", f_m15_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
 
 bool m15BullMom = m15Close > m15Ema10 and m15Ema10 > m15Ema20 and m15Ema10Slope > 0
 bool m15BearMom = m15Close < m15Ema10 and m15Ema10 < m15Ema20 and m15Ema10Slope < 0
