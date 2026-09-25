@@ -1,0 +1,316 @@
+//@version=6
+indicator("CASIO TradeIndicator FINAL V3", shorttitle="CASIO TI V3", overlay=true, max_labels_count=500)
+
+// CASIO TradeIndicator Portfolio V3 — FINAL FREEZE
+// Port of the frozen FxPro XAUUSD M1 research rules.
+// Fixed 3R, real structural SL, no BE/protected SL/partials.
+// Best research match: XAUUSD 1-minute chart.
+// TradingView feed aggregation / volume can differ from the FxPro research file.
+
+showZones     = input.bool(true,  "Show H1 supply / demand zones", group="Display")
+showTradeLvls = input.bool(true,  "Show active Entry / SL / TP", group="Display")
+showLabels    = input.bool(true,  "Show signal labels", group="Display")
+showDashboard = input.bool(true,  "Show dashboard", group="Display")
+
+showDemandRej = input.bool(true, "Demand Rejection BUY", group="Sleeves")
+showSupplyBO   = input.bool(true, "Supply Break & Hold BUY", group="Sleeves")
+showDemandBD   = input.bool(true, "Demand Breakdown SELL", group="Sleeves")
+showTickLong   = input.bool(true, "Tick-M15 H4 Long", group="Sleeves")
+
+float RR = 3.0
+int MS_HOUR = 60 * 60 * 1000
+
+f_ewm(float src, float alpha) =>
+    float out = na
+    out := na(out[1]) ? src : alpha * src + (1.0 - alpha) * out[1]
+    out
+
+f_ema(float src, int length) =>
+    f_ewm(src, 2.0 / (length + 1.0))
+
+f_tr() =>
+    float prev = close[1]
+    math.max(high - low, math.max(math.abs(high - prev), math.abs(low - prev)))
+
+f_atr14() =>
+    f_ewm(f_tr(), 1.0 / 14.0)
+
+f_dmi14() =>
+    float up = high - high[1]
+    float dn = low[1] - low
+    float plusDM  = up > dn and up > 0 ? up : 0.0
+    float minusDM = dn > up and dn > 0 ? dn : 0.0
+    float atrE = f_ewm(f_tr(), 1.0 / 14.0)
+    float plusE = f_ewm(plusDM, 1.0 / 14.0)
+    float minusE = f_ewm(minusDM, 1.0 / 14.0)
+    float pdi = atrE != 0 ? 100.0 * plusE / atrE : na
+    float mdi = atrE != 0 ? 100.0 * minusE / atrE : na
+    float den = pdi + mdi
+    float dx = den != 0 ? 100.0 * math.abs(pdi - mdi) / den : na
+    float adx = f_ewm(dx, 1.0 / 14.0)
+    [pdi, mdi, adx]
+
+f_h1_prev_state() =>
+    float atr = f_atr14()
+    float ema20 = f_ema(close, 20)
+    float ema50 = f_ema(close, 50)
+    [pdi, mdi, adx] = f_dmi14()
+    float ph = ta.pivothigh(high, 2, 2)
+    float pl = ta.pivotlow(low, 2, 2)
+    bool newSup = not na(ph)
+    bool newDem = not na(pl)
+    float pivotSupLower = math.min(math.max(open[2], close[2]), high[2] - 0.25 * atr[2])
+    float pivotDemUpper = math.max(math.min(open[2], close[2]), low[2] + 0.25 * atr[2])
+    float supLower = ta.valuewhen(newSup, pivotSupLower, 0)
+    float supUpper = ta.valuewhen(newSup, high[2], 0)
+    int supId = ta.valuewhen(newSup, time[2], 0)
+    int supAct = ta.valuewhen(newSup, time_close, 0)
+    float demLower = ta.valuewhen(newDem, low[2], 0)
+    float demUpper = ta.valuewhen(newDem, pivotDemUpper, 0)
+    int demId = ta.valuewhen(newDem, time[2], 0)
+    int demAct = ta.valuewhen(newDem, time_close, 0)
+    bool supBreakEvent = not na(supUpper) and close > supUpper and (na(close[1]) or close[1] <= supUpper)
+    bool demBreakEvent = not na(demLower) and close < demLower and (na(close[1]) or close[1] >= demLower)
+    int lastSupBreak = ta.valuewhen(supBreakEvent, time_close, 0)
+    int lastDemBreak = ta.valuewhen(demBreakEvent, time_close, 0)
+    int supBreak = not na(lastSupBreak) and not na(supAct) and lastSupBreak >= supAct ? lastSupBreak : na
+    int demBreak = not na(lastDemBreak) and not na(demAct) and lastDemBreak >= demAct ? lastDemBreak : na
+    bool bullTrend = close > ema20 and ema20 > ema50 and ema20 > ema20[1]
+    [supLower[1], supUpper[1], supId[1], supAct[1], supBreak[1],
+     demLower[1], demUpper[1], demId[1], demAct[1], demBreak[1],
+     close[1], atr[1], ema20[1], ema50[1], bullTrend[1], pdi[1], mdi[1], adx[1]]
+
+[h1SupLower, h1SupUpper, h1SupId, h1SupAct, h1SupBreak,
+ h1DemLower, h1DemUpper, h1DemId, h1DemAct, h1DemBreak,
+ h1Close, h1Atr, h1Ema20, h1Ema50, h1BullTrend, h1Pdi, h1Mdi, h1Adx] =
+    request.security(syminfo.tickerid, "60", f_h1_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+f_h4_prev_state() =>
+    float ema20 = f_ema(close, 20)
+    float ema50 = f_ema(close, 50)
+    [close[1], ema20[1], ema50[1]]
+
+[h4Close, h4Ema20, h4Ema50] = request.security(syminfo.tickerid, "240", f_h4_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+f_m15_prev_state() =>
+    float atr = f_atr14()
+    float ema10 = f_ema(close, 10)
+    float ema20 = f_ema(close, 20)
+    float ema10Slope = ema10 - ema10[1]
+    float rng = high - low
+    float closeLoc = rng != 0 ? (close - low) / rng : na
+    float bodyFrac = rng != 0 ? math.abs(close - open) / rng : na
+    float rangeAtr = atr != 0 ? rng / atr : na
+    float volMean = ta.sma(volume, 50)
+    float volStd = ta.stdev(volume, 50, true)
+    float volZ = volStd != 0 ? (volume - volMean) / volStd : na
+    float prev10Hi = ta.highest(high[1], 10)
+    [open[1], high[1], low[1], close[1], close[2], atr[1], ema10[1], ema20[1],
+     ema10Slope[1], closeLoc[1], bodyFrac[1], rangeAtr[1], volZ[1], prev10Hi[1]]
+
+[m15Open, m15High, m15Low, m15Close, m15PrevClose, m15Atr, m15Ema10, m15Ema20,
+ m15Ema10Slope, m15CloseLoc, m15BodyFrac, m15RangeAtr, m15VolZ, m15Prev10Hi] =
+    request.security(syminfo.tickerid, "15", f_m15_prev_state(), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+bool m15BullMom = m15Close > m15Ema10 and m15Ema10 > m15Ema20 and m15Ema10Slope > 0
+bool m15BearMom = m15Close < m15Ema10 and m15Ema10 < m15Ema20 and m15Ema10Slope < 0
+float m15DistEma20Atr = m15Atr != 0 ? (m15Close - m15Ema20) / m15Atr : na
+bool new15 = timeframe.change("15")
+
+var int trackedDemId = na
+var int trackedSupId = na
+var int demTouches = 0
+var int supRetouches = 0
+var bool demRejectUsed = false
+var bool demBreakUsed = false
+var bool supBreakUsed = false
+
+bool sigDemRej = false
+bool sigSupBO = false
+bool sigDemBD = false
+bool sigTick = false
+
+float candidateSL = na
+int candidateSide = 0
+string candidateModule = ""
+
+var bool inTrade = false
+var int tradeSide = 0
+var float tradeEntry = na
+var float tradeSL = na
+var float tradeTP = na
+var string tradeModule = ""
+var int closedWins = 0
+var int closedLosses = 0
+
+if inTrade
+    bool stopHit = tradeSide == 1 ? low <= tradeSL : high >= tradeSL
+    bool tpHit = tradeSide == 1 ? high >= tradeTP : low <= tradeTP
+    if stopHit
+        inTrade := false
+        closedLosses += 1
+    else if tpHit
+        inTrade := false
+        closedWins += 1
+
+if new15 and not na(m15Atr)
+    if na(trackedDemId) or h1DemId != trackedDemId
+        trackedDemId := h1DemId
+        demTouches := 0
+        demRejectUsed := false
+        demBreakUsed := false
+    if na(trackedSupId) or h1SupId != trackedSupId
+        trackedSupId := h1SupId
+        supRetouches := 0
+        supBreakUsed := false
+
+    int demPrior = demTouches
+    int supPrior = supRetouches
+    bool demIntact = not na(h1DemId) and na(h1DemBreak)
+    bool supBrokenRecent = not na(h1SupId) and not na(h1SupBreak) and time >= h1SupBreak and time - h1SupBreak <= 24 * MS_HOUR
+    bool demBrokenRecent = not na(h1DemId) and not na(h1DemBreak) and time >= h1DemBreak and time - h1DemBreak <= 24 * MS_HOUR
+
+    bool rawDemReject = not demRejectUsed and demIntact and
+         m15Low <= h1DemUpper and m15Close > h1DemUpper and m15Close > m15Open and m15BullMom
+    if rawDemReject
+        demRejectUsed := true
+
+    bool rawSupBreakHold = not supBreakUsed and supBrokenRecent and
+         m15Close > h1SupUpper and m15PrevClose > h1SupUpper and
+         m15Low <= h1SupUpper + 0.10 * m15Atr and m15BullMom
+    if rawSupBreakHold
+        supBreakUsed := true
+
+    bool rawDemBreakHold = not demBreakUsed and demBrokenRecent and
+         m15Close < h1DemLower and m15PrevClose < h1DemLower and
+         m15High >= h1DemLower - 0.10 * m15Atr and m15BearMom
+    if rawDemBreakHold
+        demBreakUsed := true
+
+    bool finalDemReject = rawDemReject and showDemandRej and demPrior <= 3 and h1BullTrend and m15CloseLoc >= 0.65
+    int nyHour = hour(time, "America/New_York")
+    bool inNY = nyHour >= 8 and nyHour < 17
+    bool finalSupBreak = rawSupBreakHold and showSupplyBO and supPrior <= 3 and inNY and h1Adx >= 20
+    bool finalDemBreak = rawDemBreakHold and showDemandBD and demPrior <= 4 and
+         h1Mdi > h1Pdi and m15DistEma20Atr >= -2.0 and m15DistEma20Atr <= -0.75 and m15VolZ >= 0
+
+    bool tickLongRaw = h1Ema20 > h1Ema50 and h1Close > h1Ema20 and
+         h4Ema20 > h4Ema50 and h4Close > h4Ema20 and
+         m15VolZ >= 2.5 and m15BodyFrac >= 0.55 and m15RangeAtr >= 0.80 and
+         m15CloseLoc >= 0.70 and m15Close > m15Prev10Hi
+    bool finalTickLong = showTickLong and tickLongRaw
+
+    if not na(h1DemId) and not na(h1DemAct) and time >= h1DemAct and na(h1DemBreak)
+        if m15Low <= h1DemUpper and m15High >= h1DemLower
+            demTouches += 1
+    if not na(h1SupId) and not na(h1SupBreak) and time >= h1SupBreak
+        if m15Low <= h1SupUpper + 0.10 * m15Atr and m15High >= h1SupLower
+            supRetouches += 1
+
+    if not inTrade
+        if finalDemReject
+            float sl = math.min(h1DemLower, m15Low) - 0.10 * m15Atr
+            if sl < open
+                sigDemRej := true
+                candidateSL := sl
+                candidateSide := 1
+                candidateModule := "Demand Rejection BUY"
+        else if finalSupBreak
+            float sl = math.min(m15Low, h1SupLower) - 0.10 * m15Atr
+            if sl < open
+                sigSupBO := true
+                candidateSL := sl
+                candidateSide := 1
+                candidateModule := "Supply Break & Hold BUY"
+        else if finalDemBreak
+            float sl = math.max(m15High, h1DemUpper) + 0.10 * m15Atr
+            if sl > open
+                sigDemBD := true
+                candidateSL := sl
+                candidateSide := -1
+                candidateModule := "Demand Breakdown SELL"
+        else if finalTickLong
+            float sl = m15Low - 0.10 * m15Atr
+            if sl < open
+                sigTick := true
+                candidateSL := sl
+                candidateSide := 1
+                candidateModule := "Tick-M15 H4 Long"
+
+        if candidateSide != 0
+            tradeEntry := open
+            tradeSL := candidateSL
+            float risk = math.abs(tradeEntry - tradeSL)
+            tradeTP := tradeEntry + candidateSide * RR * risk
+            tradeSide := candidateSide
+            tradeModule := candidateModule
+            inTrade := true
+            if showLabels
+                string sideTxt = candidateSide == 1 ? "BUY" : "SELL"
+                string txt = sideTxt + "\n" + candidateModule +
+                     "\nE: " + str.tostring(tradeEntry, format.mintick) +
+                     "\nSL: " + str.tostring(tradeSL, format.mintick) +
+                     "\nTP3R: " + str.tostring(tradeTP, format.mintick)
+                label.new(bar_index, candidateSide == 1 ? low : high, txt,
+                     style=candidateSide == 1 ? label.style_label_up : label.style_label_down,
+                     textcolor=color.white,
+                     color=candidateSide == 1 ? color.new(color.green, 0) : color.new(color.red, 0),
+                     size=size.small)
+            bool entryStopHit = tradeSide == 1 ? low <= tradeSL : high >= tradeSL
+            bool entryTpHit = tradeSide == 1 ? high >= tradeTP : low <= tradeTP
+            if entryStopHit
+                inTrade := false
+                closedLosses += 1
+            else if entryTpHit
+                inTrade := false
+                closedWins += 1
+            alert("CASIO FINAL V3 | " + candidateModule +
+                  " | Entry=" + str.tostring(tradeEntry, format.mintick) +
+                  " | SL=" + str.tostring(tradeSL, format.mintick) +
+                  " | TP3R=" + str.tostring(tradeTP, format.mintick), alert.freq_once_per_bar)
+
+pSupU = plot(showZones ? h1SupUpper : na, "H1 Supply Upper", color=color.new(color.red, 15), style=plot.style_stepline, linewidth=1)
+pSupL = plot(showZones ? h1SupLower : na, "H1 Supply Lower", color=color.new(color.red, 45), style=plot.style_stepline, linewidth=1)
+fill(pSupU, pSupL, color=showZones ? color.new(color.red, 91) : na, title="H1 Supply Zone")
+pDemU = plot(showZones ? h1DemUpper : na, "H1 Demand Upper", color=color.new(color.green, 45), style=plot.style_stepline, linewidth=1)
+pDemL = plot(showZones ? h1DemLower : na, "H1 Demand Lower", color=color.new(color.green, 15), style=plot.style_stepline, linewidth=1)
+fill(pDemU, pDemL, color=showZones ? color.new(color.green, 91) : na, title="H1 Demand Zone")
+
+plot(showTradeLvls and inTrade ? tradeEntry : na, "Active Entry", color=color.new(color.blue, 0), linewidth=2, style=plot.style_linebr)
+plot(showTradeLvls and inTrade ? tradeSL : na, "Active SL", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(showTradeLvls and inTrade ? tradeTP : na, "Active TP 3R", color=color.new(color.green, 0), linewidth=2, style=plot.style_linebr)
+
+plotshape(sigDemRej, title="Demand Rejection BUY", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.small, text="DR")
+plotshape(sigSupBO, title="Supply Break & Hold BUY", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.small, text="SBH")
+plotshape(sigDemBD, title="Demand Breakdown SELL", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small, text="DB")
+plotshape(sigTick, title="Tick-M15 H4 Long", style=shape.triangleup, location=location.belowbar, color=color.new(color.aqua, 0), size=size.small, text="TV")
+
+alertcondition(sigDemRej, "FINAL V3 - Demand Rejection BUY", "CASIO FINAL V3 Demand Rejection BUY")
+alertcondition(sigSupBO, "FINAL V3 - Supply Break & Hold BUY", "CASIO FINAL V3 Supply Break & Hold BUY")
+alertcondition(sigDemBD, "FINAL V3 - Demand Breakdown SELL", "CASIO FINAL V3 Demand Breakdown SELL")
+alertcondition(sigTick, "FINAL V3 - Tick-M15 H4 Long", "CASIO FINAL V3 Tick-M15 H4 Long")
+alertcondition(sigDemRej or sigSupBO or sigDemBD or sigTick, "FINAL V3 - Any Entry", "CASIO FINAL V3 new entry")
+
+bool isM1 = timeframe.isminutes and timeframe.multiplier == 1
+var table dash = table.new(position.top_right, 2, 9, border_width=1)
+if barstate.islast and showDashboard
+    table.cell(dash, 0, 0, "CASIO FINAL V3", text_color=color.white, bgcolor=color.new(color.blue, 30))
+    table.cell(dash, 1, 0, isM1 ? "M1 MATCH" : "USE M1", text_color=color.white, bgcolor=isM1 ? color.new(color.green, 40) : color.new(color.orange, 20))
+    table.cell(dash, 0, 1, "Portfolio")
+    table.cell(dash, 1, 1, inTrade ? "ACTIVE" : "FLAT")
+    table.cell(dash, 0, 2, "Module")
+    table.cell(dash, 1, 2, inTrade ? tradeModule : "—")
+    table.cell(dash, 0, 3, "Entry / SL / TP")
+    table.cell(dash, 1, 3, inTrade ? str.tostring(tradeEntry, format.mintick) + " / " + str.tostring(tradeSL, format.mintick) + " / " + str.tostring(tradeTP, format.mintick) : "—")
+    table.cell(dash, 0, 4, "H1 ADX / DI")
+    table.cell(dash, 1, 4, str.tostring(h1Adx, "#.0") + " / " + str.tostring(h1Pdi, "#.0") + ":" + str.tostring(h1Mdi, "#.0"))
+    table.cell(dash, 0, 5, "M15 Vol Z")
+    table.cell(dash, 1, 5, str.tostring(m15VolZ, "#.00"))
+    table.cell(dash, 0, 6, "Demand touches")
+    table.cell(dash, 1, 6, str.tostring(demTouches))
+    table.cell(dash, 0, 7, "Supply retouches")
+    table.cell(dash, 1, 7, str.tostring(supRetouches))
+    table.cell(dash, 0, 8, "Closed W / L*")
+    table.cell(dash, 1, 8, str.tostring(closedWins) + " / " + str.tostring(closedLosses))
+
+// Dashboard W/L is chart-session simulation only, not the validated research report.
