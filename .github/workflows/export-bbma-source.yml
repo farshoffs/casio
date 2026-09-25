@@ -1,0 +1,19 @@
+name: Export BBMA source
+on:
+  push:
+    branches: [research/export-bbma-source-20260925]
+    paths: ['.github/workflows/export-bbma-source.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bbma-source
+          path: |
+            casio/bbma_cleaner_robustness.py
+            reports/bbma-cleaner-robustness/
+          retention-days: 7
