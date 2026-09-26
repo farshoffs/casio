@@ -51,9 +51,10 @@ jobs:
       - name: Validate XAU source
         run: |
           test -f data/xauusd_m5_dukascopy_research.csv
+          test -f data/xauusd_m5_secondary_octafx_mt4.csv
           python - <<'PY'
           import pandas as pd
-          for p in ['data/xauusd_m5_dukascopy_research.csv','tmp/gbpusd_m5.csv']:
+          for p in ['data/xauusd_m5_dukascopy_research.csv','data/xauusd_m5_secondary_octafx_mt4.csv','tmp/gbpusd_m5.csv']:
               x=pd.read_csv(p,usecols=['timestamp'])
               t=pd.to_datetime(x.timestamp,utc=True)
               print(p, len(x), t.min(), t.max())
@@ -61,7 +62,7 @@ jobs:
 
       - name: Run 5 percent monthly-floor research
         run: |
-          python -m casio.finotive_floor5_research             --xau data/xauusd_m5_dukascopy_research.csv             --gbp tmp/gbpusd_m5.csv             --output reports/finotive-floor5
+          python -m casio.finotive_floor5_research             --xau data/xauusd_m5_dukascopy_research.csv             --xau-secondary data/xauusd_m5_secondary_octafx_mt4.csv             --gbp tmp/gbpusd_m5.csv             --output reports/finotive-floor5
 
       - name: Publish report
         run: cat reports/finotive-floor5/REPORT.md >> "$GITHUB_STEP_SUMMARY"
