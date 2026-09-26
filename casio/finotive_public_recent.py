@@ -14,6 +14,8 @@ COST_R = 0.05
 
 
 def _safe(x):
+    if x is pd.NaT or (not isinstance(x, (dict, list, str, bytes)) and pd.isna(x)):
+        return None
     if isinstance(x, dict):
         return {str(k): _safe(v) for k, v in x.items()}
     if isinstance(x, list):
