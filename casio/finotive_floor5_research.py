@@ -549,30 +549,53 @@ def combine_sleeves(cache: dict[str, pd.DataFrame], names: list[str]) -> pd.Data
     return pd.concat(xs, ignore_index=True).sort_values(["entry_time", "symbol", "engine"]).reset_index(drop=True)
 
 
-def run(xau_path: str | Path, gbp_path: str | Path, output_dir: str | Path) -> dict:
+def run(
+    xau_path: str | Path,
+    gbp_path: str | Path,
+    output_dir: str | Path,
+    xau_secondary_path: str | Path | None = None,
+) -> dict:
     out = Path(output_dir); out.mkdir(parents=True, exist_ok=True)
-    xau = load_m5_csv(xau_path)
+    xau_current = load_m5_csv(xau_path)
     gbp = load_m5_csv(gbp_path)
+    xau_validation = (
+        load_m5_csv(xau_secondary_path)
+        if xau_secondary_path and Path(xau_secondary_path).exists()
+        else xau_current
+    )
 
-    # Common research window; earlier data are used only when both feeds have them.
-    earliest = max(xau.index.min(), gbp.index.min(), pd.Timestamp("2017-01-01", tz="UTC"))
-    xau = xau[xau.index >= earliest].copy()
-    gbp = gbp[gbp.index >= earliest].copy()
-
+    # Current/holdout cache: use the current XAU feed and current GBP feed.
     cache: dict[str, pd.DataFrame] = {"XAU_RR10": rr10_trades(xau_path)}
-    for symbol, data in [("XAUUSD", xau), ("GBPUSD", gbp)]:
-        f = features(data)
-        for name, setups in engine_set(f, symbol).items():
+    for symbol, data in [("XAUUSD", xau_current), ("GBPUSD", gbp)]:
+        ff = features(data)
+        for name, setups in engine_set(ff, symbol).items():
             label = f"{symbol}_{name}"
-            tr = replay(f, setups)
+            tr = replay(ff, setups)
             if not tr.empty:
                 tr["engine"] = label
             cache[label] = tr
 
+    # Validation cache: XAU uses the independent long secondary feed so a
+    # current-only 2024+ research file never truncates GBP discovery history.
+    validation_cache: dict[str, pd.DataFrame] = {
+        "XAU_RR10": rr10_trades(xau_secondary_path) if xau_secondary_path and Path(xau_secondary_path).exists() else cache["XAU_RR10"]
+    }
+    xvf = features(xau_validation)
+    for name, setups in engine_set(xvf, "XAUUSD").items():
+        label = f"XAUUSD_{name}"
+        tr = replay(xvf, setups)
+        if not tr.empty:
+            tr["engine"] = label
+        validation_cache[label] = tr
+    for name, tr in cache.items():
+        if name.startswith("GBPUSD_"):
+            validation_cache[name] = tr
+
     rows = []
     validated = []
-    for name, tr in cache.items():
-        disc = sleeve_metrics(tr, "2017-01-01", "2023-01-01")
+    for name, tr_current in cache.items():
+        tr = validation_cache.get(name, tr_current)
+        disc = sleeve_metrics(tr, "2020-01-01", "2023-01-01")
         val = sleeve_metrics(tr, "2023-01-01", "2026-01-01")
         is_valid = (
             (disc["trades"] or 0) >= 20 and (val["trades"] or 0) >= 15
@@ -609,7 +632,7 @@ def run(xau_path: str | Path, gbp_path: str | Path, output_dir: str | Path) -> d
     if "XAU_RR10" in cache:
         portfolios["RR10_PLUS_VALIDATED"] = list(dict.fromkeys(["XAU_RR10"] + [n for n in validated if n != "XAU_RR10"]))
 
-    data_end = min(xau.index.max(), gbp.index.max()) + pd.Timedelta(minutes=5)
+    data_end = min(xau_current.index.max(), gbp.index.max()) + pd.Timedelta(minutes=5)
     current_month = data_end.floor("D").replace(day=1)
     starts = list(pd.date_range(
         pd.Timestamp("2026-01-01", tz="UTC"),
@@ -656,8 +679,9 @@ def run(xau_path: str | Path, gbp_path: str | Path, output_dir: str | Path) -> d
     best = ranking.iloc[0].to_dict() if len(ranking) else None
     summary = {
         "objective": ">=5% realized return every completed month plus >=5 Finotive-style profitable days, while respecting 3% daily and 6% static DD.",
-        "research_policy": "Sleeves are accepted into portfolios from 2017-2022 discovery + 2023-2025 validation only. 2026 is not used to select sleeve membership.",
-        "xau_coverage": {"start": xau.index.min(), "end": xau.index.max(), "rows": len(xau)},
+        "research_policy": "Sleeves are accepted from 2020-2022 discovery + 2023-2025 validation only. XAU validation uses the independent long secondary feed when supplied; 2026 is not used to select sleeve membership.",
+        "xau_current_coverage": {"start": xau_current.index.min(), "end": xau_current.index.max(), "rows": len(xau_current)},
+        "xau_validation_coverage": {"start": xau_validation.index.min(), "end": xau_validation.index.max(), "rows": len(xau_validation)},
         "gbp_coverage": {"start": gbp.index.min(), "end": gbp.index.max(), "rows": len(gbp)},
         "validated_sleeves": validated,
         "best_2026_portfolio": best,
@@ -713,9 +737,10 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--xau", required=True)
     p.add_argument("--gbp", required=True)
+    p.add_argument("--xau-secondary", default=None)
     p.add_argument("--output", default="reports/finotive-floor5")
     a = p.parse_args()
-    run(a.xau, a.gbp, a.output)
+    run(a.xau, a.gbp, a.output, a.xau_secondary)
 
 
 if __name__ == "__main__":
