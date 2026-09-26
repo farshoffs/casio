@@ -1,0 +1,47 @@
+name: BBMA Cleaner Robustness
+
+on:
+  push:
+    branches:
+      - feature/v4-confluence-signals
+    paths:
+      - 'casio/bbma_cleaner_robustness.py'
+      - '.github/workflows/bbma-cleaner-robustness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  robustness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v4-confluence-signals
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install pandas numpy numba
+
+      - name: Run BBMA robustness stage
+        run: python -m casio.bbma_cleaner_robustness
+
+      - name: Show report
+        run: cat reports/bbma-cleaner-robustness/REPORT.md
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbma-cleaner-robustness
+          path: |
+            reports/bbma-cleaner-robustness/REPORT.md
+            reports/bbma-cleaner-robustness/summary.json
+            reports/bbma-cleaner-robustness/yearly.csv
+            reports/bbma-cleaner-robustness/sensitivity.csv
+          retention-days: 14
