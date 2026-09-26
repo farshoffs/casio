@@ -37,30 +37,22 @@ jobs:
       - name: Validate modules
         run: python -m compileall -q casio
 
-      - name: Run prop baseline
-        run: |
-          python -m casio.finotive_prop_research             --data data/xauusd_m5.csv             --output reports/finotive-prop-2026
-
       - name: Run prop hunt 2
         run: |
           python -m casio.finotive_prop_hunt2             --data data/xauusd_m5.csv             --output reports/finotive-prop-hunt2
 
-      - name: Publish reports
+      - name: Publish report
         if: always()
         run: |
-          for f in reports/finotive-prop-2026/REPORT.md reports/finotive-prop-hunt2/REPORT.md; do
-            if [ -f "$f" ]; then
-              cat "$f"
-              cat "$f" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          if [ -f reports/finotive-prop-hunt2/REPORT.md ]; then
+            cat reports/finotive-prop-hunt2/REPORT.md
+            cat reports/finotive-prop-hunt2/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: finotive-prop-research
-          path: |
-            reports/finotive-prop-2026/
-            reports/finotive-prop-hunt2/
+          name: finotive-prop-hunt2
+          path: reports/finotive-prop-hunt2/
           retention-days: 30
