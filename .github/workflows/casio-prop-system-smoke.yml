@@ -1,0 +1,49 @@
+name: CASIO Prop System Smoke
+
+on:
+  push:
+    branches: [research/finotive-prop]
+    paths:
+      - 'casio/casio_prop_system.py'
+      - '.github/workflows/casio-prop-system-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Compile
+        run: python -m py_compile casio/casio_prop_system.py
+      - name: Synthetic causal routing test
+        shell: bash
+        run: |
+          mkdir -p tmp/system-smoke
+          cat > tmp/system-smoke/a.csv <<'CSV'
+          engine,symbol,entry_time,exit_time,net_r,validated_pre2026,prior_expectancy_r
+          RR10,XAUUSD,2026-01-02T08:00:00Z,2026-01-02T10:00:00Z,3,1,0.40
+          RR10,XAUUSD,2026-01-05T08:00:00Z,2026-01-05T10:00:00Z,-1,1,0.40
+          RR10,XAUUSD,2026-01-06T08:00:00Z,2026-01-06T10:00:00Z,3,1,0.40
+          RR10,XAUUSD,2026-01-07T08:00:00Z,2026-01-07T10:00:00Z,3,1,0.40
+          RR10,XAUUSD,2026-01-08T08:00:00Z,2026-01-08T10:00:00Z,-1,1,0.40
+          RR10,XAUUSD,2026-01-09T08:00:00Z,2026-01-09T10:00:00Z,3,1,0.40
+          RR10,XAUUSD,2026-01-12T08:00:00Z,2026-01-12T10:00:00Z,3,1,0.40
+          CSV
+          cat > tmp/system-smoke/b.csv <<'CSV'
+          engine,symbol,entry_time,exit_time,net_r,validated_pre2026,prior_expectancy_r
+          GBP_ROUTER,GBPUSD,2026-01-02T08:00:00Z,2026-01-02T09:00:00Z,-1,1,0.22
+          GBP_ROUTER,GBPUSD,2026-01-05T12:00:00Z,2026-01-05T13:00:00Z,3,1,0.22
+          GBP_ROUTER,GBPUSD,2026-01-06T12:00:00Z,2026-01-06T13:00:00Z,-1,1,0.22
+          GBP_ROUTER,GBPUSD,2026-01-07T12:00:00Z,2026-01-07T13:00:00Z,3,1,0.22
+          GBP_ROUTER,GBPUSD,2026-01-08T12:00:00Z,2026-01-08T13:00:00Z,3,1,0.22
+          CSV
+          python -m casio.casio_prop_system             --trades tmp/system-smoke/a.csv tmp/system-smoke/b.csv             --output tmp/system-smoke/out
+          cat tmp/system-smoke/out/monthly.csv
