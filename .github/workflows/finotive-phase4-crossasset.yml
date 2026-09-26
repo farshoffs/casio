@@ -1,0 +1,61 @@
+name: CASIO Finotive Phase 4 Cross Asset
+
+on:
+  push:
+    branches: [research/finotive-prop]
+    paths:
+      - 'casio/finotive_phase4_crossasset.py'
+      - '.github/workflows/finotive-phase4-crossasset.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-finotive-phase4
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Fetch cross asset feeds
+        shell: bash
+        run: |
+          for spec in "usa500idxusd us500" "usatechidxusd us100" "dollaridxusd dxy"; do
+            set -- $spec
+            node scripts/fetch_dukascopy.mjs --instrument "$1" --from '2020-01-01T00:00:00Z' --output "tmp/$2_raw.csv" --price-type bid --batch-size 20 --batch-pause-ms 0 --chunk-days 180
+            python -m casio.sync_market_data --file "tmp/$2_raw.csv" --output "tmp/$2_m5.csv"
+          done
+
+      - name: Validate inputs
+        run: |
+          test -f data/xauusd_m5_dukascopy_research.csv
+          test -f data/xauusd_m5_secondary_octafx_mt4.csv
+
+      - name: Run phase 4
+        run: |
+          python -m casio.finotive_phase4_crossasset             --xau-current data/xauusd_m5_dukascopy_research.csv             --xau-secondary data/xauusd_m5_secondary_octafx_mt4.csv             --spx tmp/us500_m5.csv             --nas tmp/us100_m5.csv             --dxy tmp/dxy_m5.csv             --output reports/finotive-phase4
+
+      - name: Publish
+        run: cat reports/finotive-phase4/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: casio-finotive-phase4
+          path: reports/finotive-phase4/
+          retention-days: 60
