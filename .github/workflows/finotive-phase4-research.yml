@@ -1,0 +1,55 @@
+name: CASIO Finotive Phase 4 SMC Inversion
+
+on:
+  push:
+    branches: [research/finotive-prop]
+    paths:
+      - 'casio/finotive_phase4_research.py'
+      - '.github/workflows/finotive-phase4-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-finotive-phase4-research
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+      - name: Fetch EUR AUD JPY
+        shell: bash
+        run: |
+          for sym in eurusd audusd usdjpy; do
+            node scripts/fetch_dukascopy.mjs               --instrument "$sym"               --from '2020-01-01T00:00:00Z'               --output "tmp/${sym}_raw.csv"               --price-type bid               --batch-size 20               --batch-pause-ms 0               --chunk-days 180
+            python -m casio.sync_market_data               --file "tmp/${sym}_raw.csv"               --output "tmp/${sym}_m5.csv"
+          done
+      - name: Run Phase 4
+        run: |
+          python -m casio.finotive_phase4_research             --eur tmp/eurusd_m5.csv             --aud tmp/audusd_m5.csv             --jpy tmp/usdjpy_m5.csv             --output reports/finotive-phase4
+      - name: Publish
+        run: cat reports/finotive-phase4/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-finotive-phase4
+          path: reports/finotive-phase4/
+          retention-days: 60
