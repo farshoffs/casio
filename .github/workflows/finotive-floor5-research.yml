@@ -1,0 +1,74 @@
+name: CASIO Finotive 5 Percent Floor Research
+
+on:
+  push:
+    branches: [research/finotive-prop]
+    paths:
+      - 'casio/finotive_floor5_research.py'
+      - 'scripts/fetch_dukascopy.mjs'
+      - '.github/workflows/finotive-floor5-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-finotive-floor5-research
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Fetch GBPUSD M5 cross-feed
+        run: |
+          node scripts/fetch_dukascopy.mjs             --instrument gbpusd             --from '2017-01-01T00:00:00Z'             --output tmp/gbpusd_m5_raw.csv             --price-type bid             --batch-size 5             --batch-pause-ms 350
+
+      - name: Normalize GBPUSD
+        run: |
+          python -m casio.sync_market_data             --file tmp/gbpusd_m5_raw.csv             --output tmp/gbpusd_m5.csv
+
+      - name: Validate XAU source
+        run: |
+          test -f data/xauusd_m5_dukascopy_research.csv
+          python - <<'PY'
+          import pandas as pd
+          for p in ['data/xauusd_m5_dukascopy_research.csv','tmp/gbpusd_m5.csv']:
+              x=pd.read_csv(p,usecols=['timestamp'])
+              t=pd.to_datetime(x.timestamp,utc=True)
+              print(p, len(x), t.min(), t.max())
+          PY
+
+      - name: Run 5 percent monthly-floor research
+        run: |
+          python -m casio.finotive_floor5_research             --xau data/xauusd_m5_dukascopy_research.csv             --gbp tmp/gbpusd_m5.csv             --output reports/finotive-floor5
+
+      - name: Publish report
+        run: cat reports/finotive-floor5/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-finotive-floor5
+          path: reports/finotive-floor5/
+          retention-days: 60
