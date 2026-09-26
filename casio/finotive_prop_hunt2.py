@@ -271,6 +271,9 @@ def _month(trades: pd.DataFrame, a: pd.Timestamp, b: pd.Timestamp, risk: float) 
 def run(data_path: str|Path, output_dir: str|Path) -> dict:
     out = Path(output_dir); out.mkdir(parents=True,exist_ok=True)
     m5 = load_m5_csv(data_path)
+    # Only the recent window is needed for the 2026 monthly hunt; Oct-Dec 2025
+    # provides ample causal warm-up for H1/M15 EMAs and session context.
+    m5 = m5[m5.index >= pd.Timestamp("2025-10-01", tz="UTC")].copy()
     f = features(m5)
     e = engines(f)
 
