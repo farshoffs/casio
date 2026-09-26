@@ -6,6 +6,7 @@ on:
       - research/finotive-prop
     paths:
       - 'casio/finotive_prop_research.py'
+      - 'casio/finotive_prop_hunt2.py'
       - '.github/workflows/finotive-prop-research.yml'
   workflow_dispatch:
 
@@ -33,30 +34,33 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Validate module
-        run: |
-          python -m compileall -q casio
-          python - <<'PY'
-          from casio.finotive_prop_research import TARGET_R, RISKS
-          print("RR", TARGET_R, "RISKS", RISKS)
-          PY
+      - name: Validate modules
+        run: python -m compileall -q casio
 
-      - name: Run prop backtest
+      - name: Run prop baseline
         run: |
           python -m casio.finotive_prop_research             --data data/xauusd_m5.csv             --output reports/finotive-prop-2026
 
-      - name: Publish report
+      - name: Run prop hunt 2
+        run: |
+          python -m casio.finotive_prop_hunt2             --data data/xauusd_m5.csv             --output reports/finotive-prop-hunt2
+
+      - name: Publish reports
         if: always()
         run: |
-          if [ -f reports/finotive-prop-2026/REPORT.md ]; then
-            cat reports/finotive-prop-2026/REPORT.md
-            cat reports/finotive-prop-2026/REPORT.md >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for f in reports/finotive-prop-2026/REPORT.md reports/finotive-prop-hunt2/REPORT.md; do
+            if [ -f "$f" ]; then
+              cat "$f"
+              cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
       - name: Upload artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: finotive-prop-2026
-          path: reports/finotive-prop-2026/
+          name: finotive-prop-research
+          path: |
+            reports/finotive-prop-2026/
+            reports/finotive-prop-hunt2/
           retention-days: 30
