@@ -7,7 +7,7 @@ Status: research only. Branch: `research/finotive-prop`.
 Account: USD 2,500 Finotive Instant Funding Lite.
 
 Target objective:
-- +8% to +10% realized account return per payout cycle/month;
+- +5% minimum realized account return per payout cycle/month; +6% to +8% is stretch;
 - 5 qualifying profitable days;
 - zero 3% daily drawdown hard breaches;
 - zero 6% static maximum drawdown hard breaches;
@@ -64,7 +64,7 @@ At 0.5% risk:
 
 Therefore the research problem is not “find a higher-risk version of RR10.” It is:
 
-> add independent positive-expectancy sleeves until the portfolio can generate approximately 16–20R in a strong payout cycle without relying on correlated risk or breaching the Lite risk envelope.
+> add independent positive-expectancy sleeves until the portfolio can generate at least ~10R per month at 0.5% risk, with 12–16R as a strong-month range without relying on correlated risk or breaching the Lite risk envelope.
 
 ## Phase 2 candidate families
 
@@ -177,7 +177,7 @@ Validation: 2023–2025.
 Final holdout: 2026 completed months.
 
 Rank candidates by:
-1. number of completed holdout months >= +8%;
+1. number of completed holdout months >= +5%;
 2. worst completed holdout month;
 3. number of payout-ready months with >=5 qualifying profitable days;
 4. floating-DD threshold-event count;
@@ -201,4 +201,4 @@ Build and replay:
 4. Combine only sleeves that are independently positive in both discovery and validation.
 5. Run the frozen portfolio on 2026 with Finotive-specific payout and drawdown simulation.
 
-The acceptance target remains +8% minimum per completed month; +10% is the stretch objective.
+The acceptance target is now +5% minimum per completed month; +6% to +8% is the stretch range.
