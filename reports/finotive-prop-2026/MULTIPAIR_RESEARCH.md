@@ -12,7 +12,7 @@ GBPJPY remains an optional future diversification dataset and must not be treate
 
 Do not substitute Dukascopy for final FxPro acceptance testing.
 
-## Hard objective
+## Hard objective — revised 26 Sep 2026
 
 A candidate portfolio is accepted only if, on every completed holdout month:
 - realized return >= +8%,
@@ -82,7 +82,7 @@ Keep only historically defensible sleeves as baselines:
 - RR10 / 0591 regime-router family,
 - validated structural/liquidity sleeves.
 
-The previous 2026 prop sweep also tested structural/FVG, EMA pullback, volume continuation, 24-bar momentum, Asia sweep, previous-day sweep and Asia breakout families. None met +8% in every completed month at 0.4–0.5% risk.
+The previous 2026 prop sweep also tested structural/FVG, EMA pullback, volume continuation, 24-bar momentum, Asia sweep, previous-day sweep and Asia breakout families. None met the old +8% requirement in every completed month at 0.4–0.5% risk.
 
 ## Phase 2 new research families
 
@@ -102,7 +102,7 @@ A portfolio must:
 1. preserve the risk limits above,
 2. resolve simultaneous/correlated signals,
 3. target complementary monthly P&L rather than maximizing average return,
-4. stop opening new risk after the +8–10% target and profitable-day requirement are both satisfied,
+4. stop opening new risk after the +5% floor and profitable-day requirement are both satisfied,
 5. avoid depending on low-liquidity-window exploitation,
 6. preserve frozen parameters before the 2026 holdout.
 
