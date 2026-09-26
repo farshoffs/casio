@@ -19,12 +19,20 @@ function isoFloorToClosedM5(value) {
   return new Date(floored - ms5);
 }
 
+const instrument = String(arg('--instrument', 'xauusd')).toLowerCase();
+const fromArg = arg('--from');
+const output = arg('--output', `tmp/dukascopy_${instrument}_m5.csv`);
+const priceType = arg('--price-type', 'bid');
+const batchSize = Number(arg('--batch-size', '5'));
+const batchPauseMs = Number(arg('--batch-pause-ms', '500'));
+const to = isoFloorToClosedM5(arg('--to'));
+
 async function fetchChunk(from, to, priceType) {
   const maxAttempts = 6;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
       return await getHistoricalRates({
-        instrument: 'xauusd',
+        instrument,
         dates: { from, to },
         timeframe: 'm5',
         format: 'json',
@@ -49,14 +57,8 @@ async function fetchChunk(from, to, priceType) {
   }
 }
 
-const fromArg = arg('--from');
-const output = arg('--output', 'tmp/dukascopy_xauusd_m5.csv');
-const priceType = arg('--price-type', 'bid');
-const batchSize = Number(arg('--batch-size', '5'));
-const batchPauseMs = Number(arg('--batch-pause-ms', '500'));
-const to = isoFloorToClosedM5(arg('--to'));
-
 if (!fromArg) throw new Error('--from is required');
+if (!/^[a-z0-9]+$/.test(instrument)) throw new Error('--instrument must be an alphanumeric Dukascopy symbol');
 const from = new Date(fromArg);
 if (Number.isNaN(from.getTime())) throw new Error(`Invalid --from date: ${fromArg}`);
 if (from >= to) throw new Error(`Nothing to fetch: from=${from.toISOString()} to=${to.toISOString()}`);
@@ -75,7 +77,7 @@ let chunks = 0;
 
 while (cursor < to) {
   const chunkEnd = new Date(Math.min(cursor.getTime() + chunkMs, to.getTime()));
-  console.log(`Fetching XAUUSD M5 ${priceType}: ${cursor.toISOString()} -> ${chunkEnd.toISOString()}`);
+  console.log(`Fetching ${instrument.toUpperCase()} M5 ${priceType}: ${cursor.toISOString()} -> ${chunkEnd.toISOString()}`);
 
   const data = await fetchChunk(cursor, chunkEnd, priceType);
   for (const bar of data) {
@@ -90,7 +92,6 @@ while (cursor < to) {
 
   cursor = chunkEnd;
   chunks += 1;
-  // Deliberately pace long backfills; daily incremental runs only fetch a few days.
   if (cursor < to) await sleep(1000);
 }
 
@@ -99,5 +100,5 @@ await new Promise((resolve, reject) => {
   stream.on('error', reject);
 });
 
-if (rows === 0) throw new Error('Dukascopy returned zero XAUUSD M5 bars');
-console.log(`Wrote ${rows} XAUUSD M5 ${priceType} bars from ${chunks} chunks to ${output}`);
+if (rows === 0) throw new Error(`Dukascopy returned zero ${instrument.toUpperCase()} M5 bars`);
+console.log(`Wrote ${rows} ${instrument.toUpperCase()} M5 ${priceType} bars from ${chunks} chunks to ${output}`);
