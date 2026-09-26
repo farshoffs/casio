@@ -42,7 +42,7 @@ jobs:
 
       - name: Fetch GBPUSD M5 cross-feed
         run: |
-          node scripts/fetch_dukascopy.mjs             --instrument gbpusd             --from '2020-01-01T00:00:00Z'             --output tmp/gbpusd_m5_raw.csv             --price-type bid             --batch-size 5             --batch-pause-ms 350
+          node scripts/fetch_dukascopy.mjs             --instrument gbpusd             --from '2020-01-01T00:00:00Z'             --output tmp/gbpusd_m5_raw.csv             --price-type bid             --batch-size 20             --batch-pause-ms 100             --chunk-days 92
 
       - name: Normalize GBPUSD
         run: |
