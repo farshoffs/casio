@@ -24,7 +24,8 @@ const fromArg = arg('--from');
 const output = arg('--output', `tmp/dukascopy_${instrument}_m5.csv`);
 const priceType = arg('--price-type', 'bid');
 const batchSize = Number(arg('--batch-size', '5'));
-const batchPauseMs = Number(arg('--batch-pause-ms', '500'));\nconst chunkDays = Number(arg('--chunk-days', '31'));
+const batchPauseMs = Number(arg('--batch-pause-ms', '500'));
+const chunkDays = Number(arg('--chunk-days', '31'));
 const to = isoFloorToClosedM5(arg('--to'));
 
 async function fetchChunk(from, to, priceType) {
@@ -64,7 +65,8 @@ if (Number.isNaN(from.getTime())) throw new Error(`Invalid --from date: ${fromAr
 if (from >= to) throw new Error(`Nothing to fetch: from=${from.toISOString()} to=${to.toISOString()}`);
 if (!['bid', 'ask'].includes(priceType)) throw new Error('--price-type must be bid or ask');
 if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 20) throw new Error('--batch-size must be an integer from 1 to 20');
-if (!Number.isFinite(batchPauseMs) || batchPauseMs < 0) throw new Error('--batch-pause-ms must be >= 0');\nif (!Number.isInteger(chunkDays) || chunkDays < 1 || chunkDays > 365) throw new Error('--chunk-days must be an integer from 1 to 365');
+if (!Number.isFinite(batchPauseMs) || batchPauseMs < 0) throw new Error('--batch-pause-ms must be >= 0');
+if (!Number.isInteger(chunkDays) || chunkDays < 1 || chunkDays > 365) throw new Error('--chunk-days must be an integer from 1 to 365');
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
 const stream = fs.createWriteStream(output, { encoding: 'utf8' });
