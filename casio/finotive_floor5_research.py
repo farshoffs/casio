@@ -609,7 +609,14 @@ def run(xau_path: str | Path, gbp_path: str | Path, output_dir: str | Path) -> d
     if "XAU_RR10" in cache:
         portfolios["RR10_PLUS_VALIDATED"] = list(dict.fromkeys(["XAU_RR10"] + [n for n in validated if n != "XAU_RR10"]))
 
-    starts = list(pd.date_range(pd.Timestamp("2026-01-01", tz="UTC"), pd.Timestamp("2026-09-01", tz="UTC"), freq="MS"))
+    data_end = min(xau.index.max(), gbp.index.max()) + pd.Timedelta(minutes=5)
+    current_month = data_end.floor("D").replace(day=1)
+    starts = list(pd.date_range(
+        pd.Timestamp("2026-01-01", tz="UTC"),
+        current_month,
+        freq="MS",
+        inclusive="left",
+    ))
     monthly_rows = []
     rank_rows = []
 
