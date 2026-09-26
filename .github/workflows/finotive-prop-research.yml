@@ -12,18 +12,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: finotive-prop-research
+  cancel-in-progress: true
+
 jobs:
   backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,9 +31,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          npm install --no-save dukascopy-node@1.50.0
+        run: pip install -r requirements.txt
 
       - name: Validate module
         run: |
@@ -44,18 +41,9 @@ jobs:
           print("RR", TARGET_R, "RISKS", RISKS)
           PY
 
-      - name: Fetch research window
-        run: |
-          mkdir -p tmp
-          node scripts/fetch_dukascopy.mjs             --from '2025-11-01T00:00:00Z'             --to "$(date -u +'%Y-%m-%dT%H:%M:00Z')"             --output tmp/finotive_xauusd_m5.csv             --price-type bid
-
-      - name: Normalize dataset
-        run: |
-          python -m casio.sync_market_data             --file tmp/finotive_xauusd_m5.csv             --output tmp/finotive_xauusd_m5_normalized.csv
-
       - name: Run prop backtest
         run: |
-          python -m casio.finotive_prop_research             --data tmp/finotive_xauusd_m5_normalized.csv             --output reports/finotive-prop-2026
+          python -m casio.finotive_prop_research             --data data/xauusd_m5.csv             --output reports/finotive-prop-2026
 
       - name: Publish report
         if: always()
