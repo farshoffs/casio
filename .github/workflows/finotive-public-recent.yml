@@ -1,0 +1,50 @@
+name: CASIO Recent EURUSD USDJPY Edge Check
+
+on:
+  push:
+    branches: [research/finotive-prop]
+    paths:
+      - 'casio/finotive_public_recent.py'
+      - '.github/workflows/finotive-public-recent.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download recent public MT5 M5 datasets
+        run: |
+          mkdir -p tmp/public-recent
+          curl -L --fail --retry 4 --retry-delay 3             'https://raw.githubusercontent.com/rhuancoelhobr7/ifm-lab/main/research/2026-07-reatividade-metricas/data/raw/EURUSD_M5.csv'             -o tmp/public-recent/EURUSD_M5.csv
+          curl -L --fail --retry 4 --retry-delay 3             'https://raw.githubusercontent.com/rhuancoelhobr7/ifm-lab/main/research/2026-07-reatividade-metricas/data/raw/USDJPY_M5.csv'             -o tmp/public-recent/USDJPY_M5.csv
+          ls -lh tmp/public-recent/
+
+      - name: Run bounded edge check
+        run: |
+          python -m casio.finotive_public_recent             --eur tmp/public-recent/EURUSD_M5.csv             --jpy tmp/public-recent/USDJPY_M5.csv             --output reports/finotive-public-recent
+
+      - name: Publish report
+        run: cat reports/finotive-public-recent/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-finotive-public-recent
+          path: reports/finotive-public-recent/
+          retention-days: 60
