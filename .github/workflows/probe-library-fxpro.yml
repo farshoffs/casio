@@ -1,0 +1,45 @@
+name: Probe ChatGPT Library FxPro Sources
+
+on:
+  push:
+    branches:
+      - research/finotive-prop
+    paths:
+      - '.github/workflows/probe-library-fxpro.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Probe GBPUSD share
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://chatgpt.com/library/share/libfile_6388ad59fc108191b342c1d60b0f5274?account_id=personal'
+          curl -L --fail --retry 2 --connect-timeout 20 -D /tmp/gbpusd.headers -o /tmp/gbpusd.download "$URL" || true
+          echo '--- HEADERS ---'
+          cat /tmp/gbpusd.headers || true
+          echo '--- FILE ---'
+          ls -lh /tmp/gbpusd.download || true
+          file /tmp/gbpusd.download || true
+          head -c 300 /tmp/gbpusd.download || true
+          echo
+
+      - name: Probe GBPJPY share
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://chatgpt.com/library/share/libfile_b13e0b318f70819194d4821a7b0c58ea?account_id=personal'
+          curl -L --fail --retry 2 --connect-timeout 20 -D /tmp/gbpjpy.headers -o /tmp/gbpjpy.download "$URL" || true
+          echo '--- HEADERS ---'
+          cat /tmp/gbpjpy.headers || true
+          echo '--- FILE ---'
+          ls -lh /tmp/gbpjpy.download || true
+          file /tmp/gbpjpy.download || true
+          head -c 300 /tmp/gbpjpy.download || true
+          echo
