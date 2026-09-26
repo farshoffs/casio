@@ -1,0 +1,74 @@
+name: CASIO Finotive Phase 3 Edge Hunt
+
+on:
+  push:
+    branches: [research/finotive-prop]
+    paths:
+      - 'casio/finotive_phase3_research.py'
+      - '.github/workflows/finotive-phase3-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casio-finotive-phase3-research
+  cancel-in-progress: true
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Fetch FX cross-feed data
+        shell: bash
+        run: |
+          for sym in gbpusd eurusd usdjpy audusd; do
+            node scripts/fetch_dukascopy.mjs               --instrument "$sym"               --from '2020-01-01T00:00:00Z'               --output "tmp/${sym}_raw.csv"               --price-type bid               --batch-size 20               --batch-pause-ms 0               --chunk-days 180
+            python -m casio.sync_market_data               --file "tmp/${sym}_raw.csv"               --output "tmp/${sym}_m5.csv"
+          done
+
+      - name: Validate inputs
+        run: |
+          test -f data/xauusd_m5_dukascopy_research.csv
+          python - <<'PY'
+          import pandas as pd
+          paths=['data/xauusd_m5_dukascopy_research.csv','tmp/gbpusd_m5.csv','tmp/eurusd_m5.csv','tmp/usdjpy_m5.csv','tmp/audusd_m5.csv']
+          for p in paths:
+              x=pd.read_csv(p,usecols=['timestamp'])
+              t=pd.to_datetime(x.timestamp,utc=True)
+              print(p, f"{len(x):,}", t.min(), t.max())
+          PY
+
+      - name: Run Phase 3
+        run: |
+          python -m casio.finotive_phase3_research             --xau data/xauusd_m5_dukascopy_research.csv             --gbp tmp/gbpusd_m5.csv             --eur tmp/eurusd_m5.csv             --jpy tmp/usdjpy_m5.csv             --aud tmp/audusd_m5.csv             --output reports/finotive-phase3
+
+      - name: Publish report
+        run: cat reports/finotive-phase3/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-finotive-phase3
+          path: reports/finotive-phase3/
+          retention-days: 60
