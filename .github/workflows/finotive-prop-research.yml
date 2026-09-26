@@ -1,0 +1,74 @@
+name: Finotive Prop Research
+
+on:
+  push:
+    branches:
+      - research/finotive-prop
+    paths:
+      - 'casio/finotive_prop_research.py'
+      - '.github/workflows/finotive-prop-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install --no-save dukascopy-node@1.50.0
+
+      - name: Validate module
+        run: |
+          python -m compileall -q casio
+          python - <<'PY'
+          from casio.finotive_prop_research import TARGET_R, RISKS
+          print("RR", TARGET_R, "RISKS", RISKS)
+          PY
+
+      - name: Fetch research window
+        run: |
+          mkdir -p tmp
+          node scripts/fetch_dukascopy.mjs             --from '2025-11-01T00:00:00Z'             --to "$(date -u +'%Y-%m-%dT%H:%M:00Z')"             --output tmp/finotive_xauusd_m5.csv             --price-type bid
+
+      - name: Normalize dataset
+        run: |
+          python -m casio.sync_market_data             --file tmp/finotive_xauusd_m5.csv             --output tmp/finotive_xauusd_m5_normalized.csv
+
+      - name: Run prop backtest
+        run: |
+          python -m casio.finotive_prop_research             --data tmp/finotive_xauusd_m5_normalized.csv             --output reports/finotive-prop-2026
+
+      - name: Publish report
+        if: always()
+        run: |
+          if [ -f reports/finotive-prop-2026/REPORT.md ]; then
+            cat reports/finotive-prop-2026/REPORT.md
+            cat reports/finotive-prop-2026/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: finotive-prop-2026
+          path: reports/finotive-prop-2026/
+          retention-days: 30
