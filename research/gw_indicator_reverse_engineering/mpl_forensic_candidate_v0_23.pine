@@ -1,0 +1,38 @@
+//@version=6
+indicator("MPL Forensic Candidate v0.23", overlay=true)
+
+// Blue line identified from direct screenshot/video matching.
+blue = ta.sma(close, 20)
+plot(blue, "Blue SMA20", color=color.rgb(70, 135, 255), linewidth=2)
+
+// MPL V1 A candidate from the visible input signature:
+// "close 10 1 2" -> ALMA(source, length, offset, sigma)
+src    = input.source(close, "MPL-A Source")
+len    = input.int(10, "MPL-A Length", minval=1)
+offset = input.float(1.0, "MPL-A Offset", step=0.05)
+sigma  = input.float(2.0, "MPL-A Sigma", step=0.1)
+
+mplA = ta.alma(src, len, offset, sigma)
+trig = mplA[2]
+bull = mplA > trig
+bear = mplA < trig
+
+pA = plot(mplA, "MPL-A", display=display.none)
+pT = plot(trig, "MPL-A Trigger [2]", display=display.none)
+fill(pA, pT, color=bull ? color.new(color.teal, 72) : bear ? color.new(color.red, 72) : na, title="MPL-A Ribbon")
+
+// MPL V1 B core confirmed numerically from the video.
+[macd, signal, hist] = ta.macd(close, 12, 26, 9)
+macdBuy  = ta.crossover(macd, signal)
+macdSell = ta.crossunder(macd, signal)
+
+plotshape(macdBuy,  "MACD Cross Up",   shape.circle, location.belowbar, color=color.lime, size=size.tiny)
+plotshape(macdSell, "MACD Cross Down", shape.circle, location.abovebar, color=color.red,  size=size.tiny)
+
+// Expose values in Data Window without creating a second pane.
+plot(macd,   "MACD",      display=display.data_window)
+plot(signal, "MACD Sig",  display=display.data_window)
+plot(hist,   "MACD Hist", display=display.data_window)
+
+alertcondition(macdBuy,  "MACD Buy Cross",  "MACD crossed above signal")
+alertcondition(macdSell, "MACD Sell Cross", "MACD crossed below signal")
