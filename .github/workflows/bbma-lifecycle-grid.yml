@@ -1,0 +1,36 @@
+name: BBMA Lifecycle Grid
+
+on:
+  push:
+    branches:
+      - feature/v4-confluence-signals
+    paths:
+      - 'casio/bbma_lifecycle_grid.py'
+      - '.github/workflows/bbma-lifecycle-grid.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/v4-confluence-signals
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install pandas numpy numba
+      - name: Run lifecycle grid
+        run: python -m casio.bbma_lifecycle_grid
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbma-lifecycle-grid
+          path: reports/bbma-lifecycle-grid/
+          retention-days: 14
