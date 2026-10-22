@@ -1,0 +1,195 @@
+//@version=6
+strategy("XAUUSD PVT-Inspired | Asia Sweep + Volume Confirmation v1", 
+     overlay = true,
+     initial_capital = 2500,
+     currency = currency.USD,
+     pyramiding = 0,
+     default_qty_type = strategy.fixed,
+     slippage = 10,
+     margin_long = 5,
+     margin_short = 5,
+     process_orders_on_close = false)
+
+// EDUCATIONAL RECONSTRUCTION, NOT THE SOCIAL MEDIA CREATOR'S EXACT PVT METHOD.
+// P = price/sweep; V = relative tick-volume; T = UTC sessions and quiet-before-move.
+// Designed for regular XAUUSD candlesticks on 5m; 15m is an alternative.
+
+// ───────────────────────── Inputs ─────────────────────────
+grpTime = "1. Time / Liquidity Range"
+asiaSession = input.session("0000-0700", "Asia range (UTC)", group = grpTime)
+entrySession = input.session("0700-1100,1230-1600", "Entry windows (UTC)", group = grpTime)
+
+// Uses ONLY the last closed 1h candle to prevent higher-timeframe repainting.
+grpTrend = "2. Higher Timeframe Trend"
+useTrend = input.bool(true, "Require 1H trend alignment", group = grpTrend)
+trendTF = input.timeframe("60", "Higher timeframe", group = grpTrend)
+fastLen = input.int(50, "Fast EMA", minval = 1, group = grpTrend)
+slowLen = input.int(200, "Slow EMA", minval = 2, group = grpTrend)
+
+grpVol = "3. Volume / Quiet Phase"
+useVolume = input.bool(true, "Require tick-volume pattern", group = grpVol)
+volumeLookback = input.int(20, "Relative volume SMA length", minval = 5, group = grpVol)
+quietBars = input.int(6, "Bars of preceding quiet activity", minval = 2, group = grpVol)
+maxQuietRVOL = input.float(1.00, "Max mean RVOL before sweep", minval = 0.1, step = 0.05, group = grpVol)
+maxSweepRVOL = input.float(1.50, "Max RVOL on sweep bar", minval = 0.1, step = 0.05, group = grpVol)
+minConfirmRVOL = input.float(1.10, "Min RVOL on confirmation", minval = 0.1, step = 0.05, group = grpVol)
+
+grpSetup = "4. Price Action Setup"
+atrLen = input.int(14, "ATR period", minval = 2, group = grpSetup)
+minSweepATR = input.float(0.05, "Sweep distance beyond range (ATR)", minval = 0, step = 0.01, group = grpSetup)
+minWickFraction = input.float(0.25, "Minimum rejection wick / candle", minval = 0, maxval = 1, step = 0.05, group = grpSetup)
+confirmBars = input.int(3, "Maximum bars to confirm sweep", minval = 1, maxval = 10, group = grpSetup)
+minConfirmBody = input.float(0.45, "Minimum confirmation body / candle", minval = 0, maxval = 1, step = 0.05, group = grpSetup)
+
+grpRisk = "5. Orders / Risk"
+riskPct = input.float(0.25, "Equity risk per setup (%)", minval = 0.01, maxval = 2, step = 0.05, group = grpRisk)
+rewardR = input.float(2.3, "Take profit (R multiple)", minval = 0.5, maxval = 10, step = 0.1, group = grpRisk)
+stopBufferATR = input.float(0.15, "Stop padding outside sweep (ATR)", minval = 0, step = 0.05, group = grpRisk)
+minStopATR = input.float(0.35, "Minimum stop distance (ATR)", minval = 0.05, step = 0.05, group = grpRisk)
+maxStopATR = input.float(3.0, "Maximum stop distance (ATR)", minval = 0.5, step = 0.25, group = grpRisk)
+qtyStep = input.float(0.01, "Minimum strategy quantity increment", minval = 0.0001, step = 0.01, group = grpRisk)
+maxTradesDaily = input.int(2, "Maximum trades per UTC day", minval = 1, maxval = 10, group = grpRisk)
+maxIntradayLoss = input.float(1.0, "TradingView intraday loss limit (%)", minval = 0.1, maxval = 10, step = 0.1, group = grpRisk)
+strategy.risk.max_intraday_loss(maxIntradayLoss, strategy.percent_of_equity)
+
+// Avoid collecting misleading HTF data from a chart >= selected HTF.
+if timeframe.in_seconds() >= timeframe.in_seconds(trendTF)
+    runtime.error("Set the chart timeframe lower than the higher-timeframe trend input (e.g., chart 5m, higher timeframe 60m).")
+
+// ───────────────────────── Session range ─────────────────────────
+bool inAsia = not na(time(timeframe.period, asiaSession, "Etc/UTC"))
+bool inEntry = not na(time(timeframe.period, entrySession, "Etc/UTC"))
+bool newAsia = inAsia and not inAsia[1]
+var float asiaHigh = na
+var float asiaLow = na
+var int tradesToday = 0
+
+// Pending one-sided rejection pattern.
+var int setupDir = 0           // 1 = long, -1 = short, 0 = none
+var int setupIndex = na
+var float setupExtreme = na
+var float setupTrigger = na
+
+if newAsia
+    asiaHigh := high
+    asiaLow := low
+    tradesToday := 0
+    setupDir := 0
+    setupIndex := na
+    setupExtreme := na
+    setupTrigger := na
+else if inAsia
+    asiaHigh := math.max(nz(asiaHigh, high), high)
+    asiaLow := math.min(nz(asiaLow, low), low)
+
+bool asiaReady = not inAsia and not na(asiaHigh) and not na(asiaLow) and asiaHigh > asiaLow
+
+// ───────────────────────── Volume and trend ─────────────────────────
+float atr = ta.atr(atrLen)
+float volBase = ta.sma(volume, volumeLookback)
+float rvol = not na(volBase) and volBase > 0 ? volume / volBase : na
+float priorQuietRVOL = ta.sma(rvol[1], quietBars)
+bool volumeAvailable = not na(rvol) and not na(priorQuietRVOL)
+bool quietOK = not useVolume or (volumeAvailable and priorQuietRVOL <= maxQuietRVOL)
+bool sweepVolumeOK = not useVolume or (volumeAvailable and rvol <= maxSweepRVOL)
+bool confirmVolumeOK = not useVolume or (not na(rvol) and rvol >= minConfirmRVOL)
+
+[htfClose, htfFast, htfSlow] = request.security(syminfo.tickerid, trendTF,
+     [close[1], ta.ema(close, fastLen)[1], ta.ema(close, slowLen)[1]],
+     lookahead = barmerge.lookahead_on)
+bool trendLong = not useTrend or (htfFast > htfSlow and htfClose > htfFast)
+bool trendShort = not useTrend or (htfFast < htfSlow and htfClose < htfFast)
+
+float candleRange = math.max(high - low, syminfo.mintick)
+float lowerWick = math.min(open, close) - low
+float upperWick = high - math.max(open, close)
+float bodyFraction = math.abs(close - open) / candleRange
+
+bool canTrade = barstate.isconfirmed and asiaReady and inEntry and strategy.position_size == 0 and tradesToday < maxTradesDaily and strategy.equity > 0
+bool justSweptLow = canTrade and low < asiaLow - atr * minSweepATR and close > asiaLow and close < asiaHigh and lowerWick / candleRange >= minWickFraction and quietOK and sweepVolumeOK
+bool justSweptHigh = canTrade and high > asiaHigh + atr * minSweepATR and close < asiaHigh and close > asiaLow and upperWick / candleRange >= minWickFraction and quietOK and sweepVolumeOK
+
+// ───────────────────────── Execution state ─────────────────────────
+var float activeStop = na
+var float activeTarget = na
+bool longSignal = false
+bool shortSignal = false
+
+// 1) If a sweep is pending, wait for a later completed candle to break its
+//    extreme with strong body and renewed relative volume.
+if barstate.isconfirmed and setupDir != 0
+    int elapsed = bar_index - setupIndex
+    bool expired = elapsed > confirmBars or not inEntry or not asiaReady
+    bool invalidLong = setupDir == 1 and (low < setupExtreme or close < asiaLow)
+    bool invalidShort = setupDir == -1 and (high > setupExtreme or close > asiaHigh)
+    if expired or invalidLong or invalidShort
+        setupDir := 0
+    else if elapsed >= 1 and canTrade and bodyFraction >= minConfirmBody and confirmVolumeOK
+        float riskCash = strategy.equity * riskPct * 0.01
+        float perUnitValue = math.max(syminfo.pointvalue, 0.000001)
+        if setupDir == 1 and trendLong and close > setupTrigger and close > open
+            float stopLong = math.min(setupExtreme - atr * stopBufferATR, close - atr * minStopATR)
+            float priceRisk = close - stopLong
+            float rawQty = riskCash / (priceRisk * perUnitValue)
+            float orderQty = math.floor(rawQty / qtyStep) * qtyStep
+            if priceRisk <= maxStopATR * atr and priceRisk > syminfo.mintick and orderQty >= qtyStep
+                activeStop := stopLong
+                activeTarget := close + rewardR * priceRisk
+                strategy.entry("PVT Long", strategy.long, qty = orderQty, comment = "Asia low sweep -> reclaim")
+                strategy.exit("Long bracket", from_entry = "PVT Long", stop = activeStop, limit = activeTarget)
+                longSignal := true
+                tradesToday += 1
+                setupDir := 0
+        if setupDir == -1 and trendShort and close < setupTrigger and close < open
+            float stopShort = math.max(setupExtreme + atr * stopBufferATR, close + atr * minStopATR)
+            float priceRisk = stopShort - close
+            float rawQty = riskCash / (priceRisk * perUnitValue)
+            float orderQty = math.floor(rawQty / qtyStep) * qtyStep
+            if priceRisk <= maxStopATR * atr and priceRisk > syminfo.mintick and orderQty >= qtyStep
+                activeStop := stopShort
+                activeTarget := close - rewardR * priceRisk
+                strategy.entry("PVT Short", strategy.short, qty = orderQty, comment = "Asia high sweep -> reclaim")
+                strategy.exit("Short bracket", from_entry = "PVT Short", stop = activeStop, limit = activeTarget)
+                shortSignal := true
+                tradesToday += 1
+                setupDir := 0
+
+// 2) Otherwise, store a completed rejection bar as the prospective sweep.
+//    Opposite simultaneous sweeps of the complete range are ignored.
+if barstate.isconfirmed and setupDir == 0 and not longSignal and not shortSignal
+    if justSweptLow and not justSweptHigh
+        setupDir := 1
+        setupIndex := bar_index
+        setupExtreme := low
+        setupTrigger := high
+    else if justSweptHigh and not justSweptLow
+        setupDir := -1
+        setupIndex := bar_index
+        setupExtreme := high
+        setupTrigger := low
+
+// Brackets remain active until filled or the trade closes.
+if strategy.position_size > 0 and not na(activeStop)
+    strategy.exit("Long bracket", from_entry = "PVT Long", stop = activeStop, limit = activeTarget)
+if strategy.position_size < 0 and not na(activeStop)
+    strategy.exit("Short bracket", from_entry = "PVT Short", stop = activeStop, limit = activeTarget)
+
+bool becameFlat = strategy.position_size == 0 and strategy.position_size[1] != 0
+if becameFlat
+    activeStop := na
+    activeTarget := na
+
+// ───────────────────────── Visuals ─────────────────────────
+plot(not inAsia ? asiaHigh : na, "Asia high", color = color.new(color.orange, 10), style = plot.style_linebr)
+plot(not inAsia ? asiaLow : na, "Asia low", color = color.new(color.aqua, 10), style = plot.style_linebr)
+plot(strategy.position_size != 0 ? activeStop : na, "Active stop", color = color.red, style = plot.style_linebr, linewidth = 2)
+plot(strategy.position_size != 0 ? activeTarget : na, "Active take profit", color = color.lime, style = plot.style_linebr, linewidth = 2)
+plotshape(longSignal, title = "Long confirmation", text = "PVT L", location = location.belowbar, style = shape.labelup, color = color.new(color.lime, 0), textcolor = color.black, size = size.tiny)
+plotshape(shortSignal, title = "Short confirmation", text = "PVT S", location = location.abovebar, style = shape.labeldown, color = color.new(color.red, 0), textcolor = color.white, size = size.tiny)
+bgcolor(inAsia ? color.new(color.blue, 94) : na, title = "Asia accumulation window")
+
+// Alerts trigger only on confirmed setup candles.
+if longSignal
+    alert("PVT XAUUSD LONG | signal close " + str.tostring(close, format.mintick) + " | SL " + str.tostring(activeStop, format.mintick) + " | TP " + str.tostring(activeTarget, format.mintick), alert.freq_once_per_bar_close)
+if shortSignal
+    alert("PVT XAUUSD SHORT | signal close " + str.tostring(close, format.mintick) + " | SL " + str.tostring(activeStop, format.mintick) + " | TP " + str.tostring(activeTarget, format.mintick), alert.freq_once_per_bar_close)
