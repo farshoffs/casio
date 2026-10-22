@@ -1,0 +1,29 @@
+name: CASIO v4 Quick Validate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v4-confluence-signals
+    paths:
+      - 'casio/v4_confluence_research.py'
+      - 'casio/v4_quick_validate.py'
+      - '.github/workflows/v4-quick-validate.yml'
+      - 'data/xauusd_m5_dukascopy_research.csv'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate v4 profiles
+        run: python -m casio.v4_quick_validate --data data/xauusd_m5_dukascopy_research.csv

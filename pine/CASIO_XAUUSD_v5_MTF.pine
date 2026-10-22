@@ -1,0 +1,431 @@
+//@version=6
+strategy("CASIO XAUUSD v5 — M15 Setup / M5 Execution", overlay=true, pyramiding=0, process_orders_on_close=true, calc_on_order_fills=true, calc_on_every_tick=false, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1, margin_long=1, margin_short=1, commission_type=strategy.commission.percent, commission_value=0.005, max_labels_count=500, max_lines_count=500, max_boxes_count=50, max_bars_back=10000)
+
+// CASIO v5 challenger.
+// Architecture: H4/H1 regime -> confirmed M15 setup -> M5 execution trigger.
+// Native chart: XAUUSD 5m.
+// Higher-timeframe values use lookahead_off and are snapshotted only after a HTF bar closes.
+// BBMA/FVG/supply-demand/liquidity are confluence features, not independent entry buttons.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+groupCore = "CASIO v5 core"
+minSetupScore = input.int(60, "Minimum M15 setup score", minval=40, maxval=90, group=groupCore)
+targetR = input.float(0.90, "Take-profit R", minval=0.50, maxval=2.00, step=0.05, group=groupCore)
+maxTradesPerDay = input.int(2, "Maximum trades / day", minval=1, maxval=5, group=groupCore)
+maxTradesPerWeek = input.int(10, "Maximum trades / week", minval=5, maxval=20, group=groupCore)
+weeklyTarget = input.int(8, "Weekly target", minval=1, maxval=20, group=groupCore)
+cooldownBars = input.int(9, "Cooldown M5 bars", minval=0, maxval=60, group=groupCore)
+setupLifetimeBars = input.int(12, "M15 setup lifetime (M5 bars)", minval=3, maxval=36, group=groupCore)
+
+groupRisk = "Risk / execution"
+backtestQty = input.float(1.0, "Order size (contracts)", minval=0.01, step=0.01, group=groupRisk)
+minRiskAtr = input.float(0.40, "Minimum stop / M5 ATR", minval=0.10, maxval=2.00, step=0.05, group=groupRisk)
+maxRiskAtr = input.float(1.60, "Maximum stop / M5 ATR", minval=0.50, maxval=4.00, step=0.10, group=groupRisk)
+stopBufferAtr = input.float(0.15, "Stop buffer / M5 ATR", minval=0.00, maxval=1.00, step=0.05, group=groupRisk)
+useBreakeven = input.bool(true, "Protect at breakeven", group=groupRisk)
+beTriggerR = input.float(0.55, "Breakeven trigger R", minval=0.30, maxval=1.50, step=0.05, group=groupRisk)
+beLockR = input.float(0.05, "Breakeven locked R", minval=0.00, maxval=0.30, step=0.01, group=groupRisk)
+backtestStart = input.time(1704067200000, "Backtest start", group=groupRisk)
+backtestEnd = input.time(1924991940000, "Backtest end", group=groupRisk)
+inBacktestWindow = time >= backtestStart and time <= backtestEnd
+
+groupSession = "Sessions UTC"
+londonSession = input.session("0700-1130", "London", group=groupSession)
+newYorkSession = input.session("1230-1700", "New York", group=groupSession)
+allowAsia = input.bool(false, "Allow Asia", group=groupSession)
+asiaSession = input.session("0000-0600", "Asia", group=groupSession)
+
+groupDisplay = "Display"
+showDashboard = input.bool(true, "Show dashboard", group=groupDisplay)
+showM15Zone = input.bool(true, "Show active M15 setup zone", group=groupDisplay)
+showLevels = input.bool(true, "Show active entry / SL / TP", group=groupDisplay)
+showLabels = input.bool(true, "Show BUY / SELL labels", group=groupDisplay)
+keepHistory = input.bool(true, "Keep historical trade levels", group=groupDisplay)
+historyTrades = input.int(60, "Historical trade plans", minval=10, maxval=120, group=groupDisplay)
+
+groupAlerts = "Alerts"
+sendWebhookAlerts = input.bool(true, "Enable CASIO webhook alert()", group=groupAlerts)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Confirmed HTF context. No lookahead_on.
+// ─────────────────────────────────────────────────────────────────────────────
+f_h4h1_bundle() =>
+    e20 = ta.ema(close, 20)
+    e50 = ta.ema(close, 50)
+    a14 = ta.atr(14)
+    [close, e20, e50, a14]
+
+f_m15_bundle() =>
+    e20 = ta.ema(close, 20)
+    e50 = ta.ema(close, 50)
+    a14 = ta.atr(14)
+    basis = ta.sma(close, 20)
+    dev = ta.stdev(close, 20) * 2.0
+    upper = basis + dev
+    lower = basis - dev
+    ma5h = ta.wma(high, 5)
+    ma5l = ta.wma(low, 5)
+    [p, m, adx] = ta.dmi(14, 14)
+    prevHi = ta.highest(high[1], 8)
+    prevLo = ta.lowest(low[1], 8)
+    rng = high - low
+    body = rng > 0 ? math.abs(close - open) / rng : 0.0
+    loc = rng > 0 ? (close - low) / rng : 0.5
+    dispUp = close > open and body >= 0.55 and loc >= 0.68 and rng >= a14 * 0.75
+    dispDn = close < open and body >= 0.55 and loc <= 0.32 and rng >= a14 * 0.75
+    sweepLo = low < prevLo and close > prevLo
+    sweepHi = high > prevHi and close < prevHi
+    bosUp = close > prevHi
+    bosDn = close < prevLo
+    bullFvg = low > high[2]
+    bearFvg = high < low[2]
+    bbRecoverLong = ta.barssince(low < lower) <= 3 and close > ma5h and close > open
+    bbRecoverShort = ta.barssince(high > upper) <= 3 and close < ma5l and close < open
+    pivLo = ta.valuewhen(not na(ta.pivotlow(low, 2, 2)), ta.pivotlow(low, 2, 2), 0)
+    pivHi = ta.valuewhen(not na(ta.pivothigh(high, 2, 2)), ta.pivothigh(high, 2, 2), 0)
+    nearDemand = not na(pivLo) and low <= pivLo + a14 * 0.30 and close > pivLo
+    nearSupply = not na(pivHi) and high >= pivHi - a14 * 0.30 and close < pivHi
+    [open, high, low, close, e20, e50, a14, adx, lower, upper, ma5h, ma5l, sweepLo, sweepHi, bosUp, bosDn, dispUp, dispDn, bullFvg, bearFvg, bbRecoverLong, bbRecoverShort, nearDemand, nearSupply]
+
+[h4CloseRaw, h4E20Raw, h4E50Raw, h4AtrRaw] = request.security(syminfo.tickerid, "240", f_h4h1_bundle(), lookahead=barmerge.lookahead_off, calc_bars_count=2500)
+[h1CloseRaw, h1E20Raw, h1E50Raw, h1AtrRaw] = request.security(syminfo.tickerid, "60", f_h4h1_bundle(), lookahead=barmerge.lookahead_off, calc_bars_count=5000)
+[m15OpenRaw, m15HighRaw, m15LowRaw, m15CloseRaw, m15E20Raw, m15E50Raw, m15AtrRaw, m15AdxRaw, m15BbLowerRaw, m15BbUpperRaw, m15Ma5HRaw, m15Ma5LRaw, m15SweepLoRaw, m15SweepHiRaw, m15BosUpRaw, m15BosDnRaw, m15DispUpRaw, m15DispDnRaw, m15BullFvgRaw, m15BearFvgRaw, m15BbLongRaw, m15BbShortRaw, m15DemandRaw, m15SupplyRaw] = request.security(syminfo.tickerid, "15", f_m15_bundle(), lookahead=barmerge.lookahead_off, calc_bars_count=10000)
+
+newH4 = ta.change(time("240")) != 0
+newH1 = ta.change(time("60")) != 0
+newM15 = ta.change(time("15")) != 0
+
+h4Close = ta.valuewhen(newH4, h4CloseRaw[1], 0)
+h4E20 = ta.valuewhen(newH4, h4E20Raw[1], 0)
+h4E50 = ta.valuewhen(newH4, h4E50Raw[1], 0)
+h1Close = ta.valuewhen(newH1, h1CloseRaw[1], 0)
+h1E20 = ta.valuewhen(newH1, h1E20Raw[1], 0)
+h1E50 = ta.valuewhen(newH1, h1E50Raw[1], 0)
+
+m15Open = ta.valuewhen(newM15, m15OpenRaw[1], 0)
+m15High = ta.valuewhen(newM15, m15HighRaw[1], 0)
+m15Low = ta.valuewhen(newM15, m15LowRaw[1], 0)
+m15Close = ta.valuewhen(newM15, m15CloseRaw[1], 0)
+m15E20 = ta.valuewhen(newM15, m15E20Raw[1], 0)
+m15E50 = ta.valuewhen(newM15, m15E50Raw[1], 0)
+m15Atr = ta.valuewhen(newM15, m15AtrRaw[1], 0)
+m15Adx = ta.valuewhen(newM15, m15AdxRaw[1], 0)
+m15BbLower = ta.valuewhen(newM15, m15BbLowerRaw[1], 0)
+m15BbUpper = ta.valuewhen(newM15, m15BbUpperRaw[1], 0)
+m15Ma5H = ta.valuewhen(newM15, m15Ma5HRaw[1], 0)
+m15Ma5L = ta.valuewhen(newM15, m15Ma5LRaw[1], 0)
+m15SweepLo = ta.valuewhen(newM15, m15SweepLoRaw[1], 0)
+m15SweepHi = ta.valuewhen(newM15, m15SweepHiRaw[1], 0)
+m15BosUp = ta.valuewhen(newM15, m15BosUpRaw[1], 0)
+m15BosDn = ta.valuewhen(newM15, m15BosDnRaw[1], 0)
+m15DispUp = ta.valuewhen(newM15, m15DispUpRaw[1], 0)
+m15DispDn = ta.valuewhen(newM15, m15DispDnRaw[1], 0)
+m15BullFvg = ta.valuewhen(newM15, m15BullFvgRaw[1], 0)
+m15BearFvg = ta.valuewhen(newM15, m15BearFvgRaw[1], 0)
+m15BbLong = ta.valuewhen(newM15, m15BbLongRaw[1], 0)
+m15BbShort = ta.valuewhen(newM15, m15BbShortRaw[1], 0)
+m15Demand = ta.valuewhen(newM15, m15DemandRaw[1], 0)
+m15Supply = ta.valuewhen(newM15, m15SupplyRaw[1], 0)
+
+h4Bias = h4E20 > h4E50 and h4Close > h4E20 ? 1 : h4E20 < h4E50 and h4Close < h4E20 ? -1 : 0
+h1Bias = h1E20 > h1E50 and h1Close > h1E20 ? 1 : h1E20 < h1E50 and h1Close < h1E20 ? -1 : 0
+m15Bias = m15E20 > m15E50 and m15Close > m15E20 ? 1 : m15E20 < m15E50 and m15Close < m15E20 ? -1 : 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions + M5 execution layer.
+// ─────────────────────────────────────────────────────────────────────────────
+chartIsM5 = timeframe.isminutes and timeframe.multiplier == 5
+inLondon = not na(time(timeframe.period, londonSession, "UTC"))
+inNewYork = not na(time(timeframe.period, newYorkSession, "UTC"))
+inAsia = not na(time(timeframe.period, asiaSession, "UTC"))
+sessionAllowed = inLondon or inNewYork or (allowAsia and inAsia)
+sessionName = inLondon ? "LONDON" : inNewYork ? "NEW YORK" : inAsia ? "ASIA" : "OFF"
+
+atr5 = ta.atr(14)
+ema9 = ta.ema(close, 9)
+ema20 = ta.ema(close, 20)
+range5 = high - low
+body5 = range5 > 0 ? math.abs(close - open) / range5 : 0.0
+loc5 = range5 > 0 ? (close - low) / range5 : 0.5
+priorHi3 = ta.highest(high[1], 3)
+priorLo3 = ta.lowest(low[1], 3)
+microSweepLong = low < priorLo3 and close > priorLo3
+microSweepShort = high > priorHi3 and close < priorHi3
+microBreakLong = close > priorHi3
+microBreakShort = close < priorLo3
+bullTriggerCandle = close > open and body5 >= 0.45 and loc5 >= 0.62 and close > ema9
+bearTriggerCandle = close < open and body5 >= 0.45 and loc5 <= 0.38 and close < ema9
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M15 setup scorer. Evaluated only after a M15 candle has closed.
+// ─────────────────────────────────────────────────────────────────────────────
+longSetupScore = 0
+shortSetupScore = 0
+longSetupScore += h4Bias == 1 ? 15 : h4Bias == -1 ? -10 : 0
+shortSetupScore += h4Bias == -1 ? 15 : h4Bias == 1 ? -10 : 0
+longSetupScore += h1Bias == 1 ? 20 : h1Bias == -1 ? -15 : 0
+shortSetupScore += h1Bias == -1 ? 20 : h1Bias == 1 ? -15 : 0
+longSetupScore += m15Bias == 1 ? 10 : 0
+shortSetupScore += m15Bias == -1 ? 10 : 0
+longSetupScore += m15SweepLo ? 15 : 0
+shortSetupScore += m15SweepHi ? 15 : 0
+longSetupScore += m15DispUp ? 10 : 0
+shortSetupScore += m15DispDn ? 10 : 0
+longSetupScore += m15BullFvg ? 10 : 0
+shortSetupScore += m15BearFvg ? 10 : 0
+longSetupScore += m15BbLong ? 10 : 0
+shortSetupScore += m15BbShort ? 10 : 0
+longSetupScore += m15Demand ? 5 : 0
+shortSetupScore += m15Supply ? 5 : 0
+longSetupScore += m15BosUp ? 5 : 0
+shortSetupScore += m15BosDn ? 5 : 0
+longSetupScore += m15Adx >= 18 ? 5 : 0
+shortSetupScore += m15Adx >= 18 ? 5 : 0
+longSetupScore := math.max(math.min(longSetupScore, 100), 0)
+shortSetupScore := math.max(math.min(shortSetupScore, 100), 0)
+
+// A setup must have actual price-action evidence, not trend score alone.
+longEvidence = m15SweepLo or m15BbLong or m15Demand or (m15BosUp and m15DispUp)
+shortEvidence = m15SweepHi or m15BbShort or m15Supply or (m15BosDn and m15DispDn)
+longBiasOk = h1Bias >= 0 and h4Bias >= 0 and not (h1Bias == 0 and h4Bias == 0)
+shortBiasOk = h1Bias <= 0 and h4Bias <= 0 and not (h1Bias == 0 and h4Bias == 0)
+
+var int armedDir = 0
+var int armedScore = 0
+var int armedBar = na
+var float armedZoneLow = na
+var float armedZoneHigh = na
+var string armedSetup = "WAIT"
+
+if newM15 and strategy.position_size == 0
+    chooseLong = longBiasOk and longEvidence and longSetupScore >= minSetupScore and longSetupScore > shortSetupScore
+    chooseShort = shortBiasOk and shortEvidence and shortSetupScore >= minSetupScore and shortSetupScore > longSetupScore
+    if chooseLong
+        armedDir := 1
+        armedScore := longSetupScore
+        armedBar := bar_index
+        armedZoneLow := m15Low
+        armedZoneHigh := math.min(m15Close, m15E20 + m15Atr * 0.20)
+        armedSetup := m15SweepLo ? "M15_SWEEP" : m15BbLong ? "M15_BBMA" : m15Demand ? "M15_DEMAND" : "M15_BOS"
+    else if chooseShort
+        armedDir := -1
+        armedScore := shortSetupScore
+        armedBar := bar_index
+        armedZoneHigh := m15High
+        armedZoneLow := math.max(m15Close, m15E20 - m15Atr * 0.20)
+        armedSetup := m15SweepHi ? "M15_SWEEP" : m15BbShort ? "M15_BBMA" : m15Supply ? "M15_SUPPLY" : "M15_BOS"
+
+setupExpired = armedDir != 0 and not na(armedBar) and bar_index - armedBar > setupLifetimeBars
+if setupExpired
+    armedDir := 0
+    armedScore := 0
+    armedBar := na
+    armedZoneLow := na
+    armedZoneHigh := na
+    armedSetup := "WAIT"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trade frequency policy.
+// ─────────────────────────────────────────────────────────────────────────────
+newDay = ta.change(time("D")) != 0
+newWeek = ta.change(time("W")) != 0
+var int dayTrades = 0
+var int weekTrades = 0
+var int lastEntryBar = na
+if newDay
+    dayTrades := 0
+if newWeek
+    weekTrades := 0
+cooldownReady = na(lastEntryBar) or bar_index - lastEntryBar >= cooldownBars
+
+// M5 trigger requires the M15 setup to survive a retest, then show micro confirmation.
+longZoneTouch = armedDir == 1 and low <= armedZoneHigh and close >= armedZoneLow
+shortZoneTouch = armedDir == -1 and high >= armedZoneLow and close <= armedZoneHigh
+longTrigger = longZoneTouch and bullTriggerCandle and (microSweepLong or microBreakLong) and close >= ema20
+shortTrigger = shortZoneTouch and bearTriggerCandle and (microSweepShort or microBreakShort) and close <= ema20
+canTrade = chartIsM5 and barstate.isconfirmed and inBacktestWindow and sessionAllowed and strategy.position_size == 0 and cooldownReady and dayTrades < maxTradesPerDay and weekTrades < maxTradesPerWeek
+
+longSignal = canTrade and longTrigger
+shortSignal = canTrade and shortTrigger and not longSignal
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orders + state.
+// ─────────────────────────────────────────────────────────────────────────────
+var float activeEntry = na
+var float activeInitialStop = na
+var float activeStop = na
+var float activeTarget = na
+var float activeRisk = na
+var int activeDir = 0
+var string activeSetup = "WAIT"
+var int activeScore = 0
+var int firstFillTime = na
+var int seenClosedTrades = 0
+var line[] historyLines = array.new_line()
+
+f_keep_line(id) =>
+    array.push(historyLines, id)
+    maxLines = historyTrades * 3
+    if array.size(historyLines) > maxLines
+        old = array.shift(historyLines)
+        line.delete(old)
+
+f_bias(v) => v == 1 ? "BULL" : v == -1 ? "BEAR" : "NEUTRAL"
+f_num(v) => na(v) ? "—" : str.tostring(v, "#.00")
+f_pct(v) => na(v) ? "—" : str.tostring(v, "#.0") + "%"
+
+if longSignal or shortSignal
+    activeDir := longSignal ? 1 : -1
+    activeEntry := close
+    structuralLongStop = math.min(ta.lowest(low, 6), armedZoneLow) - atr5 * stopBufferAtr
+    structuralShortStop = math.max(ta.highest(high, 6), armedZoneHigh) + atr5 * stopBufferAtr
+    activeInitialStop := longSignal ? structuralLongStop : structuralShortStop
+    activeRisk := math.abs(activeEntry - activeInitialStop)
+    riskAtr = atr5 > 0 ? activeRisk / atr5 : na
+    riskOk = not na(riskAtr) and riskAtr >= minRiskAtr and riskAtr <= maxRiskAtr
+    if riskOk
+        activeStop := activeInitialStop
+        activeTarget := activeDir == 1 ? activeEntry + targetR * activeRisk : activeEntry - targetR * activeRisk
+        activeSetup := armedSetup
+        activeScore := armedScore
+        if activeDir == 1
+            strategy.entry("CASIO5-L", strategy.long, qty=backtestQty)
+            strategy.exit("CASIO5-L-X", "CASIO5-L", stop=activeStop, limit=activeTarget)
+        else
+            strategy.entry("CASIO5-S", strategy.short, qty=backtestQty)
+            strategy.exit("CASIO5-S-X", "CASIO5-S", stop=activeStop, limit=activeTarget)
+        dayTrades += 1
+        weekTrades += 1
+        lastEntryBar := bar_index
+        if na(firstFillTime)
+            firstFillTime := time
+        if keepHistory
+            f_keep_line(line.new(bar_index, activeEntry, bar_index + 24, activeEntry, color=color.new(color.blue, 25), style=line.style_dashed))
+            f_keep_line(line.new(bar_index, activeInitialStop, bar_index + 24, activeInitialStop, color=color.new(color.red, 15), width=2))
+            f_keep_line(line.new(bar_index, activeTarget, bar_index + 24, activeTarget, color=color.new(color.lime, 15), width=2))
+        if showLabels
+            label.new(bar_index, activeDir == 1 ? low : high, (activeDir == 1 ? "BUY" : "SELL") + "\n" + activeSetup + "\nM15 SCORE " + str.tostring(activeScore) + "\nTP " + str.tostring(targetR, "#.00") + "R", style=activeDir == 1 ? label.style_label_up : label.style_label_down, color=activeDir == 1 ? color.green : color.red, textcolor=color.white, size=size.small)
+        if sendWebhookAlerts
+            payload = "{" +
+              "\"schema\":\"casio.tv.v3\"," +
+              "\"event\":\"signal\"," +
+              "\"symbol\":\"" + syminfo.tickerid + "\"," +
+              "\"ticker\":\"" + syminfo.ticker + "\"," +
+              "\"timeframe\":\"5\"," +
+              "\"bar_time\":" + str.tostring(time) + "," +
+              "\"mode\":\"intraday\"," +
+              "\"direction\":\"" + (activeDir == 1 ? "long" : "short") + "\"," +
+              "\"score\":" + str.tostring(activeScore) + "," +
+              "\"entry\":" + str.tostring(activeEntry, format.mintick) + "," +
+              "\"stop\":" + str.tostring(activeInitialStop, format.mintick) + "," +
+              "\"target\":" + str.tostring(activeTarget, format.mintick) + "," +
+              "\"rr\":" + str.tostring(targetR, "#.##") + "," +
+              "\"regime\":\"MTF_M15_SETUP\"," +
+              "\"session\":\"" + sessionName + "\"," +
+              "\"h4_bias\":\"" + (h4Bias == 1 ? "bullish" : h4Bias == -1 ? "bearish" : "neutral") + "\"," +
+              "\"h1_bias\":\"" + (h1Bias == 1 ? "bullish" : h1Bias == -1 ? "bearish" : "neutral") + "\"," +
+              "\"m15_adx\":" + str.tostring(m15Adx, "#.##") + "," +
+              "\"audit_status\":\"V5_" + activeSetup + "\"" +
+              "}"
+            alert(payload, alert.freq_once_per_bar_close)
+        armedDir := 0
+        armedScore := 0
+        armedBar := na
+        armedZoneLow := na
+        armedZoneHigh := na
+        armedSetup := "WAIT"
+    else
+        activeDir := 0
+        activeEntry := na
+        activeInitialStop := na
+        activeStop := na
+        activeTarget := na
+        activeRisk := na
+        activeSetup := "WAIT"
+        activeScore := 0
+
+// Sync entry price to broker emulator once filled.
+justOpened = strategy.position_size != 0 and strategy.position_size[1] == 0
+if justOpened and not na(activeInitialStop)
+    activeDir := strategy.position_size > 0 ? 1 : -1
+    activeEntry := strategy.position_avg_price
+    activeRisk := math.abs(activeEntry - activeInitialStop)
+    activeTarget := activeDir == 1 ? activeEntry + targetR * activeRisk : activeEntry - targetR * activeRisk
+    activeStop := activeInitialStop
+
+if strategy.position_size > 0 and activeDir == 1 and not na(activeRisk)
+    if useBreakeven and high >= activeEntry + beTriggerR * activeRisk
+        activeStop := math.max(activeStop, activeEntry + beLockR * activeRisk)
+    strategy.exit("CASIO5-L-X", "CASIO5-L", stop=activeStop, limit=activeTarget)
+
+if strategy.position_size < 0 and activeDir == -1 and not na(activeRisk)
+    if useBreakeven and low <= activeEntry - beTriggerR * activeRisk
+        activeStop := math.min(activeStop, activeEntry - beLockR * activeRisk)
+    strategy.exit("CASIO5-S-X", "CASIO5-S", stop=activeStop, limit=activeTarget)
+
+if strategy.closedtrades > seenClosedTrades
+    seenClosedTrades := strategy.closedtrades
+    activeDir := 0
+    activeEntry := na
+    activeInitialStop := na
+    activeStop := na
+    activeTarget := na
+    activeRisk := na
+    activeSetup := "WAIT"
+    activeScore := 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visuals + dashboard.
+// ─────────────────────────────────────────────────────────────────────────────
+plot(showM15Zone and armedDir != 0 ? armedZoneLow : na, "M15 Zone Low", color=color.new(color.yellow, 20), linewidth=1, style=plot.style_linebr)
+plot(showM15Zone and armedDir != 0 ? armedZoneHigh : na, "M15 Zone High", color=color.new(color.yellow, 20), linewidth=1, style=plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? activeEntry : na, "Active Entry", color=color.blue, linewidth=2, style=plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? activeStop : na, "Active Stop", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(showLevels and strategy.position_size != 0 ? activeTarget : na, "Active Target", color=color.lime, linewidth=2, style=plot.style_linebr)
+plotshape(longSignal, title="CASIO v5 BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.tiny)
+plotshape(shortSignal, title="CASIO v5 SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny)
+
+closedTrades = strategy.closedtrades
+winRate = closedTrades > 0 ? strategy.wintrades * 100.0 / closedTrades : na
+profitFactor = math.abs(strategy.grossloss) > 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+elapsedWeeks = not na(firstFillTime) ? math.max((time - firstFillTime) / 604800000.0, 1.0 / 7.0) : na
+tradesPerWeek = not na(elapsedWeeks) and elapsedWeeks > 0 ? closedTrades / elapsedWeeks : na
+strategyDir = strategy.position_size > 0 ? 1 : strategy.position_size < 0 ? -1 : 0
+status = strategyDir == 1 ? "LONG ACTIVE" : strategyDir == -1 ? "SHORT ACTIVE" : armedDir == 1 ? "M15 LONG ARMED" : armedDir == -1 ? "M15 SHORT ARMED" : "WAIT"
+
+var table dash = table.new(position.top_right, 2, 15, bgcolor=color.new(color.rgb(15, 18, 25), 3), frame_color=color.new(color.white, 60), frame_width=1)
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "CASIO v5", text_color=color.white, bgcolor=color.new(color.rgb(70, 55, 190), 0))
+    table.cell(dash, 1, 0, "M15→M5", text_color=color.white, bgcolor=color.new(color.rgb(70, 55, 190), 0))
+    table.cell(dash, 0, 1, "STATUS", text_color=color.silver)
+    table.cell(dash, 1, 1, status, text_color=color.white)
+    table.cell(dash, 0, 2, "SESSION", text_color=color.silver)
+    table.cell(dash, 1, 2, sessionName, text_color=color.white)
+    table.cell(dash, 0, 3, "H4 / H1 / M15", text_color=color.silver)
+    table.cell(dash, 1, 3, f_bias(h4Bias) + " / " + f_bias(h1Bias) + " / " + f_bias(m15Bias), text_color=color.white)
+    table.cell(dash, 0, 4, "M15 L / S SCORE", text_color=color.silver)
+    table.cell(dash, 1, 4, str.tostring(longSetupScore) + " / " + str.tostring(shortSetupScore) + " (min " + str.tostring(minSetupScore) + ")", text_color=color.white)
+    table.cell(dash, 0, 5, "ARMED SETUP", text_color=color.silver)
+    table.cell(dash, 1, 5, armedDir != 0 ? armedSetup : activeSetup, text_color=color.white)
+    table.cell(dash, 0, 6, "WEEK TRADES", text_color=color.silver)
+    table.cell(dash, 1, 6, str.tostring(weekTrades) + " / " + str.tostring(weeklyTarget), text_color=weekTrades >= weeklyTarget ? color.lime : color.white)
+    table.cell(dash, 0, 7, "ACTUAL TRADES/WK", text_color=color.silver)
+    table.cell(dash, 1, 7, f_num(tradesPerWeek), text_color=not na(tradesPerWeek) and tradesPerWeek >= weeklyTarget ? color.lime : color.white)
+    table.cell(dash, 0, 8, "HIST WIN RATE", text_color=color.silver)
+    table.cell(dash, 1, 8, f_pct(winRate), text_color=not na(winRate) and winRate >= 70 ? color.lime : color.white)
+    table.cell(dash, 0, 9, "PROFIT FACTOR", text_color=color.silver)
+    table.cell(dash, 1, 9, f_num(profitFactor), text_color=not na(profitFactor) and profitFactor > 1 ? color.lime : color.white)
+    table.cell(dash, 0, 10, "CLOSED TRADES", text_color=color.silver)
+    table.cell(dash, 1, 10, str.tostring(closedTrades), text_color=color.white)
+    table.cell(dash, 0, 11, "TP / BE", text_color=color.silver)
+    table.cell(dash, 1, 11, str.tostring(targetR, "#.00") + "R / " + (useBreakeven ? str.tostring(beTriggerR, "#.00") + "R" : "OFF"), text_color=color.white)
+    table.cell(dash, 0, 12, "NET PROFIT", text_color=color.silver)
+    table.cell(dash, 1, 12, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? color.lime : color.red)
+    table.cell(dash, 0, 13, "MAX DRAWDOWN", text_color=color.silver)
+    table.cell(dash, 1, 13, str.tostring(strategy.max_drawdown, "#.##"), text_color=color.white)
+    table.cell(dash, 0, 14, "CHART", text_color=color.silver)
+    table.cell(dash, 1, 14, chartIsM5 ? "M5 OK" : "USE XAUUSD M5", text_color=chartIsM5 ? color.lime : color.red)
+else if barstate.islast
+    table.clear(dash, 0, 0, 1, 14)

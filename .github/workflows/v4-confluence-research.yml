@@ -1,0 +1,47 @@
+name: CASIO v4 Confluence Research
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v4-confluence-signals
+    paths:
+      - 'casio/v4_confluence_research.py'
+      - 'data/xauusd_m5_dukascopy_research.csv'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install research dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bounded v4 research
+        run: |
+          python -m casio.v4_confluence_research \
+            --data data/xauusd_m5_dukascopy_research.csv \
+            --output reports/v4-confluence
+
+      - name: Show latest findings
+        run: cat reports/v4-confluence/LATEST.md
+
+      - name: Upload research output
+        uses: actions/upload-artifact@v4
+        with:
+          name: casio-v4-confluence-research
+          path: |
+            reports/v4-confluence/LATEST.md
+            reports/v4-confluence/latest.json
+            reports/v4-confluence/candidate_grid.csv
+          retention-days: 14
