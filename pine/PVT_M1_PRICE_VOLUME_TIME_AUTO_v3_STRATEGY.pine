@@ -4,12 +4,14 @@ strategy("PVT M1 AUTO v3 | P/V/T + SNR + Historical Trades", shorttitle="PVT P/V
      initial_capital=2500, currency=currency.USD, pyramiding=0,
      default_qty_type=strategy.fixed, default_qty_value=1,
      process_orders_on_close=false, calc_on_every_tick=false,
-     calc_on_order_fills=false, slippage=5)
+     calc_on_order_fills=false, slippage=5,
+     margin_long=20, margin_short=20)
 
 // ORIGINAL RESEARCH TOOL. This is NOT the proprietary Zezuzaza method.
 // Auto reads the current TradingView chart. No external CSV or FXPro import.
 // Signal = confirmed PVT divergence + price break + RVOL + time/pace + M5 SNR room.
-// BUY/SELL are candidate signals, not orders or a guarantee of profitability.
+// Confirmed BUY/SELL signals create simulated orders, NOT live broker orders.
+// TradingView history is not proof of future profitability.
 
 // v3 CHANGES:
 // - Converts v2's historical signal calculation into a TradingView strategy.
@@ -21,6 +23,8 @@ strategy("PVT M1 AUTO v3 | P/V/T + SNR + Historical Trades", shorttitle="PVT P/V
 // - A missing M5 SNR, missing tick-volume, or weak signal produces NO TRADE.
 // - Past pivot structure labels are drawn retrospectively only when confirmed.
 // - 1 strategy quantity is not necessarily 0.01 broker lot. Check symbol specs.
+// - A 20% simulated margin (5x leverage) is used so a $2,500 test account
+//   can open a 1-unit XAUUSD position. Configure margin to match your broker.
 
 // ─────────── 1. STRUCTURE & DIVERGENCE ───────────
 g1 = "01 | Price structure and divergence"
