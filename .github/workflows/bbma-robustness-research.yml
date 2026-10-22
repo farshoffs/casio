@@ -1,0 +1,28 @@
+name: BBMA robustness research
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "casio/bbma_robustness_crossfeed.py"
+      - ".github/workflows/bbma-robustness-research.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt tabulate
+      - run: python casio/bbma_robustness_crossfeed.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bbma-robustness-crossfeed
+          path: reports/bbma-robustness/
