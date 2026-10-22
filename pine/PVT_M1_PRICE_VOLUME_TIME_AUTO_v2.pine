@@ -1,0 +1,323 @@
+//@version=6
+indicator("PVT M1 AUTO | Price Volume Time + SNR Decisions v2", shorttitle="PVT P/V/T AUTO v2",
+     overlay=false, max_labels_count=500, max_lines_count=500)
+
+// ORIGINAL RESEARCH TOOL. This is NOT the proprietary Zezuzaza method.
+// Auto reads the current TradingView chart. No external CSV or FXPro import.
+// Signal = confirmed PVT divergence + price break + RVOL + time/pace + M5 SNR room.
+// BUY/SELL are candidate signals, not orders or a guarantee of profitability.
+
+// ─────────── 1. STRUCTURE & DIVERGENCE ───────────
+g1 = "01 | Price structure and divergence"
+L = input.int(3, "Pivot LEFT", minval=1, maxval=20, group=g1)
+R = input.int(3, "Pivot RIGHT (signal confirmation delay)", minval=1, maxval=20, group=g1)
+minPriceDiff = input.float(0.10, "Minimum HH/HL/LH/LL difference ($)", minval=0, step=0.05, group=g1)
+minPivotGap = input.int(4, "Minimum bars between same-type pivots", minval=1, group=g1)
+maxPivotGap = input.int(100, "Maximum bars between same-type pivots", minval=10, group=g1)
+showSwings = input.bool(true, "Show HH / HL / LH / LL on PRICE", group=g1)
+showDiv = input.bool(true, "Show regular + hidden divergences", group=g1)
+showDivLines = input.bool(true, "Connect price/PVT divergence pivots", group=g1)
+emaLen = input.int(34, "PVT EMA", minval=1, group=g1)
+
+// ─────────── 2. VOLUME ANALYSIS ───────────
+g2 = "02 | Volume / Effort vs Result"
+volLen = input.int(20, "RVOL baseline (previous M1 bars)", minval=5, group=g2)
+minRvol = input.float(1.05, "Minimum RVOL for BUY / SELL", minval=0.2, step=0.05, group=g2)
+effortRvol = input.float(1.60, "Unusual activity RVOL", minval=1.0, step=0.1, group=g2)
+smallBody = input.float(0.25, "Weak progress: max body / range", minval=0.05, maxval=0.9, step=0.05, group=g2)
+minBody = input.float(0.35, "Signal candle: min body / range", minval=0.05, maxval=0.95, step=0.05, group=g2)
+showEffort = input.bool(true, "Mark HIGH EFFORT / SMALL RESULT at M5 SNR", group=g2)
+
+// ─────────── 3. TIME ANALYSIS ───────────
+g3 = "03 | Time / Pace / Follow-through"
+maxAfterDiv = input.int(12, "Max M1 candles AFTER confirmed divergence", minval=1, maxval=60, group=g3)
+paceBars = input.int(3, "Net movement measured over N M1 candles", minval=2, maxval=20, group=g3)
+minPace = input.float(0.10, "Min move per min / ATR", minval=0.01, step=0.01, group=g3)
+breakBars = input.int(2, "Break last N closed M1 candle highs/lows", minval=1, maxval=10, group=g3)
+pauseBars = input.int(5, "Pause / compression observation (bars)", minval=2, maxval=30, group=g3)
+maxPauseATR = input.float(2.0, "Pause when prior range <= X ATR", minval=0.2, step=0.1, group=g3)
+
+// ─────────── 4. M5 SNR / RISK ───────────
+g4 = "04 | M5 SNR, filters and risk levels"
+snrPivot = input.int(3, "M5 SNR pivot length", minval=1, maxval=15, group=g4)
+m5TrendLen = input.int(50, "M5 EMA trend length", minval=1, group=g4)
+requireM5Trend = input.bool(false, "Require signal agrees with M5 trend", group=g4)
+slAtrBuffer = input.float(0.15, "SL buffer in M1 ATR", minval=0.0, step=0.05, group=g4)
+tpAtrBuffer = input.float(0.10, "TP ahead of M5 SNR in ATR", minval=0, step=0.05, group=g4)
+minRR = input.float(1.30, "Minimum room to nearest M5 SNR (R)", minval=0.5, step=0.1, group=g4)
+cooldownBars = input.int(12, "Minimum bars between auto-signals", minval=1, group=g4)
+showSnr = input.bool(true, "Show nearest M5 support/resistance", group=g4)
+showDashboard = input.bool(true, "Show live P/V/T dashboard", group=g4)
+
+if timeframe.in_seconds() != 60
+    runtime.error("Apply to XAUUSD 1-minute chart. Other timeframes change the meaning of the time filters.")
+
+// ─────────── PVT OSCILLATOR ───────────
+// Equivalent mathematical construction to Price Volume Trend on chart volume.
+pvtStep = nz(volume, 0.0) * (not na(close[1]) and close[1] != 0 ? (close - close[1]) / close[1] : 0.0)
+pvt = ta.cum(pvtStep)
+pvtEma = ta.ema(pvt, emaLen)
+plot(pvt, "Price Volume Trend", color=color.aqua, linewidth=2)
+plot(pvtEma, "PVT EMA", color=color.orange, linewidth=2)
+
+// ─────────── PRICE PIVOTS; PVT MEASURED AT MATCHING PRICE PIVOTS ───────────
+ph = ta.pivothigh(high, L, R)
+pl = ta.pivotlow(low, L, R)
+var float prevHigh = na
+var float prevHighPvt = na
+var int prevHighBar = na
+var float prevLow = na
+var float prevLowPvt = na
+var int prevLowBar = na
+
+bool regBear = false
+bool hidBear = false
+bool regBull = false
+bool hidBull = false
+
+if barstate.isconfirmed and not na(ph)
+    int pivotBar = bar_index - R
+    float osc = pvt[R]
+    bool paired = not na(prevHigh) and not na(prevHighPvt)
+    bool gapOK = paired and pivotBar - prevHighBar >= minPivotGap and pivotBar - prevHighBar <= maxPivotGap
+    bool isHH = paired and ph > prevHigh + minPriceDiff
+    bool isLH = paired and ph < prevHigh - minPriceDiff
+    bool oscHH = paired and osc > prevHighPvt
+    bool oscLH = paired and osc < prevHighPvt
+    regBear := gapOK and isHH and oscLH
+    hidBear := gapOK and isLH and oscHH
+    if showSwings
+        label.new(pivotBar, ph, not paired ? "H?" : isHH ? "HH" : isLH ? "LH" : "EQH",
+             style=label.style_label_down, size=size.tiny, color=color.new(color.red, 30),
+             textcolor=color.white, force_overlay=true,
+             tooltip="Swing label plotted on pivot; became KNOWN only " + str.tostring(R) + " candles later.")
+    if showDiv and (regBear or hidBear)
+        if showDivLines
+            line.new(prevHighBar, prevHigh, pivotBar, ph, color=color.red, width=2, force_overlay=true)
+            line.new(prevHighBar, prevHighPvt, pivotBar, osc, color=color.red, width=2)
+        label.new(bar_index, high, regBear ? "REG BEAR confirmed" : "HID BEAR confirmed",
+             style=label.style_label_down, color=color.red, textcolor=color.white,
+             size=size.tiny, force_overlay=true)
+    prevHigh := ph
+    prevHighPvt := osc
+    prevHighBar := pivotBar
+
+if barstate.isconfirmed and not na(pl)
+    int pivotBar = bar_index - R
+    float osc = pvt[R]
+    bool paired = not na(prevLow) and not na(prevLowPvt)
+    bool gapOK = paired and pivotBar - prevLowBar >= minPivotGap and pivotBar - prevLowBar <= maxPivotGap
+    bool isLL = paired and pl < prevLow - minPriceDiff
+    bool isHL = paired and pl > prevLow + minPriceDiff
+    bool oscHL = paired and osc > prevLowPvt
+    bool oscLL = paired and osc < prevLowPvt
+    regBull := gapOK and isLL and oscHL
+    hidBull := gapOK and isHL and oscLL
+    if showSwings
+        label.new(pivotBar, pl, not paired ? "L?" : isLL ? "LL" : isHL ? "HL" : "EQL",
+             style=label.style_label_up, size=size.tiny, color=color.new(color.teal, 20),
+             textcolor=color.white, force_overlay=true,
+             tooltip="Swing label plotted on pivot; became KNOWN only " + str.tostring(R) + " candles later.")
+    if showDiv and (regBull or hidBull)
+        if showDivLines
+            line.new(prevLowBar, prevLow, pivotBar, pl, color=color.lime, width=2, force_overlay=true)
+            line.new(prevLowBar, prevLowPvt, pivotBar, osc, color=color.lime, width=2)
+        label.new(bar_index, low, regBull ? "REG BULL confirmed" : "HID BULL confirmed",
+             style=label.style_label_up, color=color.green, textcolor=color.white,
+             size=size.tiny, force_overlay=true)
+    prevLow := pl
+    prevLowPvt := osc
+    prevLowBar := pivotBar
+
+// Events refer to NOW (pivot confirmation bar), never to the backdated swing.
+bullEvent = regBull or hidBull
+bearEvent = regBear or hidBear
+bullAge = ta.barssince(bullEvent)
+bearAge = ta.barssince(bearEvent)
+bullEventBar = ta.valuewhen(bullEvent, bar_index, 0)
+bearEventBar = ta.valuewhen(bearEvent, bar_index, 0)
+bullRecent = not na(bullAge) and bullAge <= maxAfterDiv and (na(bearAge) or bullAge < bearAge)
+bearRecent = not na(bearAge) and bearAge <= maxAfterDiv and (na(bullAge) or bearAge < bullAge)
+
+// ─────────── VOLUME: ACTIVITY VS RESULT ───────────
+baseVol = ta.sma(volume[1], volLen)
+hasVolume = not na(volume) and not na(baseVol) and baseVol > 0
+rvol = hasVolume ? volume / baseVol : na
+atr = ta.atr(14)
+barRange = math.max(high - low, syminfo.mintick)
+bodyFraction = math.abs(close - open) / barRange
+highEffortLowProgress = hasVolume and rvol >= effortRvol and bodyFraction <= smallBody
+volumeOK = hasVolume and rvol >= minRvol and bodyFraction >= minBody
+
+// ─────────── TIME: CONFIRMATION EXPIRY + SPEED + PRIOR PAUSE ───────────
+pace = atr > 0 ? math.abs(close - close[paceBars]) / (paceBars * atr) : 0.0
+paceOK = pace >= minPace
+priorRange = ta.highest(high[1], pauseBars) - ta.lowest(low[1], pauseBars)
+isPause = not na(atr) and atr > 0 and priorRange <= maxPauseATR * atr
+priceBreakLong = close > ta.highest(high[1], breakBars) and close > open
+priceBreakShort = close < ta.lowest(low[1], breakBars) and close < open
+pvtLong = pvt > pvtEma and pvt > pvt[1]
+pvtShort = pvt < pvtEma and pvt < pvt[1]
+
+// ─────────── M5 CONFIRMED SWINGS: LAST 3 HIGHS / LOWS ───────────
+f_m5_levels() =>
+    float hh = ta.pivothigh(high, snrPivot, snrPivot)
+    float ll = ta.pivotlow(low, snrPivot, snrPivot)
+    var float h0 = na
+    var float h1 = na
+    var float h2 = na
+    var float l0 = na
+    var float l1 = na
+    var float l2 = na
+    if not na(hh)
+        h2 := h1
+        h1 := h0
+        h0 := hh
+    if not na(ll)
+        l2 := l1
+        l1 := l0
+        l0 := ll
+    [h0[1], h1[1], h2[1], l0[1], l1[1], l2[1], ta.ema(close, m5TrendLen)[1]]
+
+// ALL values [1] are from the last CLOSED M5 candle; no future HTF leakage.
+[mh0,mh1,mh2,ml0,ml1,ml2,m5Ema] = request.security(
+     syminfo.tickerid, "5", f_m5_levels(), lookahead=barmerge.lookahead_on)
+
+f_nearest_above(float a, float b, float c, float x) =>
+    float out = na
+    if not na(a) and a > x
+        out := a
+    if not na(b) and b > x
+        out := na(out) ? b : math.min(out, b)
+    if not na(c) and c > x
+        out := na(out) ? c : math.min(out, c)
+    out
+
+f_nearest_below(float a, float b, float c, float x) =>
+    float out = na
+    if not na(a) and a < x
+        out := a
+    if not na(b) and b < x
+        out := na(out) ? b : math.max(out, b)
+    if not na(c) and c < x
+        out := na(out) ? c : math.max(out, c)
+    out
+
+resistance = f_nearest_above(mh0, mh1, mh2, close)
+support = f_nearest_below(ml0, ml1, ml2, close)
+plot(showSnr ? resistance : na, "Nearest confirmed M5 resistance", color=color.new(color.red, 40),
+     style=plot.style_linebr, force_overlay=true)
+plot(showSnr ? support : na, "Nearest confirmed M5 support", color=color.new(color.teal, 40),
+     style=plot.style_linebr, force_overlay=true)
+
+nearSNR = (not na(resistance) and resistance - high <= 0.6 * atr) or
+          (not na(support) and low - support <= 0.6 * atr)
+plotshape(showEffort and barstate.isconfirmed and highEffortLowProgress and nearSNR,
+     title="Volume high, body small near SNR", text="V!", style=shape.circle,
+     location=location.abovebar, color=color.yellow, textcolor=color.black,
+     size=size.tiny, force_overlay=true)
+
+// ─────────── AUTO DECISION: DIVERGENCE + P + V + TIME + SNR ───────────
+float longSL = math.min(nz(prevLow, low), ta.lowest(low, 10)) - atr * slAtrBuffer
+float shortSL = math.max(nz(prevHigh, high), ta.highest(high, 10)) + atr * slAtrBuffer
+float longTP = not na(resistance) ? resistance - atr * tpAtrBuffer : na
+float shortTP = not na(support) ? support + atr * tpAtrBuffer : na
+float longRisk = close - longSL
+float shortRisk = shortSL - close
+float longRR = longRisk > 0 and not na(longTP) ? (longTP - close) / longRisk : na
+float shortRR = shortRisk > 0 and not na(shortTP) ? (close - shortTP) / shortRisk : na
+bool roomBuy = not na(longRR) and longRR >= minRR and longTP > close
+bool roomSell = not na(shortRR) and shortRR >= minRR and shortTP < close
+bool m5Buy = not requireM5Trend or close > m5Ema
+bool m5Sell = not requireM5Trend or close < m5Ema
+
+var int lastSignalBar = -100000
+var int usedBullEvent = -1
+var int usedBearEvent = -1
+bool cool = bar_index - lastSignalBar >= cooldownBars
+bool buy = barstate.isconfirmed and cool and bullRecent and
+     not na(bullEventBar) and bullEventBar != usedBullEvent and
+     pvtLong and priceBreakLong and volumeOK and paceOK and m5Buy and roomBuy
+bool sell = barstate.isconfirmed and cool and bearRecent and
+     not na(bearEventBar) and bearEventBar != usedBearEvent and
+     pvtShort and priceBreakShort and volumeOK and paceOK and m5Sell and roomSell
+
+if buy
+    usedBullEvent := bullEventBar
+    lastSignalBar := bar_index
+    label.new(bar_index, low,
+         "BUY setup\nClose: " + str.tostring(close, format.mintick) +
+         "\nSL: " + str.tostring(longSL, format.mintick) +
+         "\nTP SNR: " + str.tostring(longTP, format.mintick) +
+         "\nRR: " + str.tostring(longRR, "#.##") +
+         "\nRVOL: " + str.tostring(rvol, "#.##") +
+         "\nAge: " + str.tostring(bullAge) + "m",
+         style=label.style_label_up, color=color.new(color.green, 0),
+         textcolor=color.white, size=size.small, force_overlay=true)
+    alert("PVT P/V/T BUY " + syminfo.ticker + " close=" + str.tostring(close) +
+          " SL=" + str.tostring(longSL) + " TP=" + str.tostring(longTP),
+          alert.freq_once_per_bar_close)
+
+if sell
+    usedBearEvent := bearEventBar
+    lastSignalBar := bar_index
+    label.new(bar_index, high,
+         "SELL setup\nClose: " + str.tostring(close, format.mintick) +
+         "\nSL: " + str.tostring(shortSL, format.mintick) +
+         "\nTP SNR: " + str.tostring(shortTP, format.mintick) +
+         "\nRR: " + str.tostring(shortRR, "#.##") +
+         "\nRVOL: " + str.tostring(rvol, "#.##") +
+         "\nAge: " + str.tostring(bearAge) + "m",
+         style=label.style_label_down, color=color.new(color.red, 0),
+         textcolor=color.white, size=size.small, force_overlay=true)
+    alert("PVT P/V/T SELL " + syminfo.ticker + " close=" + str.tostring(close) +
+          " SL=" + str.tostring(shortSL) + " TP=" + str.tostring(shortTP),
+          alert.freq_once_per_bar_close)
+
+plotshape(buy, title="AUTO BUY confirmed", text="BUY", style=shape.triangleup,
+     color=color.lime, location=location.belowbar, size=size.small, force_overlay=true)
+plotshape(sell, title="AUTO SELL confirmed", text="SELL", style=shape.triangledown,
+     color=color.red, location=location.abovebar, size=size.small, force_overlay=true)
+
+alertcondition(buy, "PVT P/V/T Auto BUY", "PVT auto BUY setup on {{ticker}} {{interval}} at {{close}}")
+alertcondition(sell, "PVT P/V/T Auto SELL", "PVT auto SELL setup on {{ticker}} {{interval}} at {{close}}")
+
+// ─────────── DASHBOARD ───────────
+var table dash = table.new(position.bottom_right, 2, 9, border_width=1, force_overlay=true)
+if showDashboard and barstate.islast
+    color bg = color.new(color.black, 20)
+    string state = buy ? "BUY" : sell ? "SELL" : "WAIT"
+    color stateColor = buy ? color.lime : sell ? color.red : color.orange
+    string volState = not hasVolume ? "NO VOLUME DATA" :
+         highEffortLowProgress ? "EFFORT HIGH / RESULT LOW" :
+         rvol >= minRvol ? "ACTIVE" : "QUIET / BELOW FILTER"
+    string tState = isPause ? "PRIOR PAUSE" : "TREND / WIDE RANGE"
+    string latestDiv = bullRecent ? "BULL (" + str.tostring(bullAge) + "m)" :
+         bearRecent ? "BEAR (" + str.tostring(bearAge) + "m)" : "NONE / EXPIRED"
+    string reason = not hasVolume ? "Volume unavailable" :
+         not (bullRecent or bearRecent) ? "No fresh divergence" :
+         not volumeOK ? "Volume/body weak" :
+         not paceOK ? "Slow time/pace" :
+         not (priceBreakLong or priceBreakShort) ? "Wait price break" :
+         not (roomBuy or roomSell) ? "SNR too close / unknown" : "Check direction / trend"
+    table.cell(dash, 0, 0, "PVT P/V/T M1", bgcolor=color.new(color.blue, 50), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 0, state, bgcolor=color.new(stateColor, 80), text_color=stateColor, text_size=size.small)
+    table.cell(dash, 0, 1, "P: Divergence", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 1, latestDiv, bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 2, "P: Break", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 2, priceBreakLong ? "UP" : priceBreakShort ? "DOWN" : "NONE", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 3, "V: RVOL", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 3, hasVolume ? str.tostring(rvol, "#.##") + "x" : "n/a", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 4, "V: Effort", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 4, volState, bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 5, "T: Pace/ATR", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 5, str.tostring(pace, "#.##") + (paceOK ? " PASS" : " SLOW"), bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 6, "T: Range", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 6, tState, bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 7, "M5 nearest S/R", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 7, (na(support) ? "-" : str.tostring(support, format.mintick)) + " / " +
+         (na(resistance) ? "-" : str.tostring(resistance, format.mintick)),
+         bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 8, "WAIT reason", bgcolor=bg, text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 8, buy or sell ? "Signal confirmed" : reason, bgcolor=bg,
+         text_color=color.white, text_size=size.tiny)
