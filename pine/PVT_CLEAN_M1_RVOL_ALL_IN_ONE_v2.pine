@@ -1,0 +1,193 @@
+//@version=6
+indicator("XAUUSD M1 | Clean Signals + RVOL ALL-IN-ONE v2", shorttitle="M1 CLEAN+RVOL v2", overlay=true, max_labels_count=500)
+
+// SINGLE SCRIPT: reconstructed Clean Signals logic + RVOL Companion.
+// All BUY/SELL conditions remain unchanged by volume: RVOL is INFORMATION only.
+// RECONSTRUCTED FROM KNOWN INPUTS of the user's old M1 indicator.
+// It is NOT a byte-identical copy of the original author's source.
+// Original entry logic and exits remain PVT-cross driven; RVOL is
+// informational ONLY, never a mandatory gate. Spot XAUUSD volume can be ticks.
+// Alerts trigger after completed M1 candles.
+import TradingView/ta/7 as tvta
+
+string gLegacy = "01 | Reconstructed CLEAN PVT signal (not changed by RVOL)"
+int pvtLen = input.int(34, "PVT EMA", minval=1, group=gLegacy)
+int cooldown = input.int(4, "Cooldown after EXIT, bars", minval=0, group=gLegacy)
+int m15Len = input.int(50, "Confirmed M15 EMA", minval=1, group=gLegacy)
+float minATR = input.float(0.40, "M1 ATR(14) minimum, USD", minval=0, step=0.05, group=gLegacy)
+bool useM15 = input.bool(true, "M15 trend check", group=gLegacy)
+bool showCore = input.bool(true, "Show BUY, SELL, EXIT (recreated signal)", group=gLegacy)
+bool showVolumeAtSignal = input.bool(true, "Show RVOL and context inside BUY/SELL label", group=gLegacy)
+
+// ---------------- PRICE + RVOL CONTEXT (not aggressive order flow) ----------------
+string gVol = "02 | Relative Volume at Time"
+string volMethod = input.string("Same time, 10 days", "Baseline", options=["Same time, 10 days", "Previous 20 M1"], group=gVol)
+int volDays = input.int(10, "Previous daily anchors", minval=2, maxval=30, group=gVol)
+int volBars = input.int(20, "Previous M1 candles", minval=5, maxval=100, group=gVol)
+float highRV = input.float(1.30, "Unusual activity >= (RVOL)", step=0.05, minval=1, group=gVol)
+float lowRV = input.float(0.80, "Low activity < (RVOL)", step=0.05, minval=0.1, group=gVol)
+
+string gPrice = "03 | Reaction and SNR"
+float strongBody = input.float(0.45, "Directional body / range >=", minval=0.1, maxval=0.95, step=0.05, group=gPrice)
+float smallBody = input.float(0.28, "High effort, low result: body <=", minval=0.05, maxval=0.8, step=0.02, group=gPrice)
+int m5Pivot = input.int(3, "M5 swing confirmation", minval=2, maxval=10, group=gPrice)
+float snrATR = input.float(0.60, "Near M5 level (ATR)", minval=0.05, step=0.05, group=gPrice)
+
+string gView = "04 | Chart display"
+bool markVolume = input.bool(false, "Mark ALL high-RVOL bars V+/V- (optional, more clutter)", group=gView)
+bool markStall = input.bool(true, "Mark high effort / small body near SNR", group=gView)
+bool markSoftPull = input.bool(false, "Mark low-volume countertrend candles", group=gView)
+bool showLevels = input.bool(false, "Plot M5 SNR lines", group=gView)
+bool showDash = input.bool(true, "Show mobile-friendly dashboard", group=gView)
+
+if timeframe.in_seconds() != 60
+    runtime.error("Apply to an M1 (1-minute) chart.")
+
+[sessionVol, sessionMean, rvolAtTime] = tvta.relativeVolume(volDays, "D", false, false)
+float prev20 = ta.sma(volume[1], volBars)
+float rvolRecent = prev20 > 0 ? volume / prev20 : na
+float rvol = volMethod == "Same time, 10 days" ? rvolAtTime : rvolRecent
+bool haveRV = not na(rvol) and rvol > 0
+bool activeVolume = haveRV and rvol >= highRV
+bool lightVolume = haveRV and rvol < lowRV
+
+float atr14 = ta.atr(14)
+float span = math.max(high-low, syminfo.mintick)
+float bodyShare = math.abs(close-open)/span
+float posInBar = (close-low)/span
+float topWick = (high-math.max(open,close))/span
+float bottomWick = (math.min(open,close)-low)/span
+bool resultUp = close>open and bodyShare>=strongBody and posInBar>=0.70
+bool resultDown = close<open and bodyShare>=strongBody and posInBar<=0.30
+bool flowUp = barstate.isconfirmed and activeVolume and resultUp
+bool flowDown = barstate.isconfirmed and activeVolume and resultDown
+
+// HTF pivots and EMA from completed M5 / M15 candles only (no future leaks).
+f_m5() =>
+    float ph = ta.pivothigh(high, m5Pivot, m5Pivot)
+    float pl = ta.pivotlow(low, m5Pivot, m5Pivot)
+    var float h0 = na
+    var float h1 = na
+    var float l0 = na
+    var float l1 = na
+    if not na(ph)
+        h1 := h0
+        h0 := ph
+    if not na(pl)
+        l1 := l0
+        l0 := pl
+    [h0[1], h1[1], l0[1], l1[1]]
+
+[h0,h1,l0,l1] = request.security(syminfo.tickerid, "5", f_m5(), lookahead=barmerge.lookahead_on)
+float nearestRes = na
+float nearestSup = na
+if not na(h0) and h0>close
+    nearestRes := h0
+if not na(h1) and h1>close
+    nearestRes := na(nearestRes) ? h1 : math.min(nearestRes,h1)
+if not na(l0) and l0<close
+    nearestSup := l0
+if not na(l1) and l1<close
+    nearestSup := na(nearestSup) ? l1 : math.max(nearestSup,l1)
+bool nearR = (not na(h0) and math.abs(high-h0)<snrATR*atr14) or (not na(h1) and math.abs(high-h1)<snrATR*atr14)
+bool nearS = (not na(l0) and math.abs(low-l0)<snrATR*atr14) or (not na(l1) and math.abs(low-l1)<snrATR*atr14)
+bool effortNoResult = barstate.isconfirmed and activeVolume and bodyShare <= smallBody and (nearR or nearS)
+
+float ema20 = ta.ema(close,20)
+bool weakCounterSell = barstate.isconfirmed and lightVolume and ema20>ema20[3] and close<open and close>ema20
+bool weakCounterBuy = barstate.isconfirmed and lightVolume and ema20<ema20[3] and close>open and close<ema20
+
+plotshape(markVolume and flowUp, title="High RVOL + bullish price result", text="V+", location=location.belowbar, style=shape.circle, color=color.new(color.teal, 10), textcolor=color.white, size=size.tiny)
+plotshape(markVolume and flowDown, title="High RVOL + bearish price result", text="V-", location=location.abovebar, style=shape.circle, color=color.new(color.orange, 10), textcolor=color.white, size=size.tiny)
+plotshape(markStall and effortNoResult, title="High effort, low candle body near M5 SNR", text="E?", location=location.abovebar, style=shape.diamond, color=color.yellow, textcolor=color.black, size=size.tiny)
+plotshape(markSoftPull and weakCounterSell, title="Low activity bearish pullback", text="PB", location=location.belowbar, style=shape.circle, color=color.new(color.green,65), textcolor=color.white, size=size.tiny)
+plotshape(markSoftPull and weakCounterBuy, title="Low activity bullish bounce", text="PB", location=location.abovebar, style=shape.circle, color=color.new(color.red,65), textcolor=color.white, size=size.tiny)
+plot(showLevels ? nearestRes : na, "Nearest confirmed M5 resistance", color=color.new(color.red, 70), style=plot.style_linebr)
+plot(showLevels ? nearestSup : na, "Nearest confirmed M5 support", color=color.new(color.teal, 70), style=plot.style_linebr)
+plot(rvol, "RVOL (Data Window)", display=display.data_window)
+plot(rvolAtTime, "RVOL same time (Data Window)", display=display.data_window)
+
+var table d = table.new(position.bottom_right, 2, 6, border_width=1)
+if showDash and barstate.islast
+    color bg = color.new(color.black,15)
+    string rvStr = haveRV ? str.tostring(rvol,"#.##")+"x" : "N/A (need history)"
+    color rvColor = not haveRV ? color.gray : rvol >= highRV ? color.lime : rvol < 1 ? color.orange : color.white
+    string reaction = effortNoResult ? "EFFORT / SMALL RESULT" : flowUp ? "UP PRICE PROGRESS" : flowDown ? "DOWN PRICE PROGRESS" : lightVolume ? "QUIET" : "MIXED / NORMAL"
+    table.cell(d,0,0,"PVT + RVOL",bgcolor=color.new(color.navy,20),text_color=color.white,text_size=size.tiny)
+    table.cell(d,1,0,"ACTIVITY ONLY",bgcolor=color.new(color.navy,20),text_color=color.yellow,text_size=size.tiny)
+    table.cell(d,0,1,"RVOL BASELINE",bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,1,1,volMethod=="Same time, 10 days"?"SAME TIME / "+str.tostring(volDays):"RECENT / "+str.tostring(volBars),bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,0,2,"RVOL",bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,1,2,rvStr,bgcolor=bg,text_color=rvColor,text_size=size.tiny)
+    table.cell(d,0,3,"PRICE RESULT",bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,1,3,reaction,bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,0,4,"M5 S / R",bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,1,4,(na(nearestSup)?"--":str.tostring(nearestSup,format.mintick))+" / "+(na(nearestRes)?"--":str.tostring(nearestRes,format.mintick)),bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,0,5,"MEANING",bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(d,1,5,"RVOL != BUY/SELL",bgcolor=bg,text_color=color.yellow,text_size=size.tiny)
+
+alertcondition(flowUp, title="Volume + bullish candle result", message="High RVOL and bullish price result on closed XAUUSD M1")
+alertcondition(flowDown, title="Volume + bearish candle result", message="High RVOL and bearish price result on closed XAUUSD M1")
+alertcondition(effortNoResult, title="High effort / low result near SNR", message="High relative volume with small candle body near M5 SNR on closed XAUUSD M1")
+
+// ---------------- RECONSTRUCTED ORIGINAL SIGNAL LOGIC ----------------
+float pvtValue = ta.pvt
+float pvtEMA = ta.ema(pvtValue, pvtLen)
+bool crossUp = ta.crossover(pvtValue, pvtEMA)
+bool crossDn = ta.crossunder(pvtValue, pvtEMA)
+float m15ema = request.security(syminfo.tickerid, "15", ta.ema(close,m15Len)[1], lookahead=barmerge.lookahead_on)
+bool bullM15 = not useM15 or close > m15ema
+bool bearM15 = not useM15 or close < m15ema
+bool passATR = not na(atr14) and atr14 >= minATR
+
+var int pos = 0
+var int lastExit = -100000
+bool buy = false
+bool sell = false
+bool exitBuy = false
+bool exitSell = false
+bool canEnter = bar_index - lastExit >= cooldown
+
+if barstate.isconfirmed
+    if crossUp and bullM15 and passATR and pos <= 0 and canEnter
+        pos := 1
+        buy := true
+    else if crossDn and bearM15 and passATR and pos >= 0 and canEnter
+        pos := -1
+        sell := true
+    else if pos == 1 and crossDn
+        pos := 0
+        lastExit := bar_index
+        exitBuy := true
+    else if pos == -1 and crossUp
+        pos := 0
+        lastExit := bar_index
+        exitSell := true
+
+plotshape(showCore and buy and not showVolumeAtSignal, title="Original-like BUY", text="BUY", style=shape.labelup, location=location.belowbar, color=color.green,textcolor=color.white,size=size.small)
+plotshape(showCore and sell and not showVolumeAtSignal, title="Original-like SELL", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red,textcolor=color.white,size=size.small)
+plotshape(showCore and exitBuy, title="Exit Long", text="EXIT", style=shape.labeldown, location=location.abovebar, color=color.new(color.orange,10),textcolor=color.white,size=size.tiny)
+plotshape(showCore and exitSell, title="Exit Short", text="EXIT", style=shape.labelup, location=location.belowbar, color=color.new(color.blue,10),textcolor=color.white,size=size.tiny)
+
+// A/B/C observations never change buy, sell or exit conditions.
+bool anyEntry = buy or sell
+string volInterpretation = not haveRV ? "RVOL N/A" : (buy and flowUp) or (sell and flowDown) ? "VOLUME + PRICE ALIGN" : (buy and flowDown) or (sell and flowUp) ? "DIRECTION CONFLICT" : rvol<lowRV ? "LOW ACTIVITY" : "MIXED / WAIT"
+if showCore and showVolumeAtSignal and anyEntry
+    string prefix = buy ? "BUY" : "SELL"
+    string rvLabel = haveRV ? str.tostring(rvol,"#.##")+"x" : "N/A"
+    label.new(bar_index, buy ? low-atr14*0.4 : high+atr14*0.4,
+         prefix+"  RVOL "+rvLabel+"\n"+volInterpretation+"\n"+(buy ? (nearS ? "NEAR M5 SUPPORT" : "SNR CHECK") : (nearR ? "NEAR M5 RESISTANCE" : "SNR CHECK")),
+         style=buy ? label.style_label_up : label.style_label_down,
+         color=(buy and flowUp) or (sell and flowDown) ? color.new(color.teal,45) : color.new(color.gray,45),
+         textcolor=color.white, size=size.tiny)
+
+// Last signal's RVOL can be inspected historically in the Data Window.
+float signalRVOL = anyEntry ? rvol : na
+plot(signalRVOL, "RVOL on original-like BUY/SELL", display=display.data_window)
+plot(pvtValue, "PVT (Data Window)", display=display.data_window)
+plot(pvtEMA, "PVT EMA (Data Window)", display=display.data_window)
+alertcondition(buy, title="CLEAN PVT BUY", message="XAUUSD M1 PVT BUY closed-bar signal; inspect RVOL and SNR before manual entry")
+alertcondition(sell, title="CLEAN PVT SELL", message="XAUUSD M1 PVT SELL closed-bar signal; inspect RVOL and SNR before manual entry")
+alertcondition(exitBuy or exitSell, title="CLEAN PVT EXIT", message="XAUUSD M1 PVT reverse-cross EXIT on closed bar")
+alertcondition(buy and flowUp, title="BUY + positive volume-price reaction", message="XAUUSD M1 reconstructed PVT BUY, RVOL elevated and bullish candle progress. Signal on completed bar.")
+alertcondition(sell and flowDown, title="SELL + negative volume-price reaction", message="XAUUSD M1 reconstructed PVT SELL, RVOL elevated and bearish candle progress. Signal on completed bar.")
