@@ -1,0 +1,248 @@
+//@version=6
+indicator("XAUUSD M1 | SNR Sweep & Reclaim - RANGE ONLY", shorttitle="SNR Sweep M1", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// EDUCATIONAL / MANUAL TRADING ASSISTANT.
+// ONE setup only: sweep a liquidity reference inside/through an SNR zone,
+// then close back through that reference. No PVT crossovers.
+// TradingView spot XAUUSD volume is commonly tick volume; not bid/ask flow.
+// Historical entry/exit markers are OHLC simulations, NOT broker executions.
+// Signal on a FINISHED M1 bar; simulated entry at NEXT M1 bar open.
+// If both SL and TP are within a historical candle, assume SL first.
+// Manual SNR settings used on earlier chart history have hindsight bias.
+
+string gZ = "01 | M15 SNR zones"
+string zoneMode = input.string("Manual zones", "SNR source", options=["Manual zones","Confirmed M15 pivots"], group=gZ)
+float manualSupLow  = input.float(3976.0, "Support LOWER boundary", step=0.1, group=gZ)
+float manualSupHigh = input.float(3987.0, "Support UPPER boundary", step=0.1, group=gZ)
+float manualResLow  = input.float(4016.0, "Resistance LOWER boundary", step=0.1, group=gZ)
+float manualResHigh = input.float(4027.0, "Resistance UPPER boundary", step=0.1, group=gZ)
+int pivotLen = input.int(3, "Confirmed M15 pivot L/R", minval=1, maxval=12, group=gZ)
+float autoZoneATR = input.float(0.35, "Auto zone half-width / M15 ATR", minval=0.05, maxval=2.0, step=0.05, group=gZ)
+
+string gE = "02 | One setup: Sweep & Reclaim"
+string sweepKind = input.string("Local liquidity inside zone", "What must be swept?", options=["Local liquidity inside zone","Outer zone boundary"], group=gE)
+int lookback = input.int(7, "Previous M1 candles for local high/low", minval=2, maxval=60, group=gE)
+int minSweepTicks = input.int(1, "Sweep beyond reference (ticks)", minval=1, maxval=100, group=gE)
+float minWick = input.float(0.20, "Minimum rejection wick / candle range", minval=0.0, maxval=0.85, step=0.05, group=gE)
+bool candleDirection = input.bool(true, "BUY candle must close bullish / SELL bearish", group=gE)
+int cooldownBars = input.int(5, "Bars to wait after simulated exit", minval=0, maxval=100, group=gE)
+
+string gRisk = "03 | Simulated risk and targets"
+string takeMode = input.string("Range midpoint", "Take-profit method", options=["Range midpoint","Opposite zone"], group=gRisk)
+float slPadATR = input.float(0.10, "SL beyond sweep wick (M1 ATR)", minval=0, maxval=2.0, step=0.05, group=gRisk)
+float tpPadATR = input.float(0.10, "TP buffer before target (M1 ATR)", minval=0, maxval=2.0, step=0.05, group=gRisk)
+float minRR = input.float(1.20, "Minimum projected reward / risk", minval=0.20, maxval=6.0, step=0.10, group=gRisk)
+int keepTrades = input.int(35, "Maximum marked trade histories", minval=5, maxval=100, group=gRisk)
+
+string gV = "04 | Volume context (does NOT control signal)"
+int rvolLength = input.int(20, "RVOL versus previous M1 bars", minval=5, maxval=200, group=gV)
+float notableRVOL = input.float(1.50, "Notable RVOL", minval=1.0, maxval=5.0, step=0.1, group=gV)
+
+string gD = "05 | Display"
+bool drawZones = input.bool(true, "Draw support / resistance zones", group=gD)
+bool showSetup = input.bool(true, "Show sweep confirmation on historical bars", group=gD)
+bool showFills = input.bool(true, "Show simulated BUY / SELL + TP / SL", group=gD)
+bool showTradeLevels = input.bool(true, "Show historical TP / SL guide lines", group=gD)
+bool showPanel = input.bool(true, "Show regime and setup dashboard", group=gD)
+
+if timeframe.in_seconds() != 60
+    runtime.error("Use on XAUUSD 1-minute candles. M15 is requested internally.")
+
+// Confirmed M15 values only; the [1] offset avoids HTF future leakage.
+f_m15() =>
+    float ph = ta.pivothigh(high, pivotLen, pivotLen)
+    float pl = ta.pivotlow(low, pivotLen, pivotLen)
+    float lastHigh = ta.valuewhen(not na(ph), ph, 0)
+    float lastLow = ta.valuewhen(not na(pl), pl, 0)
+    float a = ta.atr(14)
+    [lastHigh[1], lastLow[1], a[1]]
+
+[m15Resistance, m15Support, m15ATR] = request.security(syminfo.tickerid, "15", f_m15(), lookahead=barmerge.lookahead_on)
+float halfWidth = nz(m15ATR) * autoZoneATR
+bool manual = zoneMode == "Manual zones"
+float supLo = manual ? manualSupLow : m15Support - halfWidth
+float supHi = manual ? manualSupHigh : m15Support + halfWidth
+float resLo = manual ? manualResLow : m15Resistance - halfWidth
+float resHi = manual ? manualResHigh : m15Resistance + halfWidth
+bool validZones = not na(supLo) and not na(resHi) and supLo < supHi and supHi < resLo and resLo < resHi
+float mid = validZones ? (supHi + resLo) / 2.0 : na
+
+pSL = plot(drawZones and validZones ? supLo : na, "Support low", color=color.new(color.teal, 30), style=plot.style_linebr)
+pSH = plot(drawZones and validZones ? supHi : na, "Support high", color=color.new(color.teal, 30), style=plot.style_linebr)
+pRL = plot(drawZones and validZones ? resLo : na, "Resistance low", color=color.new(color.red, 30), style=plot.style_linebr)
+pRH = plot(drawZones and validZones ? resHi : na, "Resistance high", color=color.new(color.red, 30), style=plot.style_linebr)
+fill(pSL, pSH, color=color.new(color.teal, 89), title="Support zone")
+fill(pRL, pRH, color=color.new(color.red, 89), title="Resistance zone")
+plot(drawZones and validZones ? mid : na, "Range midpoint", color=color.new(color.gray, 55), style=plot.style_linebr)
+
+float atr = ta.atr(14)
+float candleRange = math.max(high - low, syminfo.mintick)
+float lowerWick = (math.min(open, close) - low) / candleRange
+float upperWick = (high - math.max(open, close)) / candleRange
+float prevLow = ta.lowest(low[1], lookback)
+float prevHigh = ta.highest(high[1], lookback)
+float sweepDistance = minSweepTicks * syminfo.mintick
+float buyReference = sweepKind == "Outer zone boundary" ? supLo : prevLow
+float sellReference = sweepKind == "Outer zone boundary" ? resHi : prevHigh
+
+// The sweep must occur AT the zone. The reclaim must end back within
+// the nearer half of the range; avoid entries at the range midpoint.
+bool atSupport = validZones and low <= supHi and high >= supLo
+bool atResistance = validZones and high >= resLo and low <= resHi
+bool buyReclaim = barstate.isconfirmed and atSupport and not na(buyReference) and
+     low < buyReference - sweepDistance and close > buyReference and close < mid and
+     lowerWick >= minWick and (not candleDirection or close > open)
+bool sellReclaim = barstate.isconfirmed and atResistance and not na(sellReference) and
+     high > sellReference + sweepDistance and close < sellReference and close > mid and
+     upperWick >= minWick and (not candleDirection or close < open)
+
+// RR is calculated at SIGNAL CLOSE; actual simulated entry is at NEXT open.
+float buySL = low - atr * slPadATR
+float sellSL = high + atr * slPadATR
+float buyTP = takeMode == "Range midpoint" ? mid - atr * tpPadATR : resLo - atr * tpPadATR
+float sellTP = takeMode == "Range midpoint" ? mid + atr * tpPadATR : supHi + atr * tpPadATR
+float buyRisk = close - buySL
+float sellRisk = sellSL - close
+float buyRR = buyRisk > 0 ? (buyTP - close) / buyRisk : na
+float sellRR = sellRisk > 0 ? (close - sellTP) / sellRisk : na
+
+float avgVol = ta.sma(volume[1], rvolLength)
+float rvol = not na(avgVol) and avgVol > 0 ? volume / avgVol : na
+plot(rvol, "RVOL recent candle activity (data window)", display=display.data_window)
+
+// Historical drawing budget; automatically discard the oldest markers.
+var label[] usedLabels = array.new_label()
+var line[] usedLines = array.new_line()
+f_label(label lbl) =>
+    array.push(usedLabels, lbl)
+    if array.size(usedLabels) > keepTrades * 4
+        label.delete(array.shift(usedLabels))
+f_line(line ln) =>
+    array.push(usedLines, ln)
+    if array.size(usedLines) > keepTrades * 2
+        line.delete(array.shift(usedLines))
+
+// One virtual position at a time.
+// Do not use these historical outcomes as a broker backtest.
+var int pendingDir = 0
+var int pendingBar = na
+var float pendingSL = na
+var float pendingTP = na
+var int liveDir = 0
+var float liveEntry = na
+var float liveSL = na
+var float liveTP = na
+var int lastExitBar = -100000
+var int wins = 0
+var int losses = 0
+var line liveSLLine = na
+var line liveTPLine = na
+bool buySignal = false
+bool sellSignal = false
+
+if barstate.isconfirmed
+    // Next-bar OPEN entry, then same-bar conservative OHLC exit check.
+    if pendingDir != 0 and bar_index > pendingBar
+        float entryRisk = pendingDir == 1 ? open - pendingSL : pendingSL - open
+        float entryReward = pendingDir == 1 ? pendingTP - open : open - pendingTP
+        bool entryValid = entryRisk > syminfo.mintick and entryReward > 0 and
+             entryReward / entryRisk >= minRR
+        if entryValid
+            liveDir := pendingDir
+            liveEntry := open
+            liveSL := pendingSL
+            liveTP := pendingTP
+            if showFills
+                label e = label.new(bar_index, liveEntry,
+                     liveDir == 1 ? "BUY\n" + str.tostring(liveEntry, format.mintick) :
+                     "SELL\n" + str.tostring(liveEntry, format.mintick),
+                     style=liveDir == 1 ? label.style_label_up : label.style_label_down,
+                     color=liveDir == 1 ? color.lime : color.red,
+                     textcolor=liveDir == 1 ? color.black : color.white, size=size.tiny)
+                f_label(e)
+            if showTradeLevels
+                liveSLLine := line.new(bar_index, liveSL, bar_index+1, liveSL,
+                     color=color.red, style=line.style_dashed, width=1, extend=extend.right)
+                liveTPLine := line.new(bar_index, liveTP, bar_index+1, liveTP,
+                     color=color.lime, style=line.style_dashed, width=1, extend=extend.right)
+                f_line(liveSLLine)
+                f_line(liveTPLine)
+        pendingDir := 0
+
+    if liveDir != 0
+        bool stopped = liveDir == 1 ? low <= liveSL : high >= liveSL
+        bool targeted = liveDir == 1 ? high >= liveTP : low <= liveTP
+        if stopped or targeted
+            // When same candle hits both, assume STOP (worst-case ordering).
+            bool exitBySL = stopped
+            float exitPrice = exitBySL ? liveSL : liveTP
+            if exitBySL
+                losses += 1
+            else
+                wins += 1
+            if showFills
+                label x = label.new(bar_index, exitPrice,
+                     exitBySL ? "SL" : "TP",
+                     style=exitBySL ? label.style_label_down : label.style_label_up,
+                     color=exitBySL ? color.red : color.lime,
+                     textcolor=exitBySL ? color.white : color.black, size=size.tiny)
+                f_label(x)
+            if showTradeLevels
+                if not na(liveSLLine)
+                    line.set_x2(liveSLLine, bar_index+1)
+                    line.set_extend(liveSLLine, extend.none)
+                if not na(liveTPLine)
+                    line.set_x2(liveTPLine, bar_index+1)
+                    line.set_extend(liveTPLine, extend.none)
+            liveDir := 0
+            liveEntry := na
+            liveSL := na
+            liveTP := na
+            lastExitBar := bar_index
+
+    bool ready = pendingDir == 0 and liveDir == 0 and bar_index - lastExitBar >= cooldownBars
+    if ready and buyReclaim and not sellReclaim and buyRR >= minRR
+        buySignal := true
+        pendingDir := 1
+        pendingBar := bar_index
+        pendingSL := buySL
+        pendingTP := buyTP
+    else if ready and sellReclaim and not buyReclaim and sellRR >= minRR
+        sellSignal := true
+        pendingDir := -1
+        pendingBar := bar_index
+        pendingSL := sellSL
+        pendingTP := sellTP
+
+plotshape(showSetup and buySignal, title="Support sweep + reclaim confirmed", text="B?",
+     style=shape.triangleup, location=location.belowbar, color=color.lime, textcolor=color.black, size=size.small)
+plotshape(showSetup and sellSignal, title="Resistance sweep + reclaim confirmed", text="S?",
+     style=shape.triangledown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.small)
+plot(liveDir != 0 ? liveSL : na, "Open simulated stop", color=color.new(color.red, 20), style=plot.style_linebr)
+plot(liveDir != 0 ? liveTP : na, "Open simulated target", color=color.new(color.lime, 20), style=plot.style_linebr)
+
+alertcondition(buySignal, "SNR Sweep Reclaim BUY", "XAUUSD M1: Support sweep and reclaim confirmed at bar CLOSE. Evaluate BUY at next candle open; check SNR/SL/TP.")
+alertcondition(sellSignal, "SNR Sweep Reclaim SELL", "XAUUSD M1: Resistance sweep and reclaim confirmed at bar CLOSE. Evaluate SELL at next candle open; check SNR/SL/TP.")
+
+var table dash = table.new(position.top_right, 2, 8, border_width=1)
+if showPanel and barstate.islast
+    color bg = color.new(color.black, 22)
+    bool inMiddle = validZones and close > supHi and close < resLo
+    string locationText = not validZones ? "INVALID ZONES" : close <= supHi ? "SUPPORT" : close >= resLo ? "RESISTANCE" : "MIDDLE / WAIT"
+    string state = liveDir == 1 ? "SIM BUY OPEN" : liveDir == -1 ? "SIM SELL OPEN" : pendingDir == 1 ? "BUY NEXT OPEN" : pendingDir == -1 ? "SELL NEXT OPEN" : "WAIT"
+    table.cell(dash, 0, 0, "SNR SWEEP / RECLAIM", bgcolor=color.new(color.blue,60),text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 0, state, bgcolor=color.new(color.blue,60),text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 0, 1, "M15 SNR source", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 1, zoneMode, bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 0, 2, "Location", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 2, locationText, bgcolor=bg,text_color=validZones?color.yellow:color.red,text_size=size.tiny)
+    table.cell(dash, 0, 3, "Support", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 3, str.tostring(supLo,format.mintick)+" - "+str.tostring(supHi,format.mintick), bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 0, 4, "Resistance", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 4, str.tostring(resLo,format.mintick)+" - "+str.tostring(resHi,format.mintick), bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 0, 5, "RVOL / activity", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 5, na(rvol) ? "N/A" : str.tostring(rvol,"#.##")+"x"+(rvol >= notableRVOL ? " HIGH" : ""), bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 0, 6, "Open SL / TP", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 6, liveDir==0?"--":str.tostring(liveSL,format.mintick)+" / "+str.tostring(liveTP,format.mintick), bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 0, 7, "SIM W / L", bgcolor=bg,text_color=color.white,text_size=size.tiny)
+    table.cell(dash, 1, 7, str.tostring(wins)+" / "+str.tostring(losses), bgcolor=bg,text_color=color.white,text_size=size.tiny)
